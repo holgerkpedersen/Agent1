@@ -528,6 +528,53 @@ def _shrink_content(content: Any, keep: int) -> Any:
     return content
 
 
+# Message keys whose string values are structural — never shrunk.
+_SHRINK_PROTECTED_STR_KEYS = frozenset({"role", "tool_call_id", "name", "type"})
+
+
+def _shrink_message(
+    message: dict[str, Any], *, keep: int, stub: bool
+) -> dict[str, Any]:
+    """Shrink the bulk fields of one message (never drops or re-keys it).
+
+    Shrinks ``content`` (str or multimodal), oversized ``tool_calls``
+    arguments, AND any other oversized string field (e.g. a reasoning
+    model's ``reasoning_content``) — ``_message_size`` counts those fields,
+    so shrinking only ``content`` left fat non-content blobs unshrinkable
+    and the fallback raised even though the bytes were reducible.
+
+    ``stub=True`` (older messages): replace oversized values with a short
+    placeholder.  ``stub=False``: truncate to *keep* chars with a visible
+    marker, so the model knows the text is lossy.
+    """
+    msg = _strip_oversized_tool_args(message)
+    out = dict(msg)
+    content = msg.get("content")
+    if stub:
+        if isinstance(content, str) and len(content) > _SHRINK_MIN_CHARS:
+            kb = max(1, len(content) // 1024)
+            out["content"] = (
+                f"[truncated {kb} KB message — dropped to fit context; "
+                "re-run the tool if needed]"
+            )
+        elif content is not None and not isinstance(content, str):
+            out["content"] = _shrink_content(content, 0)
+    elif content is not None:
+        out["content"] = _shrink_content(content, keep)
+    threshold = _SHRINK_MIN_CHARS if stub else keep
+    for key, value in msg.items():
+        if key in _SHRINK_PROTECTED_STR_KEYS or key == "content":
+            continue
+        if not isinstance(value, str) or len(value) <= threshold:
+            continue
+        if stub:
+            kb = max(1, len(value) // 1024)
+            out[key] = f"[stripped {kb} KB of {key} to fit context]"
+        else:
+            out[key] = _shrink_content(value, keep)
+    return out
+
+
 def _shrink_to_budget(
     messages: list[dict[str, Any]],
     char_budget: int,
@@ -542,15 +589,21 @@ def _shrink_to_budget(
     * nothing is ever DROPPED — same message count, same roles, same
       ``tool_call_id``s, so the chat-template pairing contract holds by
       construction;
-    * the leading system prompt, the first user message, and (until the last
-      resort) the newest exchange (last assistant + everything after it) are
-      never touched;
+    * the leading system prompt, the first user message, and the newest
+      exchange (last assistant + everything after it) are never touched
+      until LAST RESORT — the first user message and the system prompt can
+      alone exceed the budget (the agent's chained loop injects history and
+      decisions blocks into the task prompt), and killing the turn with a
+      RuntimeError is worse than a marked truncation;
     * older oversized messages are stubbed first, oldest-first; oversized
-      tool-call arguments are replaced with a valid-JSON placeholder.
+      tool-call arguments are replaced with a valid-JSON placeholder; and
+      every oversized string field (e.g. a reasoning model's
+      ``reasoning_content``) is shrunk alongside ``content``, since
+      :func:`_message_size` counts it too.
 
     Returns ``(messages, changed)``.  Raises ``RuntimeError`` only when even
-    the fully-shrunk list cannot fit (absurd budget, or a system prompt
-    alone over budget) — a clear failure instead of a guaranteed HTTP 400.
+    the fully-shrunk list cannot fit (absurd budget) — a clear failure
+    instead of a guaranteed HTTP 400.
     """
     msgs = list(messages)
     if _total_chars(msgs) <= char_budget:
@@ -577,37 +630,38 @@ def _shrink_to_budget(
             continue
         if _message_size(body[i]) <= _SHRINK_MIN_CHARS:
             continue
-        stripped = _strip_oversized_tool_args(body[i])
-        content = stripped.get("content")
-        if isinstance(content, str) and len(content) > _SHRINK_MIN_CHARS:
-            kb = max(1, len(content) // 1024)
-            stripped = {
-                **stripped,
-                "content": (
-                    f"[truncated {kb} KB message — dropped to fit context; "
-                    "re-run the tool if needed]"
-                ),
-            }
-        elif content is not None and not isinstance(content, str):
-            stripped = {**stripped, "content": _shrink_content(content, 0)}
+        stripped = _shrink_message(body[i], keep=_SHRINK_NEWEST_KEEP, stub=True)
         if stripped != body[i]:
             body[i] = stripped
             changed = True
 
     # Phase 2 (last resort): the newest exchange itself — truncate contents
-    # (never drop), strip oversized args.
+    # (never drop), strip oversized args and other oversized string fields.
     for i in range(newest_start, len(body)):
         if _total() <= char_budget:
             return head + body, changed
-        stripped = _strip_oversized_tool_args(body[i])
-        content = stripped.get("content")
-        if content is not None:
-            stripped = {
-                **stripped,
-                "content": _shrink_content(content, _SHRINK_NEWEST_KEEP),
-            }
+        stripped = _shrink_message(body[i], keep=_SHRINK_NEWEST_KEEP, stub=False)
         if stripped != body[i]:
             body[i] = stripped
+            changed = True
+
+    # Phase 3: the protected first user message (the task prompt).  In the
+    # agent's chained loop it carries injected history/decisions blocks and
+    # can alone exceed the budget; a marked truncation beats killing the
+    # turn with a RuntimeError.
+    if _total() > char_budget and first_user is not None:
+        stripped = _shrink_message(
+            body[first_user], keep=_SHRINK_NEWEST_KEEP, stub=False
+        )
+        if stripped != body[first_user]:
+            body[first_user] = stripped
+            changed = True
+
+    # Phase 4 (very last resort): the system prompt itself.
+    if _total() > char_budget and head:
+        stripped = _shrink_message(head[0], keep=_SHRINK_NEWEST_KEEP, stub=False)
+        if stripped != head[0]:
+            head[0] = stripped
             changed = True
 
     if _total() > char_budget:

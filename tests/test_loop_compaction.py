@@ -554,6 +554,130 @@ class TestShrinkFallback:
         with pytest.raises(RuntimeError, match="cannot fit"):
             _compact_messages(msgs, 80, 100, None)
 
+    def test_newest_reasoning_content_is_truncated_not_raised(self):
+        # A reasoning model's ``reasoning_content`` is counted by
+        # _message_size but is NOT ``content`` — shrinking only content
+        # left the newest exchange unshrinkable and the fallback raised
+        # RuntimeError (the 2026-10-22 turn-killer).  Pending tool_calls
+        # also make the drop path refuse (orphan guard), so shrink must run.
+        msgs = [
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "task"},
+            {
+                "role": "assistant",
+                "content": "",
+                "reasoning_content": "r" * 300_000,
+                "tool_calls": [
+                    {
+                        "id": "t0",
+                        "type": "function",
+                        "function": {"name": "run", "arguments": "{}"},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "t0", "content": "done"},
+        ]
+        out, note = _compact_messages(msgs, 80, 20_000, None)
+        assert note is not None
+        assert _total_chars(out) <= 20_500
+        assert [m["role"] for m in out[: len(msgs)]] == [m["role"] for m in msgs]
+        reasoning = out[2].get("reasoning_content")
+        assert isinstance(reasoning, str)
+        assert reasoning.startswith("rrr") and "truncated" in reasoning
+        assert out[2].get("tool_calls")  # pairing contract intact
+        assert out[0]["content"] == "system"
+        assert out[1]["content"] == "task"
+
+    def test_older_reasoning_stubbed_when_drop_cannot_help(self):
+        # Giant first user -> remaining_chars is 0 -> the drop path refuses
+        # for every split; phase 1 must stub the middle message's fat
+        # reasoning_content, and phase 3 truncates the task prompt.
+        msgs = [
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "task " + "t" * 400_000},
+            {
+                "role": "assistant",
+                "content": "thinking",
+                "reasoning_content": "r" * 300_000,
+                "tool_calls": [
+                    {
+                        "id": "t0",
+                        "type": "function",
+                        "function": {"name": "run", "arguments": "{}"},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "t0", "content": "done"},
+            {"role": "user", "content": "next"},
+            {
+                "role": "assistant",
+                "content": "calling",
+                "tool_calls": [
+                    {
+                        "id": "t1",
+                        "type": "function",
+                        "function": {"name": "run", "arguments": "{}"},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "t1", "content": "done"},
+        ]
+        out, note = _compact_messages(msgs, 80, 20_000, None)
+        assert note is not None
+        assert _total_chars(out) <= 20_500
+        assert [m["role"] for m in out[: len(msgs)]] == [m["role"] for m in msgs]
+        stubbed = out[2].get("reasoning_content")
+        assert isinstance(stubbed, str) and "stripped" in stubbed
+        first_user = out[1]["content"]
+        assert isinstance(first_user, str) and "truncated" in first_user
+
+    def test_fat_first_user_prompt_shrunk_as_last_resort(self):
+        # The agent's chained loop injects history/decisions blocks into the
+        # task prompt — a first user message alone can exceed the budget.
+        # It is protected until last resort, then truncated WITH a marker
+        # instead of raising RuntimeError and killing the turn.
+        msgs = [
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "task " + "t" * 400_000},
+            {
+                "role": "assistant",
+                "content": "calling",
+                "tool_calls": [
+                    {
+                        "id": "t0",
+                        "type": "function",
+                        "function": {"name": "run", "arguments": "{}"},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "t0", "content": "done"},
+        ]
+        out, note = _compact_messages(msgs, 80, 20_000, None)
+        assert note is not None
+        assert _total_chars(out) <= 20_500
+        assert [m["role"] for m in out[: len(msgs)]] == [m["role"] for m in msgs]
+        first_user = out[1]["content"]
+        assert isinstance(first_user, str)
+        assert first_user.startswith("task ")
+        assert "truncated" in first_user
+
+    def test_system_prompt_shrunk_when_only_fit(self):
+        # System + first user BOTH giant: neither can stay whole under the
+        # budget; both get a marked truncation, no RuntimeError.
+        msgs = [
+            {"role": "system", "content": "S" * 400_000},
+            {"role": "user", "content": "T" * 400_000},
+            {"role": "assistant", "content": "calling"},
+        ]
+        out, note = _compact_messages(msgs, 80, 20_000, None)
+        assert note is not None
+        assert _total_chars(out) <= 20_500
+        assert [m["role"] for m in out[: len(msgs)]] == [m["role"] for m in msgs]
+        for m in out[:2]:
+            content = m["content"]
+            assert isinstance(content, str) and "truncated" in content
+        assert out[2]["content"] == "calling"
+
 
 class TestBudgetGuaranteeInRun:
     """End-to-end: no llm call may ever receive an over-budget prompt."""
