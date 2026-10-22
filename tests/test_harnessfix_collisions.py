@@ -8,8 +8,6 @@ from pathlib import Path
 import pytest
 
 from harnessfix import gates
-
-pytestmark = pytest.mark.harnessfix_self_test
 from harnessfix.loop import run_loop
 from harnessfix.repairs.collisions import find_test_collisions
 from harnessfix.repairs.tool_interface import (
@@ -20,6 +18,8 @@ from harnessfix.repairs.tool_interface import (
 from harnessfix.repairs.stuck_repeat import revert as _revert_stuck_repeat
 from harnessfix.repairs.abandonment_resume import revert as _revert_abandonment
 from harnessfix.tracing import KIND_LOOP_END, KIND_TOOL_ERROR, TraceWriter
+
+pytestmark = pytest.mark.harnessfix_self_test
 
 
 def _reset_repairs() -> None:

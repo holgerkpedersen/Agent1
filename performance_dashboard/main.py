@@ -6,8 +6,6 @@ import threading
 import time
 from typing import Any, Callable, Dict, Generic, List, Optional, Tuple, TypeVar
 
-T = TypeVar("T")
-
 from performance_dashboard.config import (
     CollectorIntervals,
     DashboardSettings,
@@ -27,6 +25,9 @@ from performance_dashboard.collectors.command_collector import (
 )
 from performance_dashboard.collectors.task_collector import TaskCollector
 from performance_dashboard.analytics.aggregator import AggregationEngine
+
+#: Generic type variable used by the database/collector adapters below.
+T = TypeVar("T")
 
 
 class SystemBootstrapper:

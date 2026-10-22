@@ -14,7 +14,10 @@ from .charts import SVGExporter
 
 
 class HTMLRenderer:
-    """Generate markup compatible with browser-based dashboards including interactive controls."""
+    (
+        """Generate markup compatible with browser-based """
+        """dashboards including interactive controls."""
+    )
 
     def __init__(self, layout_spec: Optional[DashboardLayoutSpec] = None) -> None:
         self._layout: DashboardLayoutSpec = (
@@ -40,12 +43,15 @@ class HTMLRenderer:
         theme: str = self._layout.theme_name or "default"
         return (
             '<!DOCTYPE html>\n<html lang="en">\n<head>\n'
-            f'<meta charset="utf-8">\n<meta http-equiv="refresh" content="{refresh_ms / 1000:.1f}">\n'
+            f'<meta charset="utf-8">\n<meta http-equiv="refresh" '
+            f'content="{refresh_ms / 1000:.1f}">\n'
             "<title>Performance Dashboard</title>\n<style>\n"
             f":root {{ --grid-cols: {grid_cols}; --chart-height: {height_px}px; }}\n"
             f".theme-{theme} {{ background:#fff;color:#222;}}\n"
-            ".dashboard-grid {{ display:grid;grid-template-columns:repeat(var(--grid-cols),1fr);gap:8px;}}\n"
-            ".chart-widget {{ height:var(--chart-height);border:1px solid #ccc;padding:4px;overflow:auto;}}\n"
+            ".dashboard-grid {{ display:grid;grid-template-c"
+            "olumns:repeat(var(--grid-cols),1fr);gap:8px;}}\n"
+            ".chart-widget {{ height:var(--chart-height);border:1px "
+            "solid #ccc;padding:4px;overflow:auto;}}\n"
             '</style>\n</head>\n<body class="theme-{theme">\n'
             f'<div class="dashboard-grid">\n{body_content}\n</div>\n</body>\n</html>'
         )
@@ -66,7 +72,10 @@ class HTMLRenderer:
         elif control_type == "range":
             min_val: float = spec.get("min", 0.0)  # type: ignore[assignment]
             max_val: float = spec.get("max", 100.0)  # type: ignore[assignment]
-            return f'<label>{label}: <input type="range" name="{name}" min="{min_val}" max="{max_val}"></label>'
+            return (
+                f'<label>{label}: <input type="range" name="{name}" '
+                f'min="{min_val}" max="{max_val}"></label>'
+            )
         else:
             action: str = spec.get("action", "#")  # type: ignore[assignment]
             return f"<button onclick=\"fetch('{action}')\">{label}</button>"
@@ -85,7 +94,10 @@ def _default_layout() -> DashboardLayoutSpec:
 
 
 class ImageSnapshotter:
-    """Capture static PNG/JPEG representations useful for embedding in documentation or notifications."""
+    (
+        """Capture static PNG/JPEG representations useful """
+        """for embedding in documentation or notifications."""
+    )
 
     def __init__(self, svg_exporter: SVGExporter) -> None:
         self._exporter: SVGExporter = svg_exporter
@@ -117,7 +129,10 @@ class ImageSnapshotter:
 
 
 def _placeholder_base64(svg_markup: str) -> str:
-    """Generate a deterministic placeholder base64 string derived from SVG content length."""
+    (
+        """Generate a deterministic placeholder base64 """
+        """string derived from SVG content length."""
+    )
     import hashlib
 
     digest = hashlib.sha256(svg_markup.encode("utf-8")).hexdigest()[:16]
@@ -125,7 +140,10 @@ def _placeholder_base64(svg_markup: str) -> str:
 
 
 class TerminalDisplayAdapter:
-    """Render simplified ASCII-art style charts suitable for CLI monitoring sessions without graphical environment support."""
+    (
+        """Render simplified ASCII-art style charts suitable for CLI """
+        """monitoring sessions without graphical environment support."""
+    )
 
     def __init__(self, width_chars: int = 60, height_rows: int = 20) -> None:
         self._width: int = max(width_chars, 10)
@@ -345,7 +363,10 @@ def _rebuild_layout(layout_data: Dict[str, Any]) -> DashboardLayoutSpec:
 
 
 class LayoutTranslator:
-    """Translate dashboard composition instructions into a hierarchical structure navigable by frontend renderers."""
+    (
+        """Translate dashboard composition instructions into a """
+        """hierarchical structure navigable by frontend renderers."""
+    )
 
     def __init__(self, layout_spec: Optional[DashboardLayoutSpec] = None) -> None:
         self._layout: DashboardLayoutSpec = (

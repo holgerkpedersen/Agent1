@@ -76,7 +76,8 @@ class PlanDryRunner:
                 for pattern in _MUTATION_PATTERNS:
                     if pattern.search(line):
                         warnings.append(
-                            f"Line {line_no}: potential mutation detected — {line.strip()[:80]}"
+                            f"Line {line_no}: potential mutation "
+                            f"detected — {line.strip()[:80]}"
                         )
 
         # If we have warnings and mutations are not allowed, it's still valid

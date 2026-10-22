@@ -13,13 +13,13 @@ import pytest
 
 from harnessfix import gates
 from harnessfix.gates import should_accept
-
-pytestmark = pytest.mark.harnessfix_self_test
 from harnessfix.loop import run_loop
 from harnessfix.repairs.tool_interface import TOOL_INTERFACE_REPAIR_ID, revert
 from harnessfix.repairs.abandonment_resume import revert as _revert_abandon
 from harnessfix.repairs.stuck_repeat import revert as _revert_stuck
 from harnessfix.tracing import KIND_LOOP_END, KIND_TOOL_ERROR, TraceWriter
+
+pytestmark = pytest.mark.harnessfix_self_test
 
 
 def _reset_repairs() -> None:

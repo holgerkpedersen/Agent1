@@ -58,7 +58,8 @@ _SKIP_DIRS = frozenset(
 _BACKTICK_RE = re.compile(r"`([^`]+)`")
 _FILE_RE = re.compile(r"(?<![\w/])((?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.py)(?![\w/])")
 _LINE_RE = re.compile(r"\bline\s*(?:no\.?|#)?\s*(~|≈)?\s*(\d+)", re.IGNORECASE)
-#: A backticked ``path/to/file.py:NNN`` reference (the form the analyze prompt asks for).
+# : A backticked ``path/to/file.py:NNN`` reference (the form the analyze prompt asks
+# for).
 _BACKTICK_FILE_LINE_RE = re.compile(r"((?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.py):(\d+)")
 
 _ABSENCE_PHRASES = (
@@ -380,7 +381,8 @@ def _verify_existence(file: str | None, rel_files: list[str]) -> tuple[str, str]
     if file in rel_files:
         return _STATUS_OK, "file exists in workspace"
     # Partial path matching: the LLM may cite a sub-path without the full prefix
-    # (e.g. `evolution/metrics.py` when the actual file is `agent1/evolution/metrics.py`).
+    # (e.g. `evolution/metrics.py` when the actual file is
+    # `agent1/evolution/metrics.py`).
     # Match by basename + directory suffix so near-duplicate paths resolve correctly.
     base = os.path.basename(file)
     for rel in rel_files:
@@ -443,7 +445,8 @@ def _verify_symbol(
             if name in defs_by_file.get(sf, {}):
                 return (
                     _STATUS_OK,
-                    f"defined at {sf}:{defs_by_file[sf][name]} (mentioned in claim segment)",
+                    f"defined at {sf}:{defs_by_file[sf][name]} "
+                    f"(mentioned in claim segment)",
                 )
             if name in attrs_by_file.get(sf, set()):
                 return (
@@ -632,9 +635,12 @@ def _verify_snippet(
 def _pair_symbol_with_line(claims: list[_Claim]) -> None:
     """Flag a line claim when a symbol on the same source segment is defined elsewhere.
 
-    Pairing is restricted to claims sharing the same analysis source-line (segment_start)
-    so a ``line N`` mention in one bullet point cannot bleed into a symbol verified in an
-    adjacent bullet — matching _iter_lines' "avoiding bleed between bullet points" design.
+ \
+   Pairing is restricted to claims sharing the same analysis source-line (segment_start)
+ \
+   so a ``line N`` mention in one bullet point cannot bleed into a symbol verified in an
+  \
+  adjacent bullet — matching _iter_lines' "avoiding bleed between bullet points" design.
     """
     lines = [
         c for c in claims if c.kind == "line" and c.status == _STATUS_OK and c.file
@@ -766,7 +772,8 @@ async def verify_analysis_claims(analysis: str, ws_path: Path) -> VerificationRe
         return VerificationResult(analysis, 0, 0)
 
     lines = [
-        f"- Code claims checked: {len(checked)} — {len(checked) - len(flagged)} verified, {len(flagged)} flagged."
+        f"- Code claims checked: {len(checked)} — "
+        f"{len(checked) - len(flagged)} verified, {len(flagged)} flagged."
     ]
     lines += [f"- [UNVERIFIED] `{c.text}` — {c.reason}" for c in flagged]
     report = "\n\n---\n\n## Verification Report\n\n" + "\n".join(lines) + "\n"

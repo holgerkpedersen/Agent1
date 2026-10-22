@@ -336,7 +336,8 @@ TOOLS: list[dict[str, Any]] = [
             "properties": {
                 "success": {
                     "type": "boolean",
-                    "description": "Filter: true=only successful, false=only failed, omit=all",
+                    "descrip"
+                    "tion": "Filter: true=only successful, false=only failed, omit=all",
                 },
                 "search": {
                     "type": "string",
@@ -578,13 +579,16 @@ def _execute_tool(name: str, args: dict[str, Any]) -> str:
         ts = time.strftime("%Y-%m-%dT%H:%M:%S")
         with _connect() as conn:
             cur = conn.execute(
-                "INSERT INTO experiences (timestamp, action, outcome, context, success) "
-                "VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO experiences (timestamp, action, "
+                "outcome, context, success) VALUES (?, ?, ?, ?, ?)",
                 (ts, action, outcome, context, 1 if outcome >= 0.5 else 0),
             )
             conn.commit()
             new_id = cur.lastrowid
-        return f"Recorded experience (rowid={new_id}): action='{action}', outcome={outcome}"
+        return (
+            f"Recorded experience (rowid={new_id}): "
+            f"action='{action}', outcome={outcome}"
+        )
 
     if name == "evolution_summary":
         limit = args.get("limit", 20)
@@ -658,7 +662,8 @@ def _execute_tool(name: str, args: dict[str, Any]) -> str:
             tables = [
                 r["name"]
                 for r in conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+                    "SELECT name FROM sqlite_master WHERE "
+                    "type='table' AND name NOT LIKE 'sqlite_%'"
                 )
             ]
             counts = {}
@@ -684,7 +689,8 @@ def _execute_tool(name: str, args: dict[str, Any]) -> str:
         if exp_total > 0:
             lines.append("")
             lines.append(
-                f"Experience success rate: {exp_success}/{exp_total} ({100 * exp_success / exp_total:.0f}%)"
+                f"Experience success rate: {exp_success}/{exp_total} "
+                f"({100 * exp_success / exp_total:.0f}%)"
             )
         return "\n".join(lines)
 
@@ -697,7 +703,10 @@ def _execute_tool(name: str, args: dict[str, Any]) -> str:
 
 
 def _handle(msg: dict[str, Any]) -> dict[str, Any] | None:
-    """Route an incoming JSON-RPC message; return a response dict (or None for notifications)."""
+    (
+        """Route an incoming JSON-RPC message; return """
+        """a response dict (or None for notifications)."""
+    )
     req_id = msg.get("id")
     method = msg.get("method")
     params = msg.get("params", {})

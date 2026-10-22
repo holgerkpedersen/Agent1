@@ -449,7 +449,10 @@ def _execute_tool(name: str, args: dict[str, Any]) -> str:
 
 
 def _handle(msg: dict[str, Any]) -> dict[str, Any] | None:
-    """Route an incoming JSON-RPC message; return a response dict (or None for notifications)."""
+    (
+        """Route an incoming JSON-RPC message; return """
+        """a response dict (or None for notifications)."""
+    )
     req_id = msg.get("id")
     method = msg.get("method")
     params = msg.get("params", {})

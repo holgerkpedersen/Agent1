@@ -155,7 +155,8 @@ class PerfCommand(Command):
                     else r["timestamp"]
                 )
                 print(
-                    f"  {ts}  {r['command']:<12} {r['elapsed_s']:>8.1f}s  ({r['input_len']} chars)"
+                    f"  {ts}  {r['command']:<12} "
+                    f"{r['elapsed_s']:>8.1f}s  ({r['input_len']} chars)"
                 )
             return True
 
@@ -186,16 +187,19 @@ class PerfCommand(Command):
         )
 
         print(
-            f"\n  Commands: {total_calls}  |  Runtime: {total_time:.1f}s  |  Input: {total_input} chars  |  LLM calls: ~{llm_est}"
+            f"\n  Commands: {total_calls}  |  Runtime: {total_time:.1f}s "
+            f" |  Input: {total_input} chars  |  LLM calls: ~{llm_est}"
         )
         print(f"  {'─' * 72}")
         print(
-            f"  {'command':<12} {'calls':>6} {'total':>8} {'avg':>8} {'max':>8} {'last':>8}"
+            f"  {'command':<12} {'calls':>6} {'total':>8} "
+            f"{'avg':>8} {'max':>8} {'last':>8}"
         )
         print(f"  {'─' * 72}")
         for s in summary:
             print(
-                f"  {s['command']:<12} {s['calls']:>6} {s['total']:>8} {s['avg']:>8} {s['max']:>8} {s['last']:>8}"
+                f"  {s['command']:<12} {s['calls']:>6} {s['total']:>8} "
+                f"{s['avg']:>8} {s['max']:>8} {s['last']:>8}"
             )
         print()
 
@@ -226,9 +230,16 @@ class PerfCommand(Command):
 <div class="app-container">
     <div class="header">
         <div style="display:flex;align-items:center;gap:8px;">
-            <img src="static/favicon.png" alt="Agent1 Logo" style="width:32px;height:32px;">
-            <h6 class="fw-semibold mb-0" style="display:inline-block;background:linear-gradient(135deg,var(--gradient-start),var(--gradient-end));-webkit-background-clip:text;background-clip:text;color:transparent;font-size:24px;">AGENT1</h6>
-            <span style="font-size:12px;color:var(--text-muted);margin-left:8px;">Performance Dashboard</span>
+            <img src="static/favicon.png" \
+alt="Agent1 Logo" style="width:32px;height:32px;">
+            <h6 class="fw-semibold mb-0" \
+style="display:inline-block;\
+background:linear-gradient(135deg,var(--gradient-start),var(--gradient-end));\
+-webkit-background-clip:text;background-clip:text;color:transparent;font-size:24px;\
+">AGENT1</h6>
+            <span \
+style="font-size:12px;color:var(--text-muted);margin-left:8px;">Performance \
+Dashboard</span>
             <button type="button" class="theme-toggle"
                 onclick="toggleTheme()" id="themeToggle"
                 aria-label="Toggle Light/Dark Theme"></button>
@@ -241,20 +252,33 @@ class PerfCommand(Command):
         </div>
         <div class="panel-content">
             <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px;">
-                <div style="flex:1;min-width:160px;background:var(--input-bg);border-radius:12px;padding:14px;border:1px solid var(--border);text-align:center;">
-                    <div style="font-size:28px;color:var(--accent);line-height:1;margin-bottom:6px;" class="icon-cpu"></div>
+                <div \
+style="flex:1;min-width:160px;background:var(--input-bg);border-radius:12px;\
+padding:14px;border:1px solid var(--border);text-align:center;">
+                    <div \
+style="font-size:28px;color:var(--accent);line-height:1;margin-bottom:6px;" \
+class="icon-cpu"></div>
                     <div style="font-size:22px;font-weight:700;">{total_calls}</div>
                     <div style="font-size:11px;color:var(--text-muted);">Commands</div>
                 </div>
-                <div style="flex:1;min-width:160px;background:var(--input-bg);border-radius:12px;padding:14px;border:1px solid var(--border);text-align:center;">
-                    <div style="font-size:28px;color:var(--warning);line-height:1;margin-bottom:6px;" class="icon-clock"></div>
+                <div \
+style="flex:1;min-width:160px;background:var(--input-bg);border-radius:12px;\
+padding:14px;border:1px solid var(--border);text-align:center;">
+                    <div \
+style="font-size:28px;color:var(--warning);line-height:1;margin-bottom:6px;" \
+class="icon-clock"></div>
                     <div style="font-size:22px;font-weight:700;">{total_time:.1f}s</div>
                     <div style="font-size:11px;color:var(--text-muted);">Runtime</div>
                 </div>
-                <div style="flex:1;min-width:160px;background:var(--input-bg);border-radius:12px;padding:14px;border:1px solid var(--border);text-align:center;">
-                    <div style="font-size:28px;color:var(--success);line-height:1;margin-bottom:6px;" class="icon-chart"></div>
+                <div \
+style="flex:1;min-width:160px;background:var(--input-bg);border-radius:12px;\
+padding:14px;border:1px solid var(--border);text-align:center;">
+                    <div \
+style="font-size:28px;color:var(--success);line-height:1;margin-bottom:6px;" \
+class="icon-chart"></div>
                     <div style="font-size:22px;font-weight:700;">{len(summary)}</div>
-                    <div style="font-size:11px;color:var(--text-muted);">Command Types</div>
+                    <div \
+style="font-size:11px;color:var(--text-muted);">Command Types</div>
                 </div>
             </div>
             <table class="issues-table">
@@ -277,14 +301,23 @@ class PerfCommand(Command):
     </div>
 
     <footer class="footer">
-        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+        <div \
+style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;\
+gap:8px;">
             <div>
                 <span>Developed by Holger K. Pedersen</span>
-                <a href="https://github.com/holgerkpedersen/Agent1" target="_blank" rel="noopener"
-                    title="Holger K. Pedersen - Agent1" class="ms-1"><span id="ghIcon"></span></a>
+                <a href="https://github.com/holgerkpedersen/Agent1" \
+target="_blank" rel="noopener"
+                    title="Holger K. Pedersen - \
+Agent1" class="ms-1"><span id="ghIcon"></span></a>
             </div>
             <div>
-                <span>UI/UX reshaped with care by <a href="https://2tinteractive.com" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none;">2tinteractive.com - The Spatial Digital Agency</a> (<a href="https://github.com/LebToki" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none;">Tarek Tarabichi</a>)</span>
+                <span>UI/UX reshaped with care by <a href="https://2tinteractive.com" \
+target="_blank" rel="noopener" \
+style="color:var(--accent);text-decoration:none;">2tinteractive.com - The Spatial \
+Digital Agency</a> (<a href="https://github.com/LebToki" target="_blank" \
+rel="noopener" style="color:var(--accent);text-decoration:none;">Tarek \
+Tarabichi</a>)</span>
             </div>
         </div>
     </footer>
@@ -293,16 +326,19 @@ class PerfCommand(Command):
 <script>
 let currentTheme = localStorage.getItem('agent1_theme') || 'dark';
 document.documentElement.setAttribute('data-theme', currentTheme);
-document.getElementById('themeToggle').innerHTML = iconify(currentTheme === 'dark' ? 'solar:moon-bold' : 'solar:sun-bold', 18);
+document.getElementById('themeToggle').innerHTML = iconify(currentTheme \
+=== 'dark' ? 'solar:moon-bold' : 'solar:sun-bold', 18);
 document.querySelector('.icon-cpu').innerHTML = iconify('tabler:cpu', 28);
-document.querySelector('.icon-clock').innerHTML = iconify('solar:clock-circle-bold', 28);
+document.querySelector('.icon-clock').innerHTML \
+= iconify('solar:clock-circle-bold', 28);
 document.querySelector('.icon-chart').innerHTML = iconify('solar:chart-2-bold', 28);
 document.getElementById('ghIcon').innerHTML = iconify('mdi:github', 18);
 function toggleTheme() {{
     currentTheme = currentTheme === 'dark' ? 'light' : 'dark';
     document.documentElement.setAttribute('data-theme', currentTheme);
     localStorage.setItem('agent1_theme', currentTheme);
-    document.getElementById('themeToggle').innerHTML = iconify(currentTheme === 'dark' ? 'solar:moon-bold' : 'solar:sun-bold', 18);
+    document.getElementById('themeToggle').innerHTML = \
+iconify(currentTheme === 'dark' ? 'solar:moon-bold' : 'solar:sun-bold', 18);
 }}
 </script>
 </body>

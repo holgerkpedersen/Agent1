@@ -27,7 +27,10 @@ class LLMExecutor:
         self.max_tokens = max_tokens
 
     async def run_fix_command(self, issue_description: str) -> List[str]:
-        """Generate a prompt, query the LLM, and execute returned tool calls concurrently."""
+        (
+            """Generate a prompt, query the LLM, and """
+            """execute returned tool calls concurrently."""
+        )
         if not issue_description.strip():
             raise LLMExecutorError("issue_description must not be empty")
 

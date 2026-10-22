@@ -60,7 +60,8 @@ def merge_configs(*configs: BaseConfig) -> BaseConfig:
     merged: dict[str, Any] = {}
     for config in configs:
         merged.update(config.as_dict())
-    # Later configs override earlier ones; keys absent from a later config are preserved.
+    # Later configs override earlier ones; keys absent from a later config are
+    # preserved.
     return CoreConfig(**merged)
 
 

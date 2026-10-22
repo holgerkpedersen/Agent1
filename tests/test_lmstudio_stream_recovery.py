@@ -53,7 +53,8 @@ class TestStreamAutoReloadOnEvictedModel:
                 _http_error(req, _NOT_LOADED)
             calls["n"] += 1
             return _FakeHTTPResponse(
-                b'data: {"choices": [{"delta": {"content": "hej"}}]}\n\ndata: [DONE]\n\n'
+                b'data: {"choices": [{"delta": '
+                b'{"content": "hej"}}]}\n\ndata: [DONE]\n\n'
             )
 
         with (

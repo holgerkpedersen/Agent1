@@ -221,7 +221,8 @@ class ReviewCommand(Command):
     async def _cmd_label(self, args: list[str], agent: "Agent") -> bool:
         if len(args) < 2:
             self.error(
-                'Usage: review label <task> <bug|regression|noise|ok|auto> [--note "..."]'
+                "Usage: review label <task> "
+                '<bug|regression|noise|ok|auto> [--note "..."]'
             )
             return True
         task_id = _unquote(args[0])

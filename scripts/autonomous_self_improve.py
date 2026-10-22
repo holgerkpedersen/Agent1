@@ -55,9 +55,13 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from harnessfix.progress import append_history, clear_progress, write_progress
-from harnessfix import issue_loop
-from harnessfix import issues as issue_store
+from harnessfix.progress import (  # noqa: E402  (after the sys.path bootstrap above)
+    append_history,
+    clear_progress,
+    write_progress,
+)
+from harnessfix import issue_loop  # noqa: E402  (after the sys.path bootstrap above)
+from harnessfix import issues as issue_store  # noqa: E402  (after the sys.path bootstrap above)
 
 STOP_FILENAME = "STOP_AUTONOMOUS"
 SUMMARY_PATH = REPO_ROOT / "reports" / "harnessfix" / "summary.json"
@@ -245,7 +249,8 @@ def _record_iteration(
                 summary,
             ),
             "git_head": head,
-            # WikiSkill: wiki page count at end of this iteration (dashboard history column).
+            # WikiSkill: wiki page count at end of this iteration (dashboard history
+            # column).
             "wiki_page_count": summary.get("wiki_page_count", 0),
         }
     )
@@ -503,7 +508,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--model",
         default=None,
-        help="optional LLM benchmark cross-check model (needs a live API); omit to gate on offline harness quality only",
+        help="optional LLM benchmark cross-check model (needs a "
+        "live API); omit to gate on offline harness quality only",
     )
     parser.add_argument(
         "--profile", default=None, help="benchmark profile tag (decision #055)"
@@ -511,7 +517,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--no-benchmark",
         action="store_true",
-        help="never run the benchmark subprocess, even if --model is set (offline-only gate)",
+        help="never run the benchmark subprocess, even "
+        "if --model is set (offline-only gate)",
     )
     parser.add_argument(
         "--max-iterations", type=int, default=5, help="cap on loop iterations"
@@ -536,7 +543,8 @@ def main(argv: list[str] | None = None) -> int:
         or args.auto
     ):
         print(
-            "[autonomous] Refusing to run: set AGENT_AUTONOMOUS=1 (or pass --auto) to engage."
+            "[autonomous] Refusing to run: set "
+            "AGENT_AUTONOMOUS=1 (or pass --auto) to engage."
         )
         return 2
 

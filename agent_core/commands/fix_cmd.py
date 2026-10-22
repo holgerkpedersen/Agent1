@@ -464,7 +464,10 @@ def _function_returns_value(source: str, def_lineno: int) -> bool:
 def _enclosing_function_extent(
     lines: list[str], error_line: int
 ) -> tuple[int, int] | None:
-    """Return (start, end) line numbers of the function containing *error_line*, or None."""
+    (
+        """Return (start, end) line numbers of the """
+        """function containing *error_line*, or None."""
+    )
     source = "\n".join(lines)
     try:
         tree = ast.parse(source)
@@ -614,7 +617,8 @@ _GENERIC_ANY_FILL = {
 
 
 def _fix_bare_generic(lines: list[str], lineno: int, err: str) -> list[str] | None:
-    """Fill a bare generic type with ``Any`` args (``list[dict]`` -> ``list[dict[str, Any]]``).
+    """Fill \
+a bare generic type with ``Any`` args (``list[dict]`` -> ``list[dict[str, Any]]``).
 
     Only fires on the exact line mypy reported; ``dict(``/``type(`` calls and
     already-parameterized ``dict[...]`` uses are left alone.  The caller
@@ -1527,7 +1531,10 @@ class FixCommand(Command):
 
     @property
     def help_text(self) -> str:
-        return 'fix "<traceback>" | <file> --desc "issue" [--full] | --mypy [path...] - Fix code errors'
+        return (
+            'fix "<traceback>" | <file> --desc "issue" '
+            "[--full] | --mypy [path...] - Fix code errors"
+        )
 
     async def execute(self, args: list[str], agent: "Agent") -> bool:
         parts = args
@@ -1556,7 +1563,8 @@ class FixCommand(Command):
             from .base import read_stdin
 
             stdin_text = read_stdin(
-                "Paste problem description or traceback. Type --- on its own line when done, or Ctrl+Z to finish:"
+                "Paste problem description or traceback. Type --- "
+                "on its own line when done, or Ctrl+Z to finish:"
             )
             if not stdin_text.strip():
                 self.error("No input provided")
@@ -1668,12 +1676,14 @@ class FixCommand(Command):
                                 if os.path.isfile(fp):
                                     resp_matched.add(fp)
                                     print(
-                                        f"  Responsibility match: {current_file} -> '{task_text[:80]}'"
+                                        f"  Responsibility match: "
+                                        f"{current_file} -> '{task_text[:80]}'"
                                     )
                 if resp_matched:
                     candidate_files |= resp_matched
                     print(
-                        f"  + {len(resp_matched)} files from project_tasks.md responsibility matching"
+                        f"  + {len(resp_matched)} files from "
+                        f"project_tasks.md responsibility matching"
                     )
 
             plan_md_path = find_doc(ws_dir, "project_plan.md")
@@ -1727,22 +1737,40 @@ class FixCommand(Command):
                                     )
                             except Exception as exc:
                                 print(
-                                    f"  Warning: failed to extract signatures from {fp}: {exc}"
+                                    f"  Warning: failed to extract "
+                                    f"signatures from {fp}: {exc}"
                                 )
-                all_source += f"\n\n## Other project files (signatures only, {len(sig_map)} total)\n\n"
+                all_source += (
+                    f"\n\n## Other project files (signatures "
+                    f"only, {len(sig_map)} total)\n\n"
+                )
                 for rel, names in sorted(sig_map.items()):
                     all_source += f"  {rel}: {names}\n"
                 print(
-                    f"  Collected {len(py_files)} Python files ({len(all_source)} bytes)"
+                    f"  Collected {len(py_files)} Python "
+                    f"files ({len(all_source)} bytes)"
                 )
                 msgs = [
                     {
                         "role": "system",
-                        "content": "You are an expert Python debugger. Analyze the codebase below. Fix ALL files needed. Keep code concise. NEVER create duplicate functions or classes (_v1, _v2, _clean, _final variants). One implementation per concept.\n\nPrefer [PATCH:] format (minimal diff — only the lines that change):\n[PATCH: path/to/file.py]\n@@ -10,3 +10,2 @@\n- old line\n+ new line\n- old line\n\nOnly use [FILE:] for new files or when the entire file must be rewritten:\n[FILE: absolute/path/to/file.py]\n```python\n# complete fixed code\n```",
+                        "content": "You are an expert Python debugger. Analyze the "
+                        "codebase below. Fix ALL files needed. Keep code "
+                        "concise. NEVER create duplicate functions or classes "
+                        "(_v1, _v2, _clean, _final variants). One implementation "
+                        "per concept.\n\nPrefer [PATCH:] format (minimal diff "
+                        "— only the lines that change):\n[PATCH: path/to/file.py]\n@@ "
+                        "-10,3 +10,2 @@\n- old line\n+ new line\n- old line\n\nOnly "
+                        "use [FILE:] for new files or when the entire file must "
+                        "be rewritten:\n[FILE: absolute/path/to/file.py]\n```python\n# "
+                        "complete fixed code\n```",
                     },
                     {
                         "role": "user",
-                        "content": f"The user reports this issue:\n\n{desc_text}\n\nFull project codebase:\n\n{all_source}\n\nAnalyze the issue, find the root cause, and fix ALL affected files. Output each fixed file with its full path.",
+                        "content": f"The user reports this "
+                        f"issue:\n\n{desc_text}\n\nFull project "
+                        f"codebase:\n\n{all_source}\n\nAnalyze the issue, "
+                        f"find the root cause, and fix ALL affected "
+                        f"files. Output each fixed file with its full path.",
                     },
                 ]
                 print("Sending to LLM for deep analysis...")
@@ -1895,7 +1923,10 @@ class FixCommand(Command):
                     _running = len(context)
 
             if rest_files:
-                context += f"\n## Other candidate files ({len(rest_files)} more — signatures only)\n"
+                context += (
+                    f"\n## Other candidate files "
+                    f"({len(rest_files)} more — signatures only)\n"
+                )
                 for fp, score, content in rest_files[:15]:
                     rel = os.path.relpath(fp, ws_dir).replace("\\", "/")
                     sigs = extract_signatures(content)
@@ -1966,14 +1997,17 @@ class FixCommand(Command):
                 print("Silenced exception in fix_cmd.py:1446")
 
             print(
-                f"  On-demand: {len(top_files)} full files + {len(rest_files)} candidate sigs + {len(sig_map)} other sigs ({len(context)} bytes)"
+                f"  On-demand: {len(top_files)} full files + {len(rest_files)} "
+                f"candidate sigs + {len(sig_map)} other sigs ({len(context)} bytes)"
             )
             print(
-                f"  Full source: {', '.join(os.path.basename(fp) for fp, _, _ in top_files)}"
+                f"  Full source: "
+                f"{', '.join(os.path.basename(fp) for fp, _, _ in top_files)}"
             )
             if rest_files:
                 print(
-                    f"  Candidates (sigs only): {', '.join(os.path.basename(fp) for fp, _, _ in rest_files[:8])}",
+                    f"  Candidates (sigs only): "
+                    f"{', '.join(os.path.basename(fp) for fp, _, _ in rest_files[:8])}",
                     end="",
                 )
                 if len(rest_files) > 8:
@@ -2007,9 +2041,11 @@ class FixCommand(Command):
                 "[READ:] if you truly need more context, then submit the fix "
                 "with [FILE:]/[PATCH:]. Do not keep asking to read; output the "
                 "fix directly.\n"
-                "Use EXACTLY the relative filenames shown in the 'Relevant files' section above.\n"
+                "Use EXACTLY the relative filenames shown "
+                "in the 'Relevant files' section above.\n"
                 "Do NOT add directory prefixes that aren't already shown.\n"
-                "If you cannot determine the exact file, explain without [READ:] or [FILE:] tags."
+                "If you cannot determine the exact file, "
+                "explain without [READ:] or [FILE:] tags."
             )
 
             _TOOL_CALL_RE = re.compile(r"</?tool_call>")
@@ -2021,7 +2057,8 @@ class FixCommand(Command):
             for round_num in range(1, 4):
                 user = (
                     f"Issue: {desc_text}\n\n## Context\n{context}\n\n"
-                    "Find the root cause. Request files with [READ: path] or provide fixes with [FILE: path]."
+                    "Find the root cause. Request files with [READ: "
+                    "path] or provide fixes with [FILE: path]."
                 )
 
                 print(f"  Round {round_num} ({len(context)} bytes)...")
@@ -2036,7 +2073,8 @@ class FixCommand(Command):
                     self.error(f"LLM error: {response[:200]}")
                     return True
 
-                # Check for [READ:] directives — handle both plain and <tool_call> wrapped
+                # Check for [READ:] directives — handle both plain and <tool_call>
+                # wrapped
                 raw = response
                 # Strip <tool_call> / </tool_call> wrappers if present
                 raw = _TOOL_CALL_RE.sub("", raw)
@@ -2066,24 +2104,32 @@ class FixCommand(Command):
                             # window so it can actually make the edit.
                             try:
                                 rel, loaded, note = _load_for_read(full)
-                                context += f"\n\n# === {rel} (requested by LLM — {note}) ===\n{loaded}\n"
+                                context += (
+                                    f"\n\n# === {rel} (requested by "
+                                    f"LLM — {note}) ===\n{loaded}\n"
+                                )
                                 read_paths.add(full)
                                 windowed_paths.discard(full)
                                 new_files.append(rel)
                             except Exception as exc:
                                 print(
-                                    f"  Warning: failed to read requested file {full}: {exc}"
+                                    f"  Warning: failed to read "
+                                    f"requested file {full}: {exc}"
                                 )
                             continue
                         if os.path.isfile(full) and full.endswith(".py"):
                             try:
                                 rel, loaded, note = _load_for_read(full)
-                                context += f"\n\n# === {rel} (requested by LLM — {note}) ===\n{loaded}\n"
+                                context += (
+                                    f"\n\n# === {rel} (requested by "
+                                    f"LLM — {note}) ===\n{loaded}\n"
+                                )
                                 read_paths.add(full)
                                 new_files.append(rel)
                             except Exception as exc:
                                 print(
-                                    f"  Warning: failed to read requested file {full}: {exc}"
+                                    f"  Warning: failed to read "
+                                    f"requested file {full}: {exc}"
                                 )
                         else:
                             bad_reads.append(req_path)
@@ -2092,7 +2138,8 @@ class FixCommand(Command):
                         continue
                     elif bad_reads:
                         print(
-                            f"    [READ] could not resolve: {', '.join(bad_reads[:3])} — stopping"
+                            f"    [READ] could not resolve: "
+                            f"{', '.join(bad_reads[:3])} — stopping"
                         )
                         break
                     else:
@@ -2102,9 +2149,10 @@ class FixCommand(Command):
                         # with no fix and a misleading verify_failed.
                         if not _nudged:
                             context += (
-                                "\n\n# NOTE: the files you requested with [READ:] are "
-                                "already present in the context above (some as focused "
-                                "windows). Provide the fix now using [FILE:] or [PATCH:]."
+                                "\n\n# NOTE: the files you requested with "
+                                "[READ:] are already present in the context "
+                                "above (some as focused windows). Provide "
+                                "the fix now using [FILE:] or [PATCH:]."
                             )
                             _nudged = True
                             continue
@@ -2141,7 +2189,8 @@ class FixCommand(Command):
             if not valid_fixes:
                 if fixes and not patches:
                     print(
-                        f"  (ignored {len(fixes)} [FILE:] blocks — no matching files on disk)"
+                        f"  (ignored {len(fixes)} [FILE:] "
+                        f"blocks — no matching files on disk)"
                     )
                 elif not patches:
                     print(response)
@@ -2182,7 +2231,10 @@ class FixCommand(Command):
 
                 changelog_path = os.path.join(ws_dir, "CHANGES.md")
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-                entry = f"\n## {timestamp} — fix --desc\n\n**Change**: Modified `{os.path.basename(fpath)}`\n**Reason**: {desc_text[:200]}\n"
+                entry = (
+                    f"\n## {timestamp} — fix --desc\n\n**Change**: Modified "
+                    f"`{os.path.basename(fpath)}`\n**Reason**: {desc_text[:200]}\n"
+                )
                 with open(changelog_path, "a", encoding="utf-8") as cl:
                     cl.write(entry)
 
@@ -2297,7 +2349,8 @@ class FixCommand(Command):
         ordered = _order_leaves_first(list(errors_by_file), errors_by_file, ws_dir)
         files = [(k, errors_by_file[k]) for k in ordered]
         print(
-            f"[fix --mypy] {sum(len(v) for v in errors_by_file.values())} error(s) in {len(files)} file(s)"
+            f"[fix --mypy] {sum(len(v) for v in errors_by_file.values())} "
+            f"error(s) in {len(files)} file(s)"
         )
         if not files:
             print("Workspace is mypy-clean. Nothing to fix.")
@@ -2354,10 +2407,13 @@ class FixCommand(Command):
                     ]
                     type_section = "\n".join(type_blocks)
                     user_sections.append(
-                        f"### Errors ({len(slice_errs)} — same function, fix together)\n"
+                        f"### Errors ({len(slice_errs)} "
+                        f"— same function, fix together)\n"
                         f"{err_block}\n\n"
-                        f"The errors below are inside one function (lines {start}-{end}). "
-                        "Resolve each type ONCE and apply it consistently at every site in this window.\n\n"
+                        f"The errors below are inside one "
+                        f"function (lines {start}-{end}). "
+                        "Resolve each type ONCE and apply it "
+                        "consistently at every site in this window.\n\n"
                         f"Relevant code (entire function):\n```python\n{window}\n```\n"
                         + (f"\n{type_section}\n" if type_section else "")
                     )
@@ -2385,20 +2441,32 @@ class FixCommand(Command):
                         )
                 type_hint = _shared_type_hint(slice_errs)
                 system_prompt = (
-                    f"Fix the mypy errors in {rel_file}. Make the smallest possible targeted changes. "
-                    "Fix the ROOT CAUSE: when an error is a symptom of a mis-typed helper "
-                    "or annotation (see 'Definitions referenced by the error'), correct that "
-                    "definition — do NOT add a local workaround such as an inline import, a "
-                    "redundant cast, or a per-call type: ignore. If you change a function's "
-                    "signature (return or parameter type), update EVERY call site in this "
+                    f"Fix the mypy errors in {rel_file}. Make "
+                    f"the smallest possible targeted changes. "
+                    "Fix the ROOT CAUSE: when an error "
+                    "is a symptom of a mis-typed helper "
+                    "or annotation (see 'Definitions "
+                    "referenced by the error'), correct that "
+                    "definition — do NOT add a local "
+                    "workaround such as an inline import, a "
+                    "redundant cast, or a per-call type: "
+                    "ignore. If you change a function's "
+                    "signature (return or parameter "
+                    "type), update EVERY call site in this "
                     "file (see 'Call sites...') so the change introduces no NEW error. "
-                    "Any name you introduce (e.g. Any, ModuleType, cast) MUST be imported "
+                    "Any name you introduce (e.g. Any, "
+                    "ModuleType, cast) MUST be imported "
                     "in the same patch. "
-                    "Prefer [PATCH:]; if the file is over ~200 lines use [PATCH:] exclusively. "
-                    "Output EXACTLY ONE block: [PATCH: {rel_file}] with unified hunks (one patch may "
-                    "contain multiple @@ hunks), or [FILE: {rel_file}] with the complete corrected file. "
-                    "Do NOT output multiple [PATCH:]/[FILE:] blocks, no retries, nothing else.\n\n"
-                    "Minimal hunk example (one-line change inside a function, indentation kept, "
+                    "Prefer [PATCH:]; if the file is over "
+                    "~200 lines use [PATCH:] exclusively. "
+                    "Output EXACTLY ONE block: [PATCH: "
+                    "{rel_file}] with unified hunks (one patch may "
+                    "contain multiple @@ hunks), or [FILE: "
+                    "{rel_file}] with the complete corrected file. "
+                    "Do NOT output multiple [PATCH:]/[FILE:] "
+                    "blocks, no retries, nothing else.\n\n"
+                    "Minimal hunk example (one-line change "
+                    "inside a function, indentation kept, "
                     "the + line must DIFFER from the - line):\n"
                     "@@ -131,7 +131,7 @@\n"
                     "        chunks: list[tuple[str, str | None]] = []\n"
@@ -2421,7 +2489,10 @@ class FixCommand(Command):
                     {
                         "role": "user",
                         "content": "\n".join(user_sections)
-                        + f"\n\nOutput format:\n[PATCH: {rel_file}]\n@@ -line,count +line,count @@\n unchanged line\n-removed line\n+added line\n\nOR if a larger rewrite is needed:\n[FILE: {rel_file}]\n```python\n# complete corrected file\n```",
+                        + f"\n\nOutput format:\n[PATCH: {rel_file}]\n@@ -line,count "
+                        f"+line,count @@\n unchanged line\n-removed line\n+added "
+                        f"line\n\nOR if a larger rewrite is needed:\n[FILE: "
+                        f"{rel_file}]\n```python\n# complete corrected file\n```",
                     },
                 ]
                 print(f"  Attempt {attempt + 1} on {len(slice_errs)} error(s)...")
@@ -2435,7 +2506,9 @@ class FixCommand(Command):
                 ):
                     print(f"  LLM error: {response}")
                     print(
-                        "  Hint: the model burned its whole output budget on reasoning. Load a non-thinking model (`model load <name>`) or a faster coder model for fix --mypy."
+                        "  Hint: the model burned its whole output budget "
+                        "on reasoning. Load a non-thinking model (`model "
+                        "load <name>`) or a faster coder model for fix --mypy."
                     )
                     break
                 # PROPOSE MODE: capture the candidate fix in memory; never apply
@@ -2466,7 +2539,8 @@ class FixCommand(Command):
                         else "  (unknown — no diagnostics captured)"
                     )
                     print(
-                        "  Fix did not apply — retrying once with verbatim-copy instructions"
+                        "  Fix did not apply — retrying "
+                        "once with verbatim-copy instructions"
                     )
                     if stop_requested():
                         break
@@ -2477,10 +2551,14 @@ class FixCommand(Command):
                             "content": (
                                 "Your previous [PATCH: ...] hunks did not apply. "
                                 "Failure reasons:\n" + fail_summary + "\n\n"
-                                "Reproduce the hunks using ONLY the exact lines shown in the "
-                                "'Relevant code' windows above — copy them character-for-character, "
-                                "including indentation. Output a focused patch that touches only the "
-                                "listed lines. Do NOT rewrite whole functions or files.\n\n"
+                                "Reproduce the hunks using ONLY "
+                                "the exact lines shown in the "
+                                "'Relevant code' windows above — "
+                                "copy them character-for-character, "
+                                "including indentation. Output a "
+                                "focused patch that touches only the "
+                                "listed lines. Do NOT rewrite "
+                                "whole functions or files.\n\n"
                                 "Output format (strictly a patch):\n"
                                 f"[PATCH: {rel_file}]\n@@ -line,count +line,count @@\n"
                                 " unchanged line\n-removed line\n+added line\n"
@@ -2525,9 +2603,9 @@ class FixCommand(Command):
                                 user_sections[0]
                                 + "\n\nPrevious patch attempts failed:\n"
                                 + fail_summary
-                                + "\n\n"
-                                "Output ONLY a minimal [PATCH:] fixing this one error. "
-                                "Copy the context lines character-for-character from the window above."
+                                + "\n\nOutput ONLY a minimal [PATCH:] fixing "
+                                "this one error. Copy the context lines "
+                                "character-for-character from the window above."
                             ),
                         },
                     ]
@@ -2553,7 +2631,9 @@ class FixCommand(Command):
                         )
                         if new_sigs:
                             print(
-                                f"  Single-error fix introduced {len(new_sigs)} new error(s) elsewhere ({next(iter(sorted(new_sigs)))}) — restoring previous version"
+                                f"  Single-error fix introduced {len(new_sigs)} new "
+                                f"error(s) elsewhere ({next(iter(sorted(new_sigs)))}) "
+                                f"— restoring previous version"
                             )
                             with open(full, "w", encoding="utf-8") as f:
                                 f.write(prev)
@@ -2561,21 +2641,24 @@ class FixCommand(Command):
                             continue
                         if len(remaining) > count_before:
                             print(
-                                f"  Single-error fix regressed: {count_before} -> {len(remaining)} errors — restoring previous version"
+                                f"  Single-error fix regressed: {count_before} -> "
+                                f"{len(remaining)} errors — restoring previous version"
                             )
                             with open(full, "w", encoding="utf-8") as f:
                                 f.write(prev)
                             remaining = before_errs[len(slice_errs) :]
                             continue
                         print(
-                            f"  Single-error fallback applied: {len(remaining)} error(s) remaining"
+                            f"  Single-error fallback applied: "
+                            f"{len(remaining)} error(s) remaining"
                         )
                         if not remaining:
                             break
                         continue
                     remaining = remaining[len(slice_errs) :]
                     print(
-                        f"  No usable fix for these {len(slice_errs)} error(s) — skipping them"
+                        f"  No usable fix for these "
+                        f"{len(slice_errs)} error(s) — skipping them"
                     )
                     continue
                 r = _run_capped(
@@ -2584,7 +2667,8 @@ class FixCommand(Command):
                 )
                 if r.returncode != 0:
                     print(
-                        f"  Fix introduced a compile error — restoring previous version\n  {r.stderr.strip()[:200]}"
+                        f"  Fix introduced a compile error — restoring "
+                        f"previous version\n  {r.stderr.strip()[:200]}"
                     )
                     with open(full, "w", encoding="utf-8") as f:
                         f.write(prev)
@@ -2596,7 +2680,8 @@ class FixCommand(Command):
                 )
                 if new_sigs:
                     print(
-                        f"  Fix introduced {len(new_sigs)} new error(s) elsewhere ({next(iter(sorted(new_sigs)))}) — restoring previous version"
+                        f"  Fix introduced {len(new_sigs)} new error(s) elsewhere "
+                        f"({next(iter(sorted(new_sigs)))}) — restoring previous version"
                     )
                     with open(full, "w", encoding="utf-8") as f:
                         f.write(prev)
@@ -2604,14 +2689,16 @@ class FixCommand(Command):
                     continue
                 if len(remaining) > count_before:
                     print(
-                        f"  Fix regressed: {count_before} -> {len(remaining)} errors — restoring previous version"
+                        f"  Fix regressed: {count_before} -> "
+                        f"{len(remaining)} errors — restoring previous version"
                     )
                     with open(full, "w", encoding="utf-8") as f:
                         f.write(prev)
                     remaining = before_errs[len(slice_errs) :]
                     continue
                 print(
-                    f"  Attempt {attempt + 1}: {len(remaining)} error(s) remaining in {rel_file}"
+                    f"  Attempt {attempt + 1}: {len(remaining)} "
+                    f"error(s) remaining in {rel_file}"
                 )
                 if not remaining:
                     break
@@ -2783,7 +2870,8 @@ class FixCommand(Command):
                     # improvement check compares against the untouched file
                     baseline = mypy_sigs()
                 print(
-                    f"  mechanical {label} @ {rel_file}:{lineno} — {err.split('error: ')[-1][:70]}"
+                    f"  mechanical {label} @ {rel_file}:{lineno} "
+                    f"— {err.split('error: ')[-1][:70]}"
                 )
                 if not save_file_py(full, joined, auto_yes=auto_yes):
                     # declined (n) or stopped (s/q): remember the candidate so
@@ -2801,7 +2889,8 @@ class FixCommand(Command):
                 count_after = file_error_count(new_sigs)
                 if new_only or count_after >= count_before:
                     print(
-                        f"    reverted — {len(new_only)} new signature(s) elsewhere, file {count_before}->{count_after}"
+                        f"    reverted — {len(new_only)} new signature(s) "
+                        f"elsewhere, file {count_before}->{count_after}"
                     )
                     with open(full, "w", encoding="utf-8") as f:
                         f.write("\n".join(before))
@@ -2932,7 +3021,8 @@ class FixCommand(Command):
                     failed_attempts += 1
                 if failed_attempts >= 4:
                     print(
-                        "  Too many failed patch attempts in this response — skipping the rest."
+                        "  Too many failed patch attempts in "
+                        "this response — skipping the rest."
                     )
                     break
                 continue
@@ -2944,7 +3034,8 @@ class FixCommand(Command):
             result, added = _ensure_typing_imports(result)
             if added:
                 print(
-                    f"  [fix] added missing import(s) the patch needed: {', '.join(added)}"
+                    f"  [fix] added missing import(s) "
+                    f"the patch needed: {', '.join(added)}"
                 )
             if _has_return_error and _return_error_line is not None:
                 from agent_core.commands.fix_cmd import (
@@ -2961,8 +3052,10 @@ class FixCommand(Command):
                     patched_func_src = "\n".join(patched_func_lines)
                     if _function_can_fall_off_end(patched_func_src, _return_error_line):
                         print(
-                            "  WARNING: patch does not resolve 'Missing return statement' "
-                            f"at line {_return_error_line} — function still falls off the end"
+                            "  WARNING: patch does not resolve "
+                            "'Missing return statement' "
+                            f"at line {_return_error_line} — "
+                            f"function still falls off the end"
                         )
             _show_targeted_issues()
             if not auto_yes and context_errors:
@@ -2977,7 +3070,8 @@ class FixCommand(Command):
                         f"Patch rejected — introduces new mypy error(s): {detail}"
                     )
                     print(
-                        "  Rejected patch — it introduces new mypy errors (not applied)."
+                        "  Rejected patch — it introduces "
+                        "new mypy errors (not applied)."
                     )
                     continue
             if save_file_py(full, result, auto_yes=auto_yes):
@@ -3002,19 +3096,22 @@ class FixCommand(Command):
             if len(current.splitlines()) > 200 and len(new_code) > len(current) * 1.5:
                 failures.append(f"Oversized [FILE:] rewrite for {rel_file}")
                 print(
-                    f"  WARNING: [FILE:] content for {rel_file} is an oversized rewrite, skipping (use [PATCH:] instead)"
+                    f"  WARNING: [FILE:] content for {rel_file} is an "
+                    f"oversized rewrite, skipping (use [PATCH:] instead)"
                 )
                 continue
             if len(current.splitlines()) > 200 and len(new_code) < len(current) * 0.3:
                 failures.append(f"Shrinking [FILE:] rewrite for {rel_file}")
                 print(
-                    f"  WARNING: [FILE:] content for {rel_file} drops more than 70% of the file, skipping (use [PATCH:] instead)"
+                    f"  WARNING: [FILE:] content for {rel_file} drops more "
+                    f"than 70% of the file, skipping (use [PATCH:] instead)"
                 )
                 continue
             new_code, added = _ensure_typing_imports(new_code)
             if added:
                 print(
-                    f"  [fix] added missing import(s) the patch needed: {', '.join(added)}"
+                    f"  [fix] added missing import(s) "
+                    f"the patch needed: {', '.join(added)}"
                 )
             _show_targeted_issues()
             if not auto_yes and context_errors:
@@ -3029,7 +3126,8 @@ class FixCommand(Command):
                         f"Patch rejected — introduces new mypy error(s): {detail}"
                     )
                     print(
-                        "  Rejected patch — it introduces new mypy errors (not applied)."
+                        "  Rejected patch — it introduces "
+                        "new mypy errors (not applied)."
                     )
                     continue
             if save_file_py(full, new_code, auto_yes=auto_yes):
@@ -3041,7 +3139,10 @@ class FixCommand(Command):
         if applied:
             changelog_path = os.path.join(ws_dir, "CHANGES.md")
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-            entry = f"\n## {timestamp} — fix --mypy\n\n**Change**: Modified `{os.path.basename(full)}`\n**Reason**: mypy error fixes\n"
+            entry = (
+                f"\n## {timestamp} — fix --mypy\n\n**Change**: Modified "
+                f"`{os.path.basename(full)}`\n**Reason**: mypy error fixes\n"
+            )
             try:
                 with open(changelog_path, "a", encoding="utf-8") as cl:
                     cl.write(entry)
@@ -3108,7 +3209,8 @@ class FixCommand(Command):
 
         if not patched_counts:
             print(
-                "  [verify] patched file is mypy-clean — fixes all targeted errors, no new errors. → y"
+                "  [verify] patched file is mypy-clean — "
+                "fixes all targeted errors, no new errors. → y"
             )
             return set()
 
@@ -3231,7 +3333,8 @@ class FixCommand(Command):
                 out[fpath] = result
             else:
                 print(
-                    f"  [propose] candidate patch for {fpath} not applied: {str(result)[:120]}"
+                    f"  [propose] candidate patch for "
+                    f"{fpath} not applied: {str(result)[:120]}"
                 )
         fixes = re.findall(
             r"\[FILE:\s*([^\]]+)\]\s*\n*(?:```\w*\n)?(.*?)\n```", clean, re.DOTALL
@@ -3349,7 +3452,8 @@ class FixCommand(Command):
             print(f"  Could not parse patch for {fpath}")
             return False
 
-        # Filter out broken hunks (incomplete: has - but no +, empty + lines, or incomplete lines)
+        # Filter out broken hunks (incomplete: has - but no +, empty + lines, or
+        # incomplete lines)
         incomplete_ops = ("=", "+", "-", "*", "/", ",", "(", "[", "{")
         valid_hunks = []
         for start, chunks in hunks:
@@ -3399,7 +3503,8 @@ class FixCommand(Command):
                             padded = True
                     if actual.strip() != text.strip():
                         print(
-                            f"  Patch mismatch at line {idx + 1}: expected '{text[:60]}', got '{actual[:60]}'"
+                            f"  Patch mismatch at line {idx + 1}: "
+                            f"expected '{text[:60]}', got '{actual[:60]}'"
                         )
                         return False
                     idx += 1
@@ -3563,7 +3668,8 @@ class FixCommand(Command):
                         continue
                     if root_file != fpath:
                         print(
-                            f"\n  Root cause is in {root_file}:{root_ln}, not in {fpath}"
+                            f"\n  Root cause is in "
+                            f"{root_file}:{root_ln}, not in {fpath}"
                         )
                         print(f"  Fixing {root_file} instead...")
                         fpath = root_file
@@ -3580,7 +3686,8 @@ class FixCommand(Command):
                 if shadow_match:
                     shadowed = shadow_match.group(1)
                     print(
-                        f"\n  Shadow warning: local file is conflicting with stdlib module '{shadowed}'"
+                        f"\n  Shadow warning: local file is "
+                        f"conflicting with stdlib module '{shadowed}'"
                     )
                     ws = os.path.dirname(os.path.abspath(fpath))
                     for root, _dirs, files in os.walk(ws):
@@ -3588,15 +3695,18 @@ class FixCommand(Command):
                             if fn == f"{shadowed}.py":
                                 candidate = os.path.normpath(os.path.join(root, fn))
                                 print(
-                                    f"  The local file {candidate} shadows '{shadowed}' from the Python stdlib."
+                                    f"  The local file {candidate} shadows "
+                                    f"'{shadowed}' from the Python stdlib."
                                 )
                                 print(
-                                    f"  Fix: rename or move it (e.g. {shadowed}_defs.py or put it inside a package)."
+                                    f"  Fix: rename or move it (e.g. "
+                                    f"{shadowed}_defs.py or put it inside a package)."
                                 )
                         _dirs[:] = []
                         break
                     print(
-                        "  Skipping LLM fix — this is a naming conflict, not a code error."
+                        "  Skipping LLM fix — this is a "
+                        "naming conflict, not a code error."
                     )
                     return True
 
@@ -3605,7 +3715,8 @@ class FixCommand(Command):
                 f"\n  Skipping: {fpath} is a stdlib file (under Python installation)."
             )
             print(
-                "  The root cause is likely a local file shadowing a stdlib module name."
+                "  The root cause is likely a local "
+                "file shadowing a stdlib module name."
             )
             return True
 
@@ -3666,11 +3777,25 @@ class FixCommand(Command):
             print(f"\n  Found {len(all_broken)} broken imports in {fpath}:")
             for mod, name, src_file, avail in all_broken:
                 print(
-                    f"    '{name}' from '{mod}' not found. Available: {', '.join(avail[:5])}"
+                    f"    '{name}' from '{mod}' not found. "
+                    f"Available: {', '.join(avail[:5])}"
                 )
 
         print("\nSending to LLM for fix...")
-        fix_system = "Fix ALL broken imports in this file. Use ONLY imports that exist in the project. Keep stdlib/third-party imports unchanged. No duplicate functions. No _v1/_v2 variants.\n\nWhen fixing type errors (arg-type, incompatible type), search the ENTIRE file for where the variable is defined/initialized, not just where the error occurs. Fix the initialization to use the correct type. Do NOT change function signatures.\n\nOutput the fix using ONE of these formats:\n[PATCH: filename.py] — for small fixes near the error line\n[FILE: filename.py] — when the fix is far from the error or needs full context\n\n[PATCH:] example:\n[PATCH: filename.py]\n@@ -10,3 +10,2 @@\n- old line\n+ new line\n\n[FILE:] example:\n[FILE: filename.py]\n```python\n# complete corrected file\n```"
+        fix_system = (
+            "Fix ALL broken imports in this file. Use ONLY imports that exist "
+            "in the project. Keep stdlib/third-party imports unchanged. No "
+            "duplicate functions. No _v1/_v2 variants.\n\nWhen fixing type "
+            "errors (arg-type, incompatible type), search the ENTIRE file for "
+            "where the variable is defined/initialized, not just where the "
+            "error occurs. Fix the initialization to use the correct type. Do "
+            "NOT change function signatures.\n\nOutput the fix using ONE of "
+            "these formats:\n[PATCH: filename.py] — for small fixes near the "
+            "error line\n[FILE: filename.py] — when the fix is far from the "
+            "error or needs full context\n\n[PATCH:] example:\n[PATCH: "
+            "filename.py]\n@@ -10,3 +10,2 @@\n- old line\n+ new line\n\n[FILE:] "
+            "example:\n[FILE: filename.py]\n```python\n# complete corrected file\n```"
+        )
         # Inject past decisions as constraints (ledger is at the workspace
         # root; _decision_constraints_for walks up to find it and passes the
         # absolute path so canonical affected_files matching works).
@@ -3732,14 +3857,18 @@ class FixCommand(Command):
             {"role": "system", "content": fix_system},
             {
                 "role": "user",
-                "content": f"Fix ALL errors in {fpath}:\n\nError from traceback at line {line_num}:\n{error_msg}\n\nAll broken imports in this file (must fix ALL):\n"
+                "content": f"Fix ALL errors in {fpath}:\n\nError from "
+                f"traceback at line {line_num}:\n{error_msg}\n\nAll "
+                f"broken imports in this file (must fix ALL):\n"
                 + "\n".join(
                     [
-                        f"  import '{n}' from '{m}' — not found. Available in {s}: {', '.join(a[:8])}"
+                        f"  import '{n}' from '{m}' — not found. "
+                        f"Available in {s}: {', '.join(a[:8])}"
                         for m, n, s, a in all_broken
                     ]
                 )
-                + f"\n\nFull traceback:\n{traceback_text}\n\nCurrent code:\n```python\n{current_code}\n```",
+                + f"\n\nFull traceback:\n{traceback_text}\n\nCurrent "
+                f"code:\n```python\n{current_code}\n```",
             },
         ]
         fixed = await agent.llm.chat(fix_msgs)
@@ -3786,7 +3915,10 @@ class FixCommand(Command):
 
                 changelog_path = os.path.join(str(Path(fpath).parent), "CHANGES.md")
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-                entry = f"\n## {timestamp} — fix\n\n**Change**: Modified `{os.path.basename(fpath)}`\n**Reason**: {error_msg[:200]}\n"
+                entry = (
+                    f"\n## {timestamp} — fix\n\n**Change**: Modified "
+                    f"`{os.path.basename(fpath)}`\n**Reason**: {error_msg[:200]}\n"
+                )
                 with open(changelog_path, "a", encoding="utf-8") as cl:
                     cl.write(entry)
 
@@ -3811,11 +3943,13 @@ class FixCommand(Command):
                 candidates = await extract_from_changes(
                     agent,
                     [basename],
-                    context=f"Fixed {fpath}: {error_msg[:300] if error_msg else 'unknown error'}",
+                    context=f"Fixed {fpath}: "
+                    f"{error_msg[:300] if error_msg else 'unknown error'}",
                 )
                 if candidates:
                     print(
-                        f"\n[decide] Extracted {len(candidates)} decision candidates from this fix:"
+                        f"\n[decide] Extracted {len(candidates)} "
+                        f"decision candidates from this fix:"
                     )
                     for i, c in enumerate(candidates, 1):
                         print(f"  {i}. {c.get('title', 'Untitled')}")

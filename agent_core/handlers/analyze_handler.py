@@ -91,8 +91,10 @@ class AnalyzeCommand:
     ) -> list[tuple[str, list[str], str | None]]:
         """Extract function signatures by walking the AST.
 
-        The previous regex fallback was broken (searched ``tree.body.__class__.__name__``
-        which is literally the string ``"Module"``).  AST traversal alone covers all valid
+ \
+       The previous regex fallback was broken (searched ``tree.body.__class__.__name__``
+  \
+      which is literally the string ``"Module"``).  AST traversal alone covers all valid
         Python source, so the buggy fallback has been removed entirely.
         """
         signatures: list[tuple[str, list[str], str | None]] = []

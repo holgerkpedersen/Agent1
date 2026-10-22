@@ -59,7 +59,9 @@ class DisplayMode(str, enum.Enum):
     VERBOSE = "verbose"  # every call + full (truncated) result shown
     CLEAN = "clean"  # reason line per call; results summarized for display only
     QUIET = "quiet"  # tool calls/results hidden; only final answer printed
-    INTENT = "intent"  # per LLM round: model's intent + planned calls shown BEFORE execution, then verbose lines
+    # per LLM round: model's intent + planned calls shown BEFORE execution,
+    # then verbose lines
+    INTENT = "intent"
 
 
 #: Injected into the history when only a few iterations remain, so the model
@@ -1214,7 +1216,8 @@ class ToolLoopRunner:
                 if self.display_mode != DisplayMode.QUIET:
                     if self.display_mode == DisplayMode.CLEAN:
                         print(
-                            f"  {yellow('[reason]')} {_derive_reason(tool_name, args, prev_text)}"
+                            f"  {yellow('[reason]')} "
+                            f"{_derive_reason(tool_name, args, prev_text)}"
                         )
                         summary = _summarize_result(tool_name, result_str)[
                             :_RESULT_DISPLAY_LIMIT
@@ -1350,9 +1353,10 @@ class ToolLoopRunner:
                         total_runs,
                         seen_calls.get(call_key, 1) if seen_calls is not None else 1,
                     )
-                    # If the repeated call's prior result was a missing path and this
-                    # tool can follow up with a listing, recover before declaring stuck —
-                    # an invented-path retry gets un-stuck instead of dead-ending (decision #035).
+                    # If the repeated call's prior result was a missing path and
+                    # this tool can follow up with a listing, recover before
+                    # declaring stuck — an invented-path retry gets un-stuck
+                    # instead of dead-ending (decision #035).
                     if (
                         _is_path_miss(prev_result)
                         and tool_name in _PATH_SENSITIVE_TOOLS
@@ -1378,9 +1382,9 @@ class ToolLoopRunner:
                         # Third consecutive identical call: the model is stuck.
                         # Stop the loop right here and force a text answer.
                         result_str = (
-                            "NOTE: This identical call has now been made three times in a "
-                            "row with the same result. Stop repeating it — take a different "
-                            "action or give your final answer now."
+                            "NOTE: This identical call has now been made three "
+                            "times in a row with the same result. Stop repeating it "
+                            "— take a different action or give your final answer now."
                         )
                         stuck = True
                         self._emit(
@@ -1394,8 +1398,10 @@ class ToolLoopRunner:
                     else:
                         result_str = (
                             f"NOTE: This exact call has now been executed {total_runs} "
-                            f"time(s) in this conversation (result: {prev_result[:160]}). "
-                            "It is not re-executed — unless the file changed, the result is "
+                            f"time(s) in this conversation "
+                            f"(result: {prev_result[:160]}). "
+                            "It is not re-executed — unless the file changed, "
+                            "the result is "
                             "identical. "
                             + _REPEAT_HINTS.get(tool_name, _REPEAT_HINT_DEFAULT)
                         )
@@ -1411,11 +1417,13 @@ class ToolLoopRunner:
                     )
                     if self.display_mode != DisplayMode.QUIET:
                         print(
-                            f"  {yellow('[tool]')} {cyan(tool_name)}({gray(_fmt_args(args))}) (duplicate, not re-executed)"
+                            f"  {yellow('[tool]')} {cyan(tool_name)}"
+                            f"({gray(_fmt_args(args))}) (duplicate, not re-executed)"
                         )
                         if self.display_mode == DisplayMode.CLEAN:
                             print(
-                                f"  {yellow('[reason]')} {_derive_reason(tool_name, args, prev_text)}"
+                                f"  {yellow('[reason]')} "
+                                f"{_derive_reason(tool_name, args, prev_text)}"
                             )
                             summary = _summarize_result(tool_name, result_str)[
                                 :_RESULT_DISPLAY_LIMIT
@@ -1774,7 +1782,9 @@ class ToolLoopRunner:
         return True
 
 
-def _print_intent(iteration: int, narration: str, tool_calls: list[Any], prev_result: str = "") -> None:
+def _print_intent(
+    iteration: int, narration: str, tool_calls: list[Any], prev_result: str = ""
+) -> None:
     """INTENT display: print one block per LLM round before its tool calls run.
 
     Shows the model's own narration (printed in FULL — never truncated) and,
@@ -1849,7 +1859,9 @@ def _fmt_args_full(args: dict[str, Any]) -> str:
     return ", ".join(f"{key}={value}" for key, value in args.items())
 
 
-def _derive_reason(tool_name: str, args: dict[str, Any], prior_text: str | None, prev_result: str = "") -> str:
+def _derive_reason(
+    tool_name: str, args: dict[str, Any], prior_text: str | None, prev_result: str = ""
+) -> str:
     """Build a short human-readable reason for why a tool call was made.
 
     Uses the model's own reasoning when it supplied one (via ``assistant``
@@ -1860,10 +1872,15 @@ def _derive_reason(tool_name: str, args: dict[str, Any], prior_text: str | None,
     if prior_text:
         first = " ".join(prior_text.split())[:260]
         return f"{tool_name}({_fmt_args(args)}) — {first}"
-    return f"{tool_name}({_fmt_args(args)}) — {_short_intent_why(tool_name, args, prev_result)}"
+    return (
+        f"{tool_name}({_fmt_args(args)}) — "
+        f"{_short_intent_why(tool_name, args, prev_result)}"
+    )
 
 
-def _short_intent_why(tool_name: str, args: dict[str, Any], prev_result: str = "") -> str:
+def _short_intent_why(
+    tool_name: str, args: dict[str, Any], prev_result: str = ""
+) -> str:
     """Short explanation for ONE planned call when the model wrote no narration.
 
     Heuristic keyed on the tool name + arguments.  Shared by INTENT mode (the

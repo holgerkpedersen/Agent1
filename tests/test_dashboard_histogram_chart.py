@@ -109,13 +109,15 @@ def test_index_has_chart_scaffolding_and_styles() -> None:
     # NOT on the outer #hgram-chart wrapper - otherwise the X-axis tick row
     # overflows onto the stat chips below. Both must hold.
     assert re.search(r"\.hgram-chart-inner\s*\{[^}]*align-items:\s*stretch", html), (
-        ".hgram-chart-inner needs align-items:stretch or every bar collapses to 0 height"
+        ".hgram-chart-inner needs align-items:stretch "
+        "or every bar collapses to 0 height"
     )
     assert re.search(r"\.hgram-chart-inner\s*\{[^}]*height:\s*240px", html), (
         ".hgram-chart-inner must keep the fixed 240px bar height"
     )
     assert re.search(r"\.hgram-chart\s*\{[^}]*display:\s*block", html), (
-        "outer #hgram-chart must be a plain block wrapper so the X-axis cannot overflow onto the stat chips"
+        "outer #hgram-chart must be a plain block wrapper "
+        "so the X-axis cannot overflow onto the stat chips"
     )
 
 
@@ -181,24 +183,22 @@ def test_render_chart_emits_axis_labels_and_all_three_views() -> None:
     p = re.search(r"function percentile\(sortedAsc, q\) \{.*?\n    \}", html, re.S)
     assert p, "percentile() not found in index.html"
     js = (
-        render
-        + "\n"
-        + p.group(0)
-        + "\n"
-        + b.group(0)
-        + r"""
+        render + "\n" + p.group(0) + "\n" + b.group(0) + r"""
       const vals = [0.12,0.13,0.14,0.15,0.18,0.22,0.31,0.40,1.20,2.50];
       const out = {};
       // Stable fake elements so renderChart writes into the same objects we read.
       const els = {
         'hgram-chart': { innerHTML: '', style: {}, textContent: '',
-                         addEventListener: function(){}, querySelector: function(){return null;} },
+                         addEventListener: """
+        r"""function(){}, querySelector: function(){return null;} },
         'hgram-caption': { innerHTML: '', style: {}, textContent: '',
-                           addEventListener: function(){}, querySelector: function(){return null;} },
+                           addEventListener: """
+        r"""function(){}, querySelector: function(){return null;} },
       };
       function fakeEl() {
         return { innerHTML: '', style: {}, textContent: '',
-                 addEventListener: function(){}, querySelector: function(){return null;} };
+                 addEventListener: function(){}, """
+        r"""querySelector: function(){return null;} };
       }
       function setView(v) {
         global.document.querySelector = function(sel){
@@ -282,10 +282,12 @@ def test_axis_indicators_only_with_data_and_never_overlap_stats(base_url: str) -
         def render(vals):
             page.evaluate(
                 """(v) => {
-                    const panel = document.querySelector('[data-view-panel="histogram"]');
+  \
+                  const panel = document.querySelector('[data-view-panel="histogram"]');
                     if (panel) panel.hidden = false;
                     const sel = document.getElementById('hgram-select');
-                    sel.innerHTML = '<option value="command.elapsed.seconds">command.elapsed.seconds (10)</option>';
+                    sel.innerHTML \
+= '<option value="command.elapsed.seconds">command.elapsed.seconds (10)</option>';
                     sel.value = 'command.elapsed.seconds';
                     window.__hgramSamples = {'command.elapsed.seconds': v};
                     document.getElementById('hgram-view-bars').checked = true;

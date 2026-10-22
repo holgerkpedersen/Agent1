@@ -109,7 +109,8 @@ class TestPlannedDuplicates:
         shared."""
         (tmp_path / "agent_core" / "security").mkdir(parents=True)
         (tmp_path / "agent_core" / "security" / "sanitizer.py").write_text(
-            '"""Input sanitizer stripping shell-injection payloads before re-injection."""\nX = 1\n',
+            '"""Input sanitizer stripping shell-injection '
+            'payloads before re-injection."""\nX = 1\n',
             encoding="utf-8",
         )
         taskplan = (
@@ -160,7 +161,8 @@ class TestPlannedDuplicates:
         ``print()`` in the duplicate gate (UnicodeEncodeError)."""
         (tmp_path / "agent_core" / "security").mkdir(parents=True)
         (tmp_path / "agent_core" / "security" / "sanitizer.py").write_text(
-            '"""Input sanitizer stripping shell-injection payloads before re-injection."""\nX = 1\n',
+            '"""Input sanitizer stripping shell-injection '
+            'payloads before re-injection."""\nX = 1\n',
             encoding="utf-8",
         )
         taskplan = (
@@ -539,7 +541,10 @@ class TestDependencyCascadeSafety:
         async def chat(messages, **kwargs):
             last_user = messages[-1]["content"] if messages else ""
             if "pkg/sibling.py" in last_user:
-                return "[FILE: pkg/sibling.py]\n```python\ndef sibling_v2():\n    return 2\n```\n"
+                return (
+                    "[FILE: pkg/sibling.py]\n```python\ndef "
+                    "sibling_v2():\n    return 2\n```\n"
+                )
             return (
                 "[FILE: pkg/mod_me.py]\n```python\ndef mod_v2():\n    return 3\n```\n"
             )
@@ -652,7 +657,10 @@ class TestFixBlockParsing:
     def test_patch_block_at_start_matches(self) -> None:
         from agent_core.commands.implement_cmd import _find_patch_block
 
-        resp = "[PATCH: tool_router.py]\n@@ -316,7 +316,7 @@\n-                prev = range(len(s2) + 1)\n+                prev = list(range(len(s2) + 1))\n"
+        resp = (
+            "[PATCH: tool_router.py]\n@@ -316,7 +316,7 @@\n-                prev = "
+            "range(len(s2) + 1)\n+                prev = list(range(len(s2) + 1))\n"
+        )
         m = _find_patch_block(resp)
         assert m is not None, "patch at position 0 must be found (pos=16 bug)"
         assert m.group(1).strip() == "tool_router.py"

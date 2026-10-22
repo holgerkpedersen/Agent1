@@ -1,4 +1,7 @@
-"""Benchmark tests for security primitives: path traversal, injection, and allow-list validation."""
+(
+    """Benchmark tests for security primitives: path """
+    """traversal, injection, and allow-list validation."""
+)
 
 from __future__ import annotations
 

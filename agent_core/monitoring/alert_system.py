@@ -79,7 +79,10 @@ class AlertSystem:
         raise ValueError(f"Unknown comparison operator: {operator}")
 
     def evaluate(self, rules: Optional[List[AlertRule]] = None) -> List[AlertEvent]:
-        """Evaluate alert rules against current metrics; returns newly triggered events."""
+        (
+            """Evaluate alert rules against current """
+            """metrics; returns newly triggered events."""
+        )
         rule_list: List[AlertRule] = (
             list(rules) if rules is not None else list(self._rules.values())
         )

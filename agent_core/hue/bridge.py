@@ -9,7 +9,8 @@ Usage::
     bridge = HueBridge.from_env()
     lights = await bridge.list_lights()
     info   = await bridge.get_light("3")
-    await bridge.set_light("3", on=True, brightness=80, mirek=366)  # Warm white (V1 API)
+ \
+   await bridge.set_light("3", on=True, brightness=80, mirek=366)  # Warm white (V1 API)
     await bridge.set_light_color("3", r=255, g=0, b=0)              # Red (V2 API)
 
 The library supports both V1 and V2 APIs:
@@ -272,11 +273,13 @@ class HueBridge:
                 f"{resp.text[:200]}"
             ) from exc
 
-        # Check for API error list in the body (Hue returns errors as [{"error": {...}}])
+        # Check for API error list in the body (Hue returns errors as [{"error":
+        # {...}}])
         if isinstance(data, list) and len(data) > 0:
             first_item = data[0]
             if isinstance(first_item, dict):
-                # Hue V1 API wraps errors as {"error": {"type", "address", "description"}}
+                # Hue V1 API wraps errors as {"error": {"type", "address",
+                # "description"}}
                 nested_error = first_item.get("error")
                 desc = ""
                 if isinstance(nested_error, dict):
@@ -318,13 +321,15 @@ class HueBridge:
                 "Check your HUE_API_KEY."
             )
 
-        # Check for API error list in the body (Hue returns errors as [{"error": {...}}])
+        # Check for API error list in the body (Hue returns errors as [{"error":
+        # {...}}])
         try:
             data = resp.json()
             if isinstance(data, list) and len(data) > 0:
                 first_item = data[0]
                 if isinstance(first_item, dict):
-                    # Hue V1 API wraps errors as {"error": {"type", "address", "description"}}
+                    # Hue V1 API wraps errors as {"error": {"type", "address",
+                    # "description"}}
                     nested_error = first_item.get("error")
                     desc = ""
                     if isinstance(nested_error, dict):
@@ -494,12 +499,14 @@ class HueBridge:
         Args:
             light_id: The Hue V1 ID of the light (e.g. "3").
             on:       True to turn on, False to turn off. None = leave unchanged.
-            brightness: Brightness percentage 0.0–100.0 (0 = off). None = leave unchanged.
+  \
+          brightness: Brightness percentage 0.0–100.0 (0 = off). None = leave unchanged.
             mirek:    Color temperature in mired (153 = cool/blue, 500 = warm/orange).
                       None = leave unchanged.
 
         Raises:
-            HueBridgeError: If no state changes are specified or if the light is invalid.
+ \
+           HueBridgeError: If no state changes are specified or if the light is invalid.
         """
         payload: dict[str, Any] = {}
         if on is not None:
@@ -608,7 +615,8 @@ class HueBridge:
                       (light off) and is honoured rather than treated as unset.
 
         Raises:
-            HueBridgeError: If no color parameters are specified or if the light is invalid.
+    \
+        HueBridgeError: If no color parameters are specified or if the light is invalid.
         """
         payload: dict[str, Any] = {"on": True}  # Ensure light is on when setting color
 
@@ -670,7 +678,8 @@ class HueBridge:
 
         Args:
             light_id: The Hue V1 ID of the light.
-            name: Color name string or HSV specification like "red" or "h=240,s=100,v=80".
+  \
+          name: Color name string or HSV specification like "red" or "h=240,s=100,v=80".
             brightness: Brightness percentage (default 100%). None = use current.
 
         Raises:

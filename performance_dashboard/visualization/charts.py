@@ -102,7 +102,8 @@ class TimeSeriesPlotter(TemporalRenderer):
         x_end = self._x_for_timestamp(t_high, t_low, t_high)
         y_end = self._y_for_value(trend_end_v, v_low, v_high)
         markup: List[str] = [
-            f'<line x1="{x_start:.2f}" y1="{y_base:.2f}" x2="{x_end:.2f}" y2="{y_end:.2f}" stroke="steelblue" stroke-width="2" />'
+            f'<line x1="{x_start:.2f}" y1="{y_base:.2f}" x2="{x_end:.2f}" '
+            f'y2="{y_end:.2f}" stroke="steelblue" stroke-width="2" />'
         ]
         if result.anomaly_detected:
             markup.append(
@@ -138,12 +139,16 @@ class TimeSeriesPlotter(TemporalRenderer):
         trend = self._trend_overlay(t_low, t_high, v_vals[0], v_low, v_high)
         start_label = format_display_label(normalize_timezone(t_low))
         x_start_lbl = self._x_for_timestamp(t_low, t_low, t_high)
-        label = f'<text x="{x_start_lbl:.2f}" y="{self.height - 10:.2f}" fill="black">{start_label}</text>'
+        label = (
+            f'<text x="{x_start_lbl:.2f}" y="{self.height - 10:.2f}" '
+            f'fill="black">{start_label}</text>'
+        )
         markup: List[str] = [
             '<polyline points="'
             + " ".join(f"{x:.2f},{y:.2f}" for x, y in line_pts)
             + '" fill="none" stroke="steelblue" stroke-width="1.5" />',
-            f'<polygon fill="steelblue" fill-opacity="0.18" stroke="none">{band}</polygon>'
+            f'<polygon fill="steelblue" fill-opacity="0.18" '
+            f'stroke="none">{band}</polygon>'
             if band
             else "",
             trend,
@@ -211,7 +216,8 @@ class DistributionHistogram(HistogramBuilder):
             )
             y = self.height - self.margin - bh
             parts.append(
-                f'<rect x="{x:.2f}" y="{y:.2f}" width="{bar_w:.2f}" height="{bh:.2f}" fill="seagreen" stroke="white" />'
+                f'<rect x="{x:.2f}" y="{y:.2f}" width="{bar_w:.2f}" '
+                f'height="{bh:.2f}" fill="seagreen" stroke="white" />'
             )
 
         stats: List[str] = []
@@ -222,7 +228,9 @@ class DistributionHistogram(HistogramBuilder):
                 ("p95", summary.percentile_95),
             ]:
                 stats.append(
-                    f'<text x="{self.margin:.2f}" y="{self.margin + 14 * len(stats):.2f}" fill="black">{label}={val:.2f}</text>'
+                    f'<text x="{self.margin:.2f}" '
+                    f'y="{self.margin + 14 * len(stats):.2f}" '
+                    f'fill="black">{label}={val:.2f}</text>'
                 )
         return "<g>" + " ".join(parts) + " ".join(stats) + "</g>"
 
@@ -273,19 +281,24 @@ class ComparativeBarChart(HistogramBuilder):
             )
             y = self.height - self.margin - bh
             parts.append(
-                f'<rect x="{x:.2f}" y="{y:.2f}" width="{bar_w:.2f}" height="{bh:.2f}" fill="darkorange" stroke="white" />'
+                f'<rect x="{x:.2f}" y="{y:.2f}" width="{bar_w:.2f}" '
+                f'height="{bh:.2f}" fill="darkorange" stroke="white" />'
             )
             parts.append(
-                f'<text x="{x + bar_w / 2:.2f}" y="{self.height - self.margin + 14:.2f}" text-anchor="middle" fill="black">{name}</text>'
+                f'<text x="{x + bar_w / 2:.2f}" '
+                f'y="{self.height - self.margin + 14:.2f}" '
+                f'text-anchor="middle" fill="black">{name}</text>'
             )
             if prev_x is not None:
                 delta = abs(means[name] - means[ordered[i - 1]])
                 mid_x = (prev_x + x) / 2.0
                 parts.append(
-                    f'<line x1="{mid_x:.2f}" y1="{self.height - self.margin:.2f}" x2="{mid_x:.2f}" y2="{y:.2f}" stroke="crimson" />'
+                    f'<line x1="{mid_x:.2f}" y1="{self.height - self.margin:.2f}" '
+                    f'x2="{mid_x:.2f}" y2="{y:.2f}" stroke="crimson" />'
                 )
                 parts.append(
-                    f'<text x="{mid_x:.2f}" y="{self.height - self.margin + 30:.2f}" text-anchor="middle" fill="crimson">delta={delta:.2f}</text>'
+                    f'<text x="{mid_x:.2f}" y="{self.height - self.margin + 30:.2f}" '
+                    f'text-anchor="middle" fill="crimson">delta={delta:.2f}</text>'
                 )
             prev_x = x
 
@@ -375,8 +388,9 @@ class SVGExporter(VectorFormatter):
         body = " ".join(fragments)
         style = "<style>.band{fill-opacity:0.18}.line{stroke-width:1.5}</style>"
         return (
-            f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {view_w:.2f} {view_h:.2f}" '
-            f'preserveAspectRatio="xMidYMid meet"><g transform="scale({zoom:.4f})">{style}{body}</g></svg>'
+            f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 '
+            f'{view_w:.2f} {view_h:.2f}" preserveAspectRatio="xMidYMid '
+            f'meet"><g transform="scale({zoom:.4f})">{style}{body}</g></svg>'
         )
 
 

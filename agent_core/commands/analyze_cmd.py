@@ -113,7 +113,10 @@ def _collect_directory_files(root: str) -> list[str]:
 
 
 class AnalyzeCommand(Command):
-    """AI analysis of a file via LM Studio — follows imports and iterates with --desc."""
+    (
+        """AI analysis of a file via LM Studio — """
+        """follows imports and iterates with --desc."""
+    )
 
     @property
     def name(self) -> str:
@@ -152,7 +155,8 @@ class AnalyzeCommand(Command):
         if stdin_mode:
             parts = [p for p in parts if p != "--stdin"]
             content = read_stdin(
-                "Paste text to analyze. Type --- on its own line when done, or Ctrl+Z to finish:"
+                "Paste text to analyze. Type --- on its "
+                "own line when done, or Ctrl+Z to finish:"
             )
             if not content.strip():
                 self.error("No text provided.")
@@ -162,7 +166,8 @@ class AnalyzeCommand(Command):
                 [
                     {
                         "role": "system",
-                        "content": "You are an expert analyst. Answer the question concisely based on the provided text.",
+                        "content": "You are an expert analyst. Answer the "
+                        "question concisely based on the provided text.",
                     },
                     {
                         "role": "user",
@@ -324,7 +329,10 @@ class AnalyzeCommand(Command):
             print(f"  Round 0: followed imports — {', '.join(initial_followed)}")
 
         # Round 1: first answer
-        system = "You are an expert code reviewer. Answer the question concisely using the provided code as reference."
+        system = (
+            "You are an expert code reviewer. Answer the question "
+            "concisely using the provided code as reference."
+        )
         user = (
             f"## Code:\n\n{combined}\n\n## Question:\n{question}"
             if question
@@ -380,7 +388,11 @@ class AnalyzeCommand(Command):
                     {"role": "system", "content": system},
                     {
                         "role": "user",
-                        "content": f"## All code seen so far:\n\n{combined}\n\n## Question:\n{question}\n\nYour previous answer mentioned files listed above as 'referenced in previous answer'. Now that you have their full content, deepen your analysis with more detail about these referenced files.",
+                        "content": f"## All code seen so far:\n\n{combined}\n\n## "
+                        f"Question:\n{question}\n\nYour previous answer mentioned "
+                        f"files listed above as 'referenced in previous answer'. "
+                        f"Now that you have their full content, deepen your "
+                        f"analysis with more detail about these referenced files.",
                     },
                 ]
             )

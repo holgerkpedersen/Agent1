@@ -86,9 +86,9 @@ class TaskplanCommand(Command):
     @property
     def help_text(self) -> str:
         return (
-            "taskplan <analysis.md> <plan.md> [tasks.md] - Generate implementation tasks\n"
-            "  Output is regression-checked (paths, duplicate definitions);\n"
-            "  flagged claims pause for confirmation unless --force."
+            "taskplan <analysis.md> <plan.md> [tasks.md] - Generate implementation "
+            "tasks\n  Output is regression-checked (paths, duplicate "
+            "definitions);\n  flagged claims pause for confirmation unless --force."
         )
 
     async def execute(self, args: list[str], agent: "Agent") -> bool:
@@ -143,16 +143,31 @@ class TaskplanCommand(Command):
         if not pkgs:
             pkgs = ["agent_core", "agent1", "src/agent1"]
         pkg_list = "`, `".join(pkgs[:5])
-        path_rule = f"\n\nPATH RULES: New files MUST use a sub-package prefix (`{pkg_list}/`). BAD: bare filenames or `src/` without subdirectory.\nSIZE RULES: New files max 150 lines (SRP). Split large concepts. Modifying: minimal changes only."
+        path_rule = (
+            f"\n\nPATH RULES: New files MUST use a sub-package prefix "
+            f"(`{pkg_list}/`). BAD: bare filenames or `src/` without "
+            f"subdirectory.\nSIZE RULES: New files max 150 lines (SRP). "
+            f"Split large concepts. Modifying: minimal changes only."
+        )
 
         messages = [
             {
                 "role": "system",
-                "content": "You are an expert project manager. Create a detailed task plan for implementing code changes. Break down work into concrete, actionable tasks with clear descriptions. Include task dependencies and priority.\n\nFollow the PATH and SIZE rules in the prompt below.",
+                "content": "You are an expert project manager. Create a detailed task "
+                "plan for implementing code changes. Break down work into concrete, "
+                "actionable tasks with clear descriptions. Include task dependencies "
+                "and priority.\n\nFollow the PATH and SIZE rules in the prompt below.",
             },
             {
                 "role": "user",
-                "content": f"Create a task implementation plan from this analysis and plan:\n\n## Analysis:\n{analysis_content}\n\n## Plan:\n{plan_content}\n\n## Existing entities.py:\n{entities_content if entities_content else 'No entities.py found'}\n\nGenerate a tasks.md file with specific implementation tasks, organized by file, with clear steps for new and existing files. Ensure tasks respect the entity definitions in entities.py.{collision_warning}{path_rule}",
+                "content": f"Create a task implementation plan from this analysis an"
+                f"d plan:\n\n## Analysis:\n{analysis_content}\n\n## Plan:"
+                f"\n{plan_content}\n\n## Existing entities.py:\n"
+                f"{entities_content if entities_content else 'No entities.py found'}"
+                f"\n\nGenerate a tasks.md file with specific implementat"
+                f"ion tasks, organized by file, with clear steps for new "
+                f"and existing files. Ensure tasks respect the entity de"
+                f"finitions in entities.py.{collision_warning}{path_rule}",
             },
         ]
         tasks = await agent.llm.chat(messages)

@@ -297,7 +297,10 @@ async def test_api_error_in_response_body(monkeypatch: pytest.MonkeyPatch) -> No
 
     mock_resp = MagicMock()
     mock_resp.status_code = 200
-    mock_resp.text = '[{"error": {"type": 5, "address": "/lights", "description": "Invalid request"}}]'
+    mock_resp.text = (
+        '[{"error": {"type": 5, "address": "/lights", '
+        '"description": "Invalid request"}}]'
+    )
     mock_resp.json.return_value = [
         {"error": {"type": 5, "address": "/lights", "description": "Invalid request"}}
     ]
@@ -324,7 +327,10 @@ async def test_put_error_in_body_with_http_200(monkeypatch: pytest.MonkeyPatch) 
 
     mock_resp = MagicMock()
     mock_resp.status_code = 200
-    mock_resp.text = '[{"error":{"type":6,"address":"/lights/3/on","description":"parameter, on, not available"}}]'
+    mock_resp.text = (
+        '[{"error":{"type":6,"address":"/lights/3/on","description":"parameter, '
+        'on, not available"}}]'
+    )
     mock_resp.json.return_value = [
         {
             "error": {

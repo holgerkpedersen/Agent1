@@ -41,7 +41,9 @@ class DisplayCommand(Command):
         if not args:
             print(f"Display mode is '{current.value}'.")
             print(
-                "Options: verbose (every call + result), clean (reason per call, summarized results), quiet (only final answer), intent (model's intent + planned calls before each LLM round's tools run)."
+                "Options: verbose (every call + result), clean (reason per call, "
+                "summarized results), quiet (only final answer), intent (model's "
+                "intent + planned calls before each LLM round's tools run)."
             )
             return True
 
@@ -67,7 +69,8 @@ class DisplayCommand(Command):
                     ef.write(line)
             if not found:
                 ef.write(
-                    f"\n# NLP output verbosity (verbose|clean|quiet)\nAGENT_DISPLAY_MODE={requested}\n"
+                    f"\n# NLP output verbosity "
+                    f"(verbose|clean|quiet)\nAGENT_DISPLAY_MODE={requested}\n"
                 )
 
         print(f"Display mode set to '{requested}' (persisted to .env).")

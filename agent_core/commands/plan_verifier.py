@@ -224,7 +224,10 @@ class PlanVerifier:
         return verify_plan_doc(content, self.workspace)
 
     def verify_no_unsupported_operations(self, content: str) -> tuple[bool, list[str]]:
-        """Block plans containing dangerous operations like 'rm -rf' or 'git reset --hard'."""
+        (
+            """Block plans containing dangerous operations """
+            """like 'rm -rf' or 'git reset --hard'."""
+        )
         dangerous_patterns = [
             r"rm\s+-rf",
             r"git\s+reset\s+--hard",
@@ -313,7 +316,8 @@ def verify_entities_doc(text: str, ws: str | Path) -> PlanCheckResult:
             result.flagged += 1
             spots = ", ".join(f"line {n}" for n in where)
             result.findings.append(
-                f"`{name}` defined {len(where)}× across entity blocks ({spots}) — keep one"
+                f"`{name}` defined {len(where)}× across "
+                f"entity blocks ({spots}) — keep one"
             )
     return result
 

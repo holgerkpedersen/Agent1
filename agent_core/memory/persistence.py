@@ -50,7 +50,9 @@ def _persist_plan_answer(agent: "Agent", plan_text: str) -> None:
 
         out = new_run_dir(agent.workspace) / "plan_proposed.md"
         out.write_text(
-            f"# Proposed plan\n\n_Generated in plan mode on {datetime.now():%Y-%m-%d %H:%M}. Review before applying — switch to build mode to implement._\n\n{plan_text}\n",
+            f"# Proposed plan\n\n_Generated in plan mode on "
+            f"{datetime.now():%Y-%m-%d %H:%M}. Review before applying "
+            f"— switch to build mode to implement._\n\n{plan_text}\n",
             encoding="utf-8",
         )
         print(yellow(f"\n  [plan] Saved to {out}"))
@@ -305,13 +307,16 @@ def _record_llm_experience(
             ensure_attribution_schema(conn)
             if decision_llm is None:
                 cur = conn.execute(
-                    "INSERT INTO experiences (timestamp, action, outcome, context, success) VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO experiences (timestamp, action, "
+                    "outcome, context, success) VALUES (?, ?, ?, ?, ?)",
                     (ts, action, outcome, ctx_str, 1 if success else 0),
                 )
                 conn.commit()
                 return int(cur.lastrowid)
             cur = conn.execute(
-                "INSERT INTO experiences (timestamp, action, outcome, context, success, decision_llm, decision_prompt_hash, decision_timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO experiences (timestamp, action, outcome, "
+                "context, success, decision_llm, decision_prompt_hash, "
+                "decision_timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     ts,
                     action,

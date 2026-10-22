@@ -207,7 +207,8 @@ def _format_http_error(code: int, detail: str) -> str:
         return (
             "[Error: openrouter free-tier model is rate-limited upstream "
             "(HTTP 429). The free tier is throttled — wait a moment or switch to "
-            f"a different free model, e.g. '{OpenRouterProvider.suggest_free_model()}'.]"
+            f"a different free model, e.g. "
+            f"'{OpenRouterProvider.suggest_free_model()}'.]"
         )
     return f"[Error: openrouter API request failed: HTTP Error {code}: {detail}]"
 
@@ -278,7 +279,8 @@ class OpenRouterProvider:
     def _headers(self, json_body: bool = True) -> dict[str, str]:
         headers: dict[str, str] = {
             #: The gateway rejects the default "Python-urllib" user agent.
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "User-"
+            "Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         }
         if json_body:
             headers["Content-Type"] = "application/json"
@@ -446,14 +448,16 @@ class OpenRouterProvider:
                 except Exception as exc2:  # noqa: BLE001 - defensive per-turn
                     return f"[Error: openrouter API request failed: {exc2}]"
 
-            # --- Fix B: credits exhausted — transparently retry with the largest max_tokens we can afford. ---
+            # --- Fix B: credits exhausted — transparently retry with the largest
+            # max_tokens we can afford. ---
             if not repaired and exc.code == 402:
                 affordable = _affordable_tokens(detail)
                 if affordable is not None:
                     new_max = max(1, min(self.max_tokens, affordable))
                     payload["max_tokens"] = new_max
                     logger.info(
-                        "OpenRouter credits exhausted (requested=%s); retrying with max_tokens=%d",
+                        "OpenRouter credits exhausted "
+                        "(requested=%s); retrying with max_tokens=%d",
                         self.max_tokens,
                         new_max,
                     )
@@ -465,7 +469,8 @@ class OpenRouterProvider:
                                 payload,
                                 timeout=self._api_timeout,
                             ),
-                            label=f"openrouter chat/completions (reduced max_tokens={new_max})",
+                            label=f"openrouter chat/completions "
+                            f"(reduced max_tokens={new_max})",
                         )
                         repaired = True
                     except urllib.error.HTTPError as exc2:

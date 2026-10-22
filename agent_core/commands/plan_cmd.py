@@ -97,11 +97,14 @@ class PlanCommand(Command):
         messages = [
             {
                 "role": "system",
-                "content": "You are an expert software architect. Based on the code analysis provided, create a detailed coding plan with specific implementation steps, prioritized by impact and dependencies.",
+                "content": "You are an expert software architect. Based on the code "
+                "analysis provided, create a detailed coding plan with specific "
+                "implementation steps, prioritized by impact and dependencies.",
             },
             {
                 "role": "user",
-                "content": f"Create a coding plan based on this analysis:\n\n{analysis_content}",
+                "content": f"Create a coding plan based on this "
+                f"analysis:\n\n{analysis_content}",
             },
         ]
         plan = await agent.llm.chat(messages)
@@ -198,8 +201,8 @@ class PlanCommand(Command):
 
         if not tasks:
             print(
-                "[plan exec] No tasks found. Add a '## Tasks' block to the plan "
-                "(e.g. '- [T1] do the thing (role: implementer)') or pass --tasks <json>."
+                "[plan exec] No tasks found. Add a '## Tasks' block to the plan (e.g. "
+                "'- [T1] do the thing (role: implementer)') or pass --tasks <json>."
             )
             return True
 
@@ -227,7 +230,8 @@ class PlanCommand(Command):
             t = next((x for x in tasks if x.id == tid), None)
             deps = f" (deps: {', '.join(t.depends_on)})" if t and t.depends_on else ""
             print(
-                f"  {i}. [{tid}] {t.role if t else '?'}: {t.description if t else ''}{deps}"
+                f"  {i}. [{tid}] {t.role if t else '?'}: "
+                f"{t.description if t else ''}{deps}"
             )
 
         # ── Pre-execution gates ───────────────────────────────────────
@@ -251,7 +255,8 @@ class PlanCommand(Command):
         gate_result = decision_gate.validate(plan_text)
         if not gate_result.passed:
             print(
-                "[plan exec] Decision gate FAILED — plan violates architectural constraints:"
+                "[plan exec] Decision gate FAILED — "
+                "plan violates architectural constraints:"
             )
             for v in gate_result.violations:
                 print(f"  ✗ {v}")

@@ -94,7 +94,10 @@ class FileSystem:
 
             count = content.count(find)
             if count > 1:
-                return f"Error: find text matches {count} locations. Add more context to make it unique."
+                return (
+                    f"Error: find text matches {count} locations. "
+                    f"Add more context to make it unique."
+                )
 
             new_content = content.replace(find, replace, 1)
 

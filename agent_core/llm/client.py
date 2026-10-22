@@ -160,7 +160,8 @@ class LLMClient:
                         if served_after and served_after[0] == bare_name:
                             provider._cached_server_model_id = served_after[0]
                             _info(
-                                f"  [llama] Successfully ensured '{bare_name}' is served."
+                                f"  [llama] Successfully ensured "
+                                f"'{bare_name}' is served."
                             )
                         else:
                             _info(

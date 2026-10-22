@@ -241,7 +241,8 @@ async def _run_chained_tool_loop(
                         else "too many calls without making new progress"
                     )
                     + gray(
-                        "The answer above is the best it produced — rephrase or ask something more specific to continue.\n"
+                        "The answer above is the best it produced — rephrase "
+                        "or ask something more specific to continue.\n"
                     )
                 )
             break
@@ -378,7 +379,8 @@ def _finish_turn(
             print(
                 yellow("  The reasoning model exhausted its thinking budget. ")
                 + gray(
-                    "Switch to a non-reasoning model (model <name>) or retry the request.\n"
+                    "Switch to a non-reasoning model "
+                    "(model <name>) or retry the request.\n"
                 )
             )
         agent._nlp_workspace = None
@@ -455,7 +457,9 @@ def _print_self_review_note(agent: "Agent", mutated_files: list[str]) -> None:
     more = f" (+{len(mutated_files) - 6} more)" if len(mutated_files) > 6 else ""
     print(
         magenta(
-            f"\n  [self-review] This turn changed {len(mutated_files)} file(s): {shown}{more}. py_compile verified syntax only — run 'tests' or 'git diff' to confirm behaviour."
+            f"\n  [self-review] This turn changed {len(mutated_files)} "
+            f"file(s): {shown}{more}. py_compile verified syntax "
+            f"only — run 'tests' or 'git diff' to confirm behaviour."
         )
     )
 

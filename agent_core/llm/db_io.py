@@ -100,7 +100,8 @@ def save_metrics(
     cursor = conn.cursor()
     cursor.execute(
         """
-        INSERT INTO prompt_metrics (task_type, profile_type, version, success_count, failure_count, avg_latency_ms)
+        INSERT INTO prompt_metrics \
+(task_type, profile_type, version, success_count, failure_count, avg_latency_ms)
         VALUES (?, ?, ?, ?, ?, ?)
         """,
         (
@@ -147,7 +148,8 @@ def update_metrics(metrics_id: int, metrics: dict[str, Any]) -> bool:
     cursor = conn.cursor()
     cursor.execute(
         """
-        UPDATE prompt_metrics SET success_count = ?, failure_count = ?, avg_latency_ms = ?, updated_at = CURRENT_TIMESTAMP
+        UPDATE prompt_metrics SET \
+success_count = ?, failure_count = ?, avg_latency_ms = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
         """,
         (
@@ -234,7 +236,8 @@ def get_template_by_id(template_id: int) -> None | dict[str, Any]:
     cursor = conn.cursor()
     cursor.execute(
         """
-        SELECT id, task_type, profile_type, version, template_text FROM prompt_templates WHERE id = ?
+        SELECT \
+id, task_type, profile_type, version, template_text FROM prompt_templates WHERE id = ?
         """,
         (template_id,),
     )
@@ -257,7 +260,8 @@ def get_metrics_by_id(metrics_id: int) -> None | dict[str, Any]:
     cursor = conn.cursor()
     cursor.execute(
         """
-        SELECT id, task_type, profile_type, version, success_count, failure_count, avg_latency_ms FROM prompt_metrics WHERE id = ?
+        SELECT id, task_type, profile_type, \
+version, success_count, failure_count, avg_latency_ms FROM prompt_metrics WHERE id = ?
         """,
         (metrics_id,),
     )
@@ -285,7 +289,8 @@ def list_templates(
     if task_type and profile_type:
         cursor.execute(
             """
-            SELECT id, task_type, profile_type, version, template_text FROM prompt_templates
+    \
+        SELECT id, task_type, profile_type, version, template_text FROM prompt_templates
             WHERE task_type = ? AND profile_type = ? ORDER BY version ASC
             """,
             (task_type, profile_type),
@@ -293,7 +298,8 @@ def list_templates(
     elif task_type:
         cursor.execute(
             """
-            SELECT id, task_type, profile_type, version, template_text FROM prompt_templates
+    \
+        SELECT id, task_type, profile_type, version, template_text FROM prompt_templates
             WHERE task_type = ? ORDER BY version ASC
             """,
             (task_type,),
@@ -301,7 +307,8 @@ def list_templates(
     else:
         cursor.execute(
             """
-            SELECT id, task_type, profile_type, version, template_text FROM prompt_templates ORDER BY version ASC
+            SELECT id, task_type, \
+profile_type, version, template_text FROM prompt_templates ORDER BY version ASC
             """
         )
     rows = cursor.fetchall()
@@ -327,7 +334,8 @@ def list_metrics(
     if task_type and profile_type:
         cursor.execute(
             """
-            SELECT id, task_type, profile_type, version, success_count, failure_count, avg_latency_ms FROM prompt_metrics
+            SELECT id, task_type, \
+profile_type, version, success_count, failure_count, avg_latency_ms FROM prompt_metrics
             WHERE task_type = ? AND profile_type = ? ORDER BY version ASC
             """,
             (task_type, profile_type),
@@ -335,7 +343,8 @@ def list_metrics(
     elif task_type:
         cursor.execute(
             """
-            SELECT id, task_type, profile_type, version, success_count, failure_count, avg_latency_ms FROM prompt_metrics
+            SELECT id, task_type, \
+profile_type, version, success_count, failure_count, avg_latency_ms FROM prompt_metrics
             WHERE task_type = ? ORDER BY version ASC
             """,
             (task_type,),
@@ -343,7 +352,8 @@ def list_metrics(
     else:
         cursor.execute(
             """
-            SELECT id, task_type, profile_type, version, success_count, failure_count, avg_latency_ms FROM prompt_metrics ORDER BY version ASC
+            SELECT id, task_type, profile_type, version, \
+success_count, failure_count, avg_latency_ms FROM prompt_metrics ORDER BY version ASC
             """
         )
     rows = cursor.fetchall()

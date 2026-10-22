@@ -41,81 +41,99 @@ class ModelAPIError(BenchmarkError):
 
 REASONING_QUESTIONS = [
     (
-        "If all Bloops are Razzies and all Razzies are Lazzies, are all Bloops definitely Lazzies? Answer yes or no.",
+        "If all Bloops are Razzies and all Razzies are Lazzies, "
+        "are all Bloops definitely Lazzies? Answer yes or no.",
         "yes",
     ),
     (
-        "A farmer has 17 sheep. All but 9 run away. How many sheep does the farmer have left?",
+        "A farmer has 17 sheep. All but 9 run away. "
+        "How many sheep does the farmer have left?",
         "9",
     ),
     (
-        "If it takes 5 machines 5 minutes to make 5 widgets, how long would it take 100 machines to make 100 widgets?",
+        "If it takes 5 machines 5 minutes to make 5 widgets, "
+        "how long would it take 100 machines to make 100 widgets?",
         "5 minutes",
     ),
     ("What comes next in the sequence: 2, 6, 18, 54, ?", "162"),
     (
-        "If A is taller than B, and B is taller than C, who is the shortest? Answer with one letter.",
+        "If A is taller than B, and B is taller than "
+        "C, who is the shortest? Answer with one letter.",
         "C",
     ),
     (
-        "A clock shows 3:15. What is the angle between the hour hand and the minute hand in degrees?",
+        "A clock shows 3:15. What is the angle between "
+        "the hour hand and the minute hand in degrees?",
         "7.5",
     ),
     (
-        "Mary's father has five daughters: Nana, Nene, Nini, Nono. What is the fifth daughter's name?",
+        "Mary's father has five daughters: Nana, Nene, "
+        "Nini, Nono. What is the fifth daughter's name?",
         "Mary",
     ),
     (
-        "If you rearrange the letters 'CIFAIPC', you get the name of a(n): A) City B) Animal C) Ocean D) Country",
+        "If you rearrange the letters 'CIFAIPC', you get the "
+        "name of a(n): A) City B) Animal C) Ocean D) Country",
         "ocean",
     ),
     ("What number should replace the question mark: 1, 1, 2, 3, 5, 8, ?", "13"),
     (
-        "A bat and a ball cost $1.10 in total. The bat costs $1 more than the ball. How much does the ball cost? Give your answer in dollars.",
+        "A bat and a ball cost $1.10 in total. The bat costs $1 more than "
+        "the ball. How much does the ball cost? Give your answer in dollars.",
         "0.10",
     ),
     ("If yesterday was two days after Monday, what day is tomorrow?", "Thursday"),
     (
-        "In a race, you overtake the person in second place. What place are you now in?",
+        "In a race, you overtake the person in "
+        "second place. What place are you now in?",
         "second",
     ),
     ("How many sides does a hexagon have?", "6"),
     (
-        "If 3 cats catch 3 mice in 3 minutes, how many cats are needed to catch 100 mice in 100 minutes?",
+        "If 3 cats catch 3 mice in 3 minutes, how many "
+        "cats are needed to catch 100 mice in 100 minutes?",
         "3",
     ),
     ("What is the next prime number after 29?", "31"),
     (
-        "A snail is at the bottom of a 10-meter well. Each day it climbs 3 meters, but each night it slips back 2 meters. How many days to get out?",
+        "A snail is at the bottom of a 10-meter well. Each day it climbs 3 "
+        "meters, but each night it slips back 2 meters. How many days to get out?",
         "8",
     ),
     (
-        "If you have a 3x3x3 cube painted red on all outside faces and cut into 1x1x1 cubes, how many small cubes have exactly two red faces?",
+        "If you have a 3x3x3 cube painted red on all outside faces and cut "
+        "into 1x1x1 cubes, how many small cubes have exactly two red faces?",
         "12",
     ),
     (
-        "Which does not belong: Apple, Banana, Carrot, Date, Elderberry? Answer with one word.",
+        "Which does not belong: Apple, Banana, Carrot, "
+        "Date, Elderberry? Answer with one word.",
         "Carrot",
     ),
     (
-        "If you flip a fair coin twice, what is the probability of getting at least one head? Give answer as a fraction.",
+        "If you flip a fair coin twice, what is the probability "
+        "of getting at least one head? Give answer as a fraction.",
         "3/4",
     ),
     ("What comes next: J, F, M, A, M, J, ?", "J"),
     (
-        "A train leaves station A at 60 mph. Another leaves station B (120 miles away) toward A at 40 mph. How many hours until they meet?",
+        "A train leaves station A at 60 mph. Another leaves station B (120 "
+        "miles away) toward A at 40 mph. How many hours until they meet?",
         "1.2",
     ),
     (
-        "If you write out the numbers from 1 to 100, how many times does the digit '7' appear?",
+        "If you write out the numbers from 1 to 100, "
+        "how many times does the digit '7' appear?",
         "20",
     ),
     (
-        "What is the only number that has the same number of letters as its value in English?",
+        "What is the only number that has the same "
+        "number of letters as its value in English?",
         "four",
     ),
     (
-        "In a group of 30 people, everyone shakes hands with everyone else once. How many handshakes occur?",
+        "In a group of 30 people, everyone shakes hands "
+        "with everyone else once. How many handshakes occur?",
         "435",
     ),
     ("If A=1, B=2, ..., Z=26, what is the sum of the letters in 'CAT'?", "24"),
@@ -137,18 +155,21 @@ MATH_QUESTIONS = [
     ("Solve: 3x - 9 = 12. What is x?", "7"),
     ("What is the greatest common divisor of 48 and 36?", "12"),
     (
-        "A circle has radius 7. What is its area? Use pi approx 3.14, round to nearest whole number.",
+        "A circle has radius 7. What is its area? Use "
+        "pi approx 3.14, round to nearest whole number.",
         "154",
     ),
     ("What is 0.375 as a fraction in simplest form?", "3/8"),
     (
-        "If a triangle has sides 5, 12, and 13, what type of triangle is it? Answer with one word.",
+        "If a triangle has sides 5, 12, and 13, what "
+        "type of triangle is it? Answer with one word.",
         "right",
     ),
     ("Calculate the factorial of 6 (6!)", "720"),
     ("What is the median of: 3, 7, 8, 5, 12, 15, 9?", "8"),
     (
-        "A store offers a 20% discount on an item priced at $85. What is the sale price? Give just the number.",
+        "A store offers a 20% discount on an item priced at "
+        "$85. What is the sale price? Give just the number.",
         "68",
     ),
     ("What is log base 10 of 1000?", "3"),
@@ -159,24 +180,29 @@ MATH_QUESTIONS = [
     ("Convert 3/7 to a decimal, rounded to two decimal places.", "0.43"),
     ("What is the derivative of x^3 at x = 2? Give just the number.", "12"),
     (
-        "If you invest $1000 at 5% annual interest compounded yearly, how much after 2 years? Round to nearest dollar.",
+        "If you invest $1000 at 5% annual interest compounded "
+        "yearly, how much after 2 years? Round to nearest dollar.",
         "1103",
     ),
 ]
 
 CODING_QUESTIONS = [
     (
-        "Write a Python function called 'is_palindrome' that takes a string and returns True if it reads the same forwards and backwards. Return only the function code.",
+        "Write a Python function called 'is_palindrome' that "
+        "takes a string and returns True if it reads the same "
+        "forwards and backwards. Return only the function code.",
         None,
     ),
     ("Write a one-line Python expression to reverse a list called 'lst'.", "lst[::-1]"),
     ("What does this Python code output? print(len('hello world'))", "11"),
     (
-        "Write a Python function 'fibonacci(n)' that returns the nth Fibonacci number (0-indexed). Return only the function.",
+        "Write a Python function 'fibonacci(n)' that returns the "
+        "nth Fibonacci number (0-indexed). Return only the function.",
         None,
     ),
     (
-        "In Python, what is the difference between a list and a tuple? Answer in one sentence.",
+        "In Python, what is the difference between "
+        "a list and a tuple? Answer in one sentence.",
         None,
     ),
     (
@@ -184,11 +210,13 @@ CODING_QUESTIONS = [
         "[1, 2, 3, 4]",
     ),
     (
-        "Write a Python function 'flatten(lst)' that takes a nested list and returns a flat list. Return only the function.",
+        "Write a Python function 'flatten(lst)' that takes a nested "
+        "list and returns a flat list. Return only the function.",
         None,
     ),
     (
-        "What is the time complexity of binary search on a sorted array of n elements? Use Big-O notation.",
+        "What is the time complexity of binary search on "
+        "a sorted array of n elements? Use Big-O notation.",
         "O(log n)",
     ),
     (
@@ -197,35 +225,42 @@ CODING_QUESTIONS = [
     ),
     ("What does this output?\nprint(bool(''))", "False"),
     (
-        "Write a Python function 'count_vowels(s)' that returns the number of vowels in string s. Return only the function.",
+        "Write a Python function 'count_vowels(s)' that returns "
+        "the number of vowels in string s. Return only the function.",
         None,
     ),
     (
-        "In Python, what keyword is used to define a constant? (Hint: there isn't one - explain briefly.)",
+        "In Python, what keyword is used to define a "
+        "constant? (Hint: there isn't one - explain briefly.)",
         None,
     ),
     (
-        "What does this code output?\na = {1: 'one', 2: 'two'}\nprint(a.get(3, 'missing'))",
+        "What does this code output?\na = {1: "
+        "'one', 2: 'two'}\nprint(a.get(3, 'missing'))",
         "missing",
     ),
     (
-        "Write a Python function 'binary_search(arr, target)' on a sorted list. Return only the function.",
+        "Write a Python function 'binary_search(arr, "
+        "target)' on a sorted list. Return only the function.",
         None,
     ),
     ("What is the output of: print(0.1 + 0.2 == 0.3)", "False"),
     (
-        "Write a Python function 'merge_sort(lst)' that returns a new sorted list. Return only the function.",
+        "Write a Python function 'merge_sort(lst)' that "
+        "returns a new sorted list. Return only the function.",
         None,
     ),
     ("In SQL, what clause filters groups created by GROUP BY?", "HAVING"),
     ("What does this output?\nprint(type([]) is type(list()))", "True"),
     (
-        "Write a Python function 'anagram(s1, s2)' that returns True if s1 and s2 are anagrams. Return only the function.",
+        "Write a Python function 'anagram(s1, s2)' that returns "
+        "True if s1 and s2 are anagrams. Return only the function.",
         None,
     ),
     ("What HTTP status code means 'Not Found'?", "404"),
     (
-        "Write a Python function 'factorial(n)' using recursion. Return only the function.",
+        "Write a Python function 'factorial(n)' "
+        "using recursion. Return only the function.",
         None,
     ),
     (
@@ -234,7 +269,8 @@ CODING_QUESTIONS = [
     ),
     ("What does this output?\nprint([x**2 for x in range(5)])", "[0, 1, 4, 9, 16]"),
     (
-        "Write a Python function 'remove_duplicates(lst)' that preserves order. Return only the function.",
+        "Write a Python function 'remove_duplicates(lst)' "
+        "that preserves order. Return only the function.",
         None,
     ),
     ("What is the output of: print('abc' * 3)", "abcabcabc"),
@@ -280,44 +316,53 @@ INSTRUCTION_FOLLOWING_QUESTIONS = [
     ("Respond only with the word 'banana'. Do not add any other text.", "banana"),
     ("Give me a sentence that contains exactly 7 words. Count carefully.", None),
     (
-        "Write the alphabet backwards from Z to A as one continuous string with no spaces.",
+        "Write the alphabet backwards from Z to A "
+        "as one continuous string with no spaces.",
         "zyxwvutsrqponmlkjihgfedcba",
     ),
     (
-        "List three fruits, each starting with a different letter of the alphabet, comma-separated only.",
+        "List three fruits, each starting with a different "
+        "letter of the alphabet, comma-separated only.",
         None,
     ),
     (
-        "Do not use the letter 'e' in your response. Write a short sentence about cats.",
+        "Do not use the letter 'e' in your "
+        "response. Write a short sentence about cats.",
         None,
     ),
     ("Output exactly this text and nothing else: HELLO WORLD", "HELLO WORLD"),
     (
-        "Write a haiku (5-7-5 syllables) about programming. Output only the poem, no explanation.",
+        "Write a haiku (5-7-5 syllables) about "
+        "programming. Output only the poem, no explanation.",
         None,
     ),
     (
-        "Give me 4 colors in alphabetical order, one per line, with no numbering or bullets.",
+        "Give me 4 colors in alphabetical order, "
+        "one per line, with no numbering or bullets.",
         None,
     ),
     ("Respond with exactly one word that means 'happy'.", None),
     ("Write a sentence where every word starts with the letter 's'.", None),
     (
-        "List these numbers from smallest to largest: 42, 7, 103, 28. Output only the numbers separated by commas.",
+        "List these numbers from smallest to largest: 42, 7, "
+        "103, 28. Output only the numbers separated by commas.",
         "7, 28, 42, 103",
     ),
     (
-        "Write a title for an essay about climate change. The title must be exactly 5 words long.",
+        "Write a title for an essay about climate "
+        "change. The title must be exactly 5 words long.",
         None,
     ),
     ("Output the word 'success' in all capital letters and nothing else.", "SUCCESS"),
     (
-        "Give me two synonyms for 'big'. Output only the two words separated by a comma.",
+        "Give me two synonyms for 'big'. Output "
+        "only the two words separated by a comma.",
         None,
     ),
     ("Write a question that ends with the word 'why?'.", None),
     (
-        "List 5 countries. Each must have fewer than 7 letters in its name. One per line, no numbering.",
+        "List 5 countries. Each must have fewer than 7 "
+        "letters in its name. One per line, no numbering.",
         None,
     ),
     (
@@ -325,18 +370,21 @@ INSTRUCTION_FOLLOWING_QUESTIONS = [
         "The quick brown fox jumps over the lazy dog",
     ),
     (
-        "Write a sentence that has exactly 10 words. Count carefully and output only the sentence.",
+        "Write a sentence that has exactly 10 words. "
+        "Count carefully and output only the sentence.",
         None,
     ),
     (
-        "Name three planets in our solar system, ordered by distance from the Sun (closest first). Comma-separated only.",
+        "Name three planets in our solar system, ordered by "
+        "distance from the Sun (closest first). Comma-separated only.",
         None,
     ),
     ("Output the number 42 in Roman numerals and nothing else.", "XLII"),
     ("Write a short greeting. Do not use any punctuation marks at all.", None),
     ("Give me exactly two sentences about water. No more, no less.", None),
     (
-        "List the four seasons in order starting from spring. Use only lowercase letters, comma-separated.",
+        "List the four seasons in order starting from "
+        "spring. Use only lowercase letters, comma-separated.",
         "spring, summer, fall, winter",
     ),
 ]
@@ -789,7 +837,10 @@ async def query_model(
     base_delay: float = 1.0,
     max_tokens: int = 2048,
 ) -> tuple[str, float, int | None]:
-    """Returns (response_text, latency_ms, tokens_used). Raises ModelAPIError on failure."""
+    (
+        """Returns (response_text, latency_ms, """
+        """tokens_used). Raises ModelAPIError on failure."""
+    )
     import urllib.request
     import urllib.error
 
@@ -1294,7 +1345,8 @@ def print_trend(model: str, snapshots: list[tuple[str, dict[str, Any]]]) -> None
         else "  Delta: N/A (need >= 2 scored runs)"
     )
     print(
-        f"  Confidence: {'high' if summary['confidence'] else 'low (needs >= 3 consistent runs)'}"
+        f"  Confidence: "
+        f"{'high' if summary['confidence'] else 'low (needs >= 3 consistent runs)'}"
     )
 
 
@@ -1394,7 +1446,8 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default=None,
         metavar="MODEL",
-        help="Print the accuracy trend for MODEL over reports/benchmark_*.json snapshots and exit",
+        help="Print the accuracy trend for MODEL over "
+        "reports/benchmark_*.json snapshots and exit",
     )
     return parser.parse_args()
 

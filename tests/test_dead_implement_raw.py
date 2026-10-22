@@ -15,7 +15,8 @@ def test_no_references_to_dead_symbols():
     # Exclude the test file itself from scanning to avoid self-reference false positives
     test_file_path = Path(__file__).resolve()
 
-    # Explicitly target core directories as per plan to avoid false positives in gitignored/temp dirs
+    # Explicitly target core directories as per plan to avoid false positives in
+    # gitignored/temp dirs
     target_dirs = [
         "agent_core",
         "agent.py",

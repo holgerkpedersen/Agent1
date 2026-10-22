@@ -25,7 +25,10 @@ def convert_value(value: str) -> Any:
 
 
 def get_nested(data: dict[str, Any], key_path: str | list[str]) -> Any:
-    """Retrieves a value from a nested dictionary using a dot-separated string or list of keys."""
+    (
+        """Retrieves a value from a nested dictionary """
+        """using a dot-separated string or list of keys."""
+    )
     keys = key_path.split(".") if isinstance(key_path, str) else key_path
 
     current = data
@@ -38,7 +41,10 @@ def get_nested(data: dict[str, Any], key_path: str | list[str]) -> Any:
 
 
 def set_nested(data: dict[str, Any], key_path: str | list[str], value: Any) -> None:
-    """Sets a value in a nested dictionary, creating intermediate dictionaries if necessary."""
+    (
+        """Sets a value in a nested dictionary, creating """
+        """intermediate dictionaries if necessary."""
+    )
     keys = key_path.split(".") if isinstance(key_path, str) else key_path
 
     current = data
@@ -52,6 +58,9 @@ def set_nested(data: dict[str, Any], key_path: str | list[str], value: Any) -> N
 
 
 def setup_logging(config_manager: Optional[Any] = None) -> None:
-    """Configures the global logging system based on the provided configuration manager."""
+    (
+        """Configures the global logging system based """
+        """on the provided configuration manager."""
+    )
     # This is a placeholder for shared logging initialization logic
     pass

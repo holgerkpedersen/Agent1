@@ -318,8 +318,8 @@ class TestFixContainerOptional:
         assert out is not None
         assert out[4] == "    chunks: list[tuple[str, str]] = []"
         assert (
-            out[2]
-            == "    ``str | None`` lives in a ``list[...]``/``tuple[...]``/``dict[...]``"
+            out[2] == "    ``str | None`` lives in a "
+            "``list[...]``/``tuple[...]``/``dict[...]``"
         )
 
     def test_ignores_pure_docstring(self):
@@ -388,7 +388,8 @@ class TestFixUntypedParams:
 
 class TestTypeContext:
     SRC = [
-        "def _fix_untyped_params(lines: list[str], def_lineno: int) -> list[str] | None:",
+        "def _fix_untyped_params(lines: "
+        "list[str], def_lineno: int) -> list[str] | None:",
         "    idx = def_lineno - 1",
         "    edits: list[tuple[int, int]] = []",
         "    for a in args:",
@@ -398,13 +399,19 @@ class TestTypeContext:
     ]
 
     def test_operator_error_uses_error_line_identifiers(self):
-        err = 't.py:6: error: Unsupported operand types for - ("None" and "int")  [operator]'
+        err = (
+            "t.py:6: error: "
+            'Unsupported operand types for - ("None" and "int")  [operator]'
+        )
         ctx = _type_context(self.SRC, err, 6)
         assert "edits: list[tuple[int, int]]" in ctx
         assert "a in args" in ctx
 
     def test_message_identifiers_win_over_line(self):
-        err = 't.py:5: error: Item "None" of "str | None" has no attribute "strip"  [union-attr]'
+        err = (
+            "t.py:5: error: "
+            'Item "None" of "str | None" has no attribute "strip"  [union-attr]'
+        )
         ctx = _type_context(self.SRC, err, 5)
         # "a" is on the error line but the message names no variable ->
         # the error line is used, so "a in args" must be included
@@ -431,8 +438,8 @@ class TestTypeContext:
         out = _fix_untyped_params(src, 1)
         assert out is not None
         assert (
-            "def _fix_dead_assignment(wl: Any, idx: Any, line: Any, basename: Any, finding: Any) -> Any:"
-            in out
+            "def _fix_dead_assignment(wl: Any, idx: Any, line: "
+            "Any, basename: Any, finding: Any) -> Any:" in out
         )
         assert "from typing import Any" in out
 
@@ -480,7 +487,10 @@ class TestReferencedDefinitions:
     def test_error_identifiers_fall_back_to_the_error_line(self):
         # An operator error names only skip-words, so the identifiers must come
         # from the offending source line.
-        err = 't.py:2: error: Unsupported operand types for - ("None" and "int")  [operator]'
+        err = (
+            "t.py:2: error: "
+            'Unsupported operand types for - ("None" and "int")  [operator]'
+        )
         names = _error_identifiers(["x = 1", "y = x - 1"], err, 2)
         assert {"x", "y"} <= names
 
@@ -534,7 +544,8 @@ class TestFixOptionalImportNone:
         src = ["    nx = None  # noqa: N816 - we keep the alias short"]
         out = _fix_optional_import_none(src, 1)
         assert out == [
-            "    nx = None  # type: ignore[assignment]  # noqa: N816 - we keep the alias short"
+            "    nx = None  # type: ignore[assignment]  # noqa: "
+            "N816 - we keep the alias short"
         ]
 
     def test_noop_when_already_ignored(self):
@@ -620,7 +631,8 @@ class TestSignatureCallSites:
     def test_includes_call_sites_of_the_nearby_signature(self):
         err = (
             "t.py:2: error: Incompatible return value type "
-            '(got "tuple[None, None]", expected "tuple[list | None, list]")  [return-value]'
+            '(got "tuple[None, None]", expected '
+            '"tuple[list | None, list]")  [return-value]'
         )
         out = _signature_call_sites(self.SRC, err, 2)
         assert "dropped, kept = split(msgs)" in out

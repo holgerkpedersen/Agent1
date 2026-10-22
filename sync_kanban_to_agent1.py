@@ -49,7 +49,8 @@ def sync():
         result = False
         try:
             if op == "card_create":
-                # _apply_card_create expects the card data (the 'payload' part of the message)
+                # _apply_card_create expects the card data (the 'payload' part of the
+                # message)
                 card_data = msg.get("payload")
                 if not card_data:
                     print("  Error: No payload found in card_create message")

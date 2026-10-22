@@ -1,4 +1,7 @@
-"""File context retriever — extracts file content snippets for /file and @file keywords."""
+(
+    """File context retriever — extracts file """
+    """content snippets for /file and @file keywords."""
+)
 
 from __future__ import annotations
 
@@ -10,7 +13,8 @@ from agent_core.security.path_utils import normalize_path, SecurityViolationErro
 
 
 class FileContextRetriever:
-    """Retrieves file content snippets referenced via ``/file`` or ``@file`` in messages.
+    """Retrieves \
+file content snippets referenced via ``/file`` or ``@file`` in messages.
 
     The retriever scans a message for ``/filename`` or ``@filename`` patterns and
     attempts to locate matching files relative to the working directory.

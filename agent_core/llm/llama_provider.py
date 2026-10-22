@@ -502,7 +502,8 @@ class LlamaProvider:
 
         def _on_retry(attempt: int, error_msg: str, wait_time: float) -> None:
             print(
-                f"  [retry {attempt}/{self.retry_policy.max_retries}] {error_msg}, waiting {wait_time}s..."
+                f"  [retry {attempt}/{self.retry_policy.max_retries}] "
+                f"{error_msg}, waiting {wait_time}s..."
             )
 
         try:
@@ -564,7 +565,8 @@ class LlamaProvider:
 
         def _on_retry(attempt: int, error_msg: str, wait_time: float) -> None:
             print(
-                f"\n  [retry {attempt}/{self.retry_policy.max_retries}] {error_msg}, waiting {wait_time}s..."
+                f"\n  [retry {attempt}/{self.retry_policy.max_retries}] "
+                f"{error_msg}, waiting {wait_time}s..."
             )
 
         try:

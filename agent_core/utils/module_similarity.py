@@ -437,7 +437,8 @@ class ModuleSimilarity:
             return []
         try:
             texts = [self._planned_feature(planned)] + [
-                f"{p.rsplit('/', 1)[-1][:-3]} {_first_docstring(os.path.join(self.ws, p))}"
+                f"{p.rsplit('/', 1)[-1][:-3]} "
+                f"{_first_docstring(os.path.join(self.ws, p))}"
                 for p in self.corpus.paths
             ]
             vecs = self.embedding.embed(texts)
@@ -461,8 +462,8 @@ class ModuleSimilarity:
                     existing=self.corpus.paths[best_idx],
                     score=best_score,
                     kind="embedding",
-                    evidence=f"embedding top-1 {best_score:.3f} (runner-up {second:.3f}, "
-                    f"threshold {EMBED_THRESHOLD})",
+                    evidence=f"embedding top-1 {best_score:.3f} (runner-up "
+                    f"{second:.3f}, threshold {EMBED_THRESHOLD})",
                 )
             )
         return findings

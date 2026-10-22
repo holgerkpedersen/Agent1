@@ -1,4 +1,7 @@
-"""Agent file context interface — bridges /file and @file detection with content retrieval."""
+(
+    """Agent file context interface — bridges /file """
+    """and @file detection with content retrieval."""
+)
 
 from agent_core.file_context_retriever import FileContextRetriever
 
@@ -16,7 +19,8 @@ class AgentFileContextInterface:
         self._retriever = retriever
 
     def process_request(self, message: str) -> list[str]:
-        """Return a list of context snippets for every ``/file`` / ``@file`` in *message*.
+        """Return \
+a list of context snippets for every ``/file`` / ``@file`` in *message*.
 
         Each snippet is the file's text content.  Files that cannot be read are
         silently skipped so the caller always gets a (possibly empty) list.

@@ -47,14 +47,14 @@ class SubAgentCommand(Command):
     @property
     def help_text(self) -> str:
         return (
-            "subagent roles|create|run|list|summary|reset - manage subagents\n"
-            "  subagent roles                                 List available roles\n"
-            "  subagent create <name> [--role <role>] [--workspace <path>]\n"
-            "  subagent run <name> <task ...>                  Run a task in a subagent\n"
-            "  subagent list / summary <name> / reset <name>\n"
-            "  subagent route <issue text>                     Suggest a role for an issue\n"
-            "  subagent create fix1 --role debugger            Create with an explicit role\n"
-            "  subagent create w1 --role auto --workspace path Assign role automatically"
+            "subagent roles|create|run|list|summary|reset - manage subagents\n  "
+            "subagent roles                                 List available roles\n "
+            " subagent create <name> [--role <role>] [--workspace <path>]\n  subagent "
+            "run <name> <task ...>                  Run a task in a subagent\n  "
+            "subagent list / summary <name> / reset <name>\n  subagent route <issue "
+            "text>                     Suggest a role for an issue\n  subagent create "
+            "fix1 --role debugger            Create with an explicit role\n  "
+            "subagent create w1 --role auto --workspace path Assign role automatically"
         )
 
     async def execute(self, args: list[str], agent: "Agent") -> bool:
@@ -79,7 +79,8 @@ class SubAgentCommand(Command):
         handler = handlers.get(cmd)
         if handler is None:
             print(
-                f"Unknown subagent command '{cyan(cmd)}'. Try 'subagent' alone for help."
+                f"Unknown subagent command '{cyan(cmd)}'. "
+                f"Try 'subagent' alone for help."
             )
             return True
         await handler(rest, agent)
@@ -108,7 +109,8 @@ class SubAgentCommand(Command):
 
         if not args:
             print(
-                f"Usage: subagent create {cyan('<name>')} [--role <role>|--role auto] [--workspace <path>]"
+                f"Usage: subagent create {cyan('<name>')} "
+                f"[--role <role>|--role auto] [--workspace <path>]"
             )
             return
 
@@ -163,7 +165,8 @@ class SubAgentCommand(Command):
         print(f"Suggested role: {cyan(role_name)} ({title}) — score {score}")
         if score == 0:
             print(
-                "  (no keyword hits — ambiguous issue; planner/triage is the safe default)"
+                "  (no keyword hits — ambiguous issue; "
+                "planner/triage is the safe default)"
             )
         print(f"  next: subagent create w1 --role {cyan(role_name)}")
 
@@ -175,7 +178,8 @@ class SubAgentCommand(Command):
         sub = agent._subagents.get(name)
         if sub is None:
             print(
-                f"SubAgent '{cyan(name)}' not found. Create it with 'subagent create {name}'."
+                f"SubAgent '{cyan(name)}' not found. "
+                f"Create it with 'subagent create {name}'."
             )
             return
         print(magenta(f"[{name}] working ..."))

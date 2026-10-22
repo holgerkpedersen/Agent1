@@ -181,7 +181,8 @@ def test_discard_gate_checks_all_three_block_kinds() -> None:
     src = inspect.getsource(implement_cmd)
     assert (
         _re.search(
-            r'if not matches and not patch_matches:\s*\n\s*print\(\s*"  Warning: Could not parse files',
+            r'if not matches and not patch_matches:\s*\n\s*print\(\s*"  Warning: '
+            r"Could not parse files",
             src,
         )
         is None

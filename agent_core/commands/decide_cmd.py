@@ -37,9 +37,12 @@ if TYPE_CHECKING:
     from agent import Agent
 
 
-_DECIDE_HELP = """decide [add|list|show|check|resolve|link|extract|review|set-status|categories] - Track design decisions for this workspace
+_DECIDE_HELP = """decide \
+[add|list|show|check|resolve|link|extract|review|set-status|categories] \
+- Track design decisions for this workspace
 
-  decide "title" --why "..." --what "..." [--tags t1,t2] [--files f1.py] [--category cat]
+ \
+ decide "title" --why "..." --what "..." [--tags t1,t2] [--files f1.py] [--category cat]
       Record a new decision
 
   decide list [--tag t] [--file f.py] [--search "keyword"]
@@ -404,7 +407,8 @@ class DecideCommand(Command):
         ).strip().lower().startswith("y"):
             for i in warned:
                 print(
-                    f"  Skipped: {candidates[i].get('title', 'Untitled')} (unverified claims)"
+                    f"  Skipped: {candidates[i].get('title', 'Untitled')} "
+                    f"(unverified claims)"
                 )
             selected = [i for i in selected if i not in warned]
 

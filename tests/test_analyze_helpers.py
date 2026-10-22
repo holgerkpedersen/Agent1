@@ -18,7 +18,10 @@ import json
         assert "agent_core/constants.py" in result
 
     def test_excludes_stdlib_imports(self):
-        src = "import os\nimport json\nfrom typing import Optional\nfrom pathlib import Path"
+        src = (
+            "import os\nimport json\nfrom typing "
+            "import Optional\nfrom pathlib import Path"
+        )
         result = _parse_imports(src)
         assert result == []
 
@@ -48,12 +51,18 @@ import json
         assert "agent_core/llm/lmstudio.py" in result
 
     def test_deduplicates_duplicate_imports(self):
-        src = "from agent_core.commands.fix_cmd import FixCommand\nfrom agent_core.commands.fix_cmd import extract_signatures"
+        src = (
+            "from agent_core.commands.fix_cmd import FixCommand\nfrom "
+            "agent_core.commands.fix_cmd import extract_signatures"
+        )
         result = _parse_imports(src)
         assert result.count("agent_core/commands/fix_cmd.py") == 1
 
     def test_excludes_non_project_third_party(self):
-        src = "from httpx import get\nfrom pydantic import BaseModel\nfrom numpy import array"
+        src = (
+            "from httpx import get\nfrom pydantic "
+            "import BaseModel\nfrom numpy import array"
+        )
         result = _parse_imports(src)
         assert result == []
 
@@ -71,7 +80,10 @@ It also references agent_core/exceptions.py for error types.
         assert "agent_core/exceptions.py" in result
 
     def test_deduplicates(self):
-        text = "agent_core/commands/fix_cmd.py appears twice. agent_core/commands/fix_cmd.py again."
+        text = (
+            "agent_core/commands/fix_cmd.py appears "
+            "twice. agent_core/commands/fix_cmd.py again."
+        )
         result = _parse_file_refs(text)
         assert result.count("agent_core/commands/fix_cmd.py") == 1
 
@@ -86,7 +98,10 @@ It also references agent_core/exceptions.py for error types.
         assert "tests/test_tool_router.py" in result
 
     def test_ignores_non_project_paths(self):
-        text = "stdlib has functools.py and pathlib.py, and pip installs site-packages/numpy/core.py"
+        text = (
+            "stdlib has functools.py and pathlib.py, "
+            "and pip installs site-packages/numpy/core.py"
+        )
         result = _parse_file_refs(text)
         assert "functools.py" not in result
         assert "pathlib.py" not in result

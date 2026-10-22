@@ -75,7 +75,8 @@ def _wrap_line(text: str, width: int) -> list[str]:
 
 
 def read_stdin(
-    prompt: str = "Paste text. Type --- on its own line when done, or Ctrl+Z to finish:",
+    prompt: str = "Paste text. Type --- on its own "
+    "line when done, or Ctrl+Z to finish:",
 ) -> str:
     """Read multi-line text from stdin until a sentinel line or EOF.
 
@@ -242,7 +243,10 @@ def auto_choice(prompt: str, default: str, auto_default: str | None = None) -> s
 
 
 def show_file_diff(basename: str, original: str, new: str) -> None:
-    """Display a side-by-side diff with aligned columns, line numbers, 5 lines of context, and colors."""
+    (
+        """Display a side-by-side diff with aligned columns, """
+        """line numbers, 5 lines of context, and colors."""
+    )
     original_lines = original.splitlines()
     new_lines = new.splitlines()
     diff = list(
@@ -359,7 +363,8 @@ def show_file_diff(basename: str, original: str, new: str) -> None:
                     o = old_parts[i] if i < len(old_parts) else ""
                     n = new_parts[i] if i < len(new_parts) else ""
                     print(
-                        f"  {onum} | {RED}{o:<{old_col}}{RESET}  {nnum} | {GREEN}{n}{RESET}"
+                        f"  {onum} | {RED}{o:<{old_col}}{RESET} "
+                        f" {nnum} | {GREEN}{n}{RESET}"
                     )
                 removed += 1
                 added += 1

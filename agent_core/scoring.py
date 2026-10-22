@@ -14,5 +14,6 @@ class CandidateSelector:
             raise ValueError("No candidates provided")
 
         # Simple implementation: pick the one with the highest score.
-        # In case of ties, max() returns the first occurrence, which matches my test expectation.
+        # In case of ties, max() returns the first occurrence, which matches my test
+        # expectation.
         return max(candidates, key=lambda c: c.score)

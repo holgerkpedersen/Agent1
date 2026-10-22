@@ -389,7 +389,8 @@ def load_model(model_key: str, eval_batch_size: int = 4096) -> tuple[bool, str]:
     if resp and resp.get("status") == "loaded":
         return (
             True,
-            f"loaded ({resp.get('load_time_seconds', '?')}s) — {resp.get('instance_id', model_key)}",
+            f"loaded ({resp.get('load_time_seconds', '?')}s) "
+            f"— {resp.get('instance_id', model_key)}",
         )
     if resp:
         err = resp.get("error", "unknown")
@@ -924,7 +925,8 @@ class LMStudioProvider:
                         ),
                     )
 
-                    # If tools present and model returned tool_calls, return full message
+                    # If tools present and model returned tool_calls, return full
+                    # message
                     if use_tools and message.get("tool_calls"):
                         return json.dumps(message)
 
@@ -941,7 +943,8 @@ class LMStudioProvider:
 
             def _on_retry(attempt: int, error_msg: str, wait_time: float) -> None:
                 print(
-                    f"  [retry {attempt}/{self.retry_policy.max_retries}] {error_msg}, waiting {wait_time}s..."
+                    f"  [retry {attempt}/{self.retry_policy.max_retries}] "
+                    f"{error_msg}, waiting {wait_time}s..."
                 )
 
             try:
@@ -1105,7 +1108,8 @@ class LMStudioProvider:
 
         def _on_retry(attempt: int, error_msg: str, wait_time: float) -> None:
             print(
-                f"\n  [retry {attempt}/{self.retry_policy.max_retries}] {error_msg}, waiting {wait_time}s..."
+                f"\n  [retry {attempt}/{self.retry_policy.max_retries}] "
+                f"{error_msg}, waiting {wait_time}s..."
             )
 
         try:
@@ -1130,7 +1134,8 @@ Code:
         messages = [
             {
                 "role": "system",
-                "content": "You are an expert code reviewer. Analyze the provided code and give detailed feedback.",
+                "content": "You are an expert code reviewer. Analyze "
+                "the provided code and give detailed feedback.",
             },
             {"role": "user", "content": prompt},
         ]

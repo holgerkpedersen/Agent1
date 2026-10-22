@@ -143,7 +143,8 @@ class McpClient:
         entry = next((t for t in self._tools if t.get("name") == name), None)
         if entry is None:
             raise McpProtocolError(
-                f"unknown tool '{name}' (known: {', '.join(self.tool_names()) or 'none'})"
+                f"unknown tool '{name}' (known: "
+                f"{', '.join(self.tool_names()) or 'none'})"
             )
         args = arguments if isinstance(arguments, dict) else {}
         err = validate_against_schema(entry.get("inputSchema", {}), args)

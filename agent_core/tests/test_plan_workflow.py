@@ -83,7 +83,10 @@ class TestPlanSchema:
         assert d["status"] == "proposed"
 
     def test_validate_plan_markdown_valid(self):
-        content = "# Proposed Plan\n\n## Tasks\n\n- [T1] Do something\n- [T2] Do another thing\n"
+        content = (
+            "# Proposed Plan\n\n## Tasks\n\n- [T1] "
+            "Do something\n- [T2] Do another thing\n"
+        )
         ok, errors = validate_plan_markdown(content)
         assert ok is True
         assert errors == []
@@ -233,7 +236,10 @@ class TestPlanDryRun:
 
     def test_mutation_warnings_generated(self):
         runner = PlanDryRunner()
-        content = "# Plan\n\nRun command to install packages\nEdit the file\nWrite new content\n"
+        content = (
+            "# Plan\n\nRun command to install "
+            "packages\nEdit the file\nWrite new content\n"
+        )
         result = runner.validate(content)
         assert len(result.warnings) > 0
 

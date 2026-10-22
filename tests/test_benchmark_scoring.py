@@ -116,7 +116,8 @@ class TestTrendHelpers:
             '{"models": [{"model": "m1", "overall_accuracy": 60.0}]}', encoding="utf-8"
         )
         (tmp_path / "benchmark_20260702_100000.json").write_text(
-            '{"models": [{"model": "m1", "overall_accuracy": 70.0}, {"model": "m2", "overall_accuracy": 90.0}]}',
+            '{"models": [{"model": "m1", "overall_accuracy": '
+            '70.0}, {"model": "m2", "overall_accuracy": 90.0}]}',
             encoding="utf-8",
         )
         snaps = load_report_snapshots(str(tmp_path))

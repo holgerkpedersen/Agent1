@@ -30,7 +30,10 @@ class TestImplementPatchApply:
         assert result == "x = 10\ny = 2\nz = 3\n"
 
     def test_addition_inside_function(self, tmp_path):
-        """A patch that inserts a new line inside a function body via paired replacement."""
+        (
+            """A patch that inserts a new line inside """
+            """a function body via paired replacement."""
+        )
         apply = self._load_impl()
         original = [
             "def foo():\n",
@@ -448,7 +451,10 @@ class TestPatchIntegrationViaAgent:
     """End-to-end tests running through agent.py command execution."""
 
     def test_implement_cmd_patch_via_parse_and_apply(self, tmp_path):
-        """Simulate the implement --fix path: parse [PATCH:] from LLM output and apply."""
+        (
+            """Simulate the implement --fix path: """
+            """parse [PATCH:] from LLM output and apply."""
+        )
         from agent_core.commands.implement_cmd import _apply_patch
 
         target = tmp_path / "code.py"

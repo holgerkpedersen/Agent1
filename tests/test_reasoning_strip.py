@@ -34,8 +34,10 @@ BLOCKED_RESPONSE = """# Analysis for workspace C:\\Dev\\Agent1
 
 ## 7. CLARIFYING QUESTIONS
 
-- What weighting defines "critical" — security severity, blast radius, performance impact, or a mix?
-- What is the required output format — a markdown report, inline code comments, or a structured list with rationale per region?
+- What weighting \
+defines "critical" — security severity, blast radius, performance impact, or a mix?
+- What is the required output format — \
+a markdown report, inline code comments, or a structured list with rationale per region?
 
 ## 8. SUCCESS METRICS & OVERSIGHT
 
@@ -142,8 +144,10 @@ class TestExtractSection:
         r = BLOCKED_RESPONSE.replace(
             "## 8. SUCCESS METRICS",
             "## 7. CLARIFYING QUESTIONS\n"
-            '- What weighting defines "critical" — security severity, blast radius, performance impact, or a mix?\n'
-            "- What is the required output format — a markdown report, inline code annotations, or a structured list with rationale per region?\n"
+            '- What weighting defines "critical" — security '
+            "severity, blast radius, performance impact, or a mix?\n"
+            "- What is the required output format — a markdown report, inline "
+            "code annotations, or a structured list with rationale per region?\n"
             "\n"
             "## 8. SUCCESS METRICS",
         )
@@ -177,8 +181,10 @@ class TestStripReasoningAnalysisDedupe:
         r = BLOCKED_RESPONSE.replace(
             "**BLOCKED:** yes",
             "## 7. CLARIFYING QUESTIONS\n"
-            '- What weighting defines "critical" — security severity, blast radius, performance impact, or a mix?\n'
-            "- What is the required output format — a markdown report, inline code annotations, or a structured list with rationale per region?\n"
+            '- What weighting defines "critical" — security '
+            "severity, blast radius, performance impact, or a mix?\n"
+            "- What is the required output format — a markdown report, inline "
+            "code annotations, or a structured list with rationale per region?\n"
             "\n"
             "**BLOCKED:** yes",
         )

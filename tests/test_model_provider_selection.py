@@ -258,7 +258,8 @@ class TestSwitchModelWithProvider:
         )
 
         assert isinstance(agent.llm._provider, OpencodeProvider)
-        # No opencode catalog match for "laguna-s-2.1-ud" → bare name → opencode-go/ prefix
+        # No opencode catalog match for "laguna-s-2.1-ud" → bare name → opencode-go/
+        # prefix
         assert agent.llm.model_name == "opencode-go/laguna-s-2.1-ud"
         out = capsys.readouterr().out
         assert "provider=opencode" in out

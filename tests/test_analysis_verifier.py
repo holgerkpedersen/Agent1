@@ -59,7 +59,8 @@ class TestVerifyAnalysisClaims:
         security = tmp_path / "agent_core" / "security"
         security.mkdir(parents=True)
         (security / "path_utils.py").write_text(
-            "def normalize_path(workspace_root, target_path):\n    return target_path\n",
+            "def normalize_path(workspace_root, "
+            "target_path):\n    return target_path\n",
             encoding="utf-8",
         )
         (tmp_path / "agent_core" / "tool_executor.py").write_text(
@@ -81,8 +82,8 @@ class TestVerifyAnalysisClaims:
     def test_verified_claims_report_clean(self, tmp_path: Path) -> None:
         ws = self._build_ws(tmp_path)
         analysis = (
-            "The `_execute_nlp_tool` method in `agent.py` runs `subprocess.run(..., shell=True)` "
-            "without validation."
+            "The `_execute_nlp_tool` method in `agent.py` runs "
+            "`subprocess.run(..., shell=True)` without validation."
         )
         result = asyncio.run(self._verify(ws, analysis))
         assert result.checked >= 3
@@ -141,9 +142,9 @@ class TestVerifyAnalysisClaims:
     def test_symbol_line_does_not_bleed_across_bullets(self, tmp_path: Path) -> None:
         ws = self._build_ws(tmp_path)
         analysis = (
-            "- Broad exception swallowing masks failures at `agent.py` line ~86.\n"
-            "- DRY violations between agent.py and FileSystem/FileSearcher: `_safe_path`, "
-            "`FileSystem.read` duplicate path normalization."
+            "- Broad exception swallowing masks failures at `agent.py` line "
+            "~86.\n- DRY violations between agent.py and FileSystem/FileSearcher: "
+            "`_safe_path`, `FileSystem.read` duplicate path normalization."
         )
         result = asyncio.run(self._verify(ws, analysis))
         assert not any(
@@ -240,9 +241,9 @@ class TestVerifyAnalysisClaims:
             "class ShellCommandHandler:\n    pass\n", encoding="utf-8"
         )
         analysis = (
-            "**DRY violation**: `_normalize_path`, `FileSystem.normalize_path`, `_safe_path`, "
-            "`_resolve_nlp_path` all reimplement path resolution; `tool_router.py` ShellCommandHandler "
-            "duplicates logic from `agent.py`."
+            "**DRY violation**: `_normalize_path`, `FileSystem.normalize_path`, "
+            "`_safe_path`, `_resolve_nlp_path` all reimplement path resolution; "
+            "`tool_router.py` ShellCommandHandler duplicates logic from `agent.py`."
         )
         result = asyncio.run(self._verify(ws, analysis))
         assert result.flagged == 0
@@ -267,8 +268,8 @@ class TestVerifyAnalysisClaims:
         this real symbol was flagged because 'agent_core' resolved nowhere)."""
         ws = self._build_ws(tmp_path)
         analysis = (
-            "`agent_core.security.path_utils.normalize_path` is used by `tool_executor.py` "
-            "for sandboxing."
+            "`agent_core.security.path_utils.normalize_path` "
+            "is used by `tool_executor.py` for sandboxing."
         )
         result = asyncio.run(self._verify(ws, analysis))
         assert result.flagged == 0

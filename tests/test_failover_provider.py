@@ -238,7 +238,8 @@ def _tool_call_with_error_words() -> str:
                             {
                                 "path": "x.py",
                                 "content": (
-                                    'if s.startswith("[Error:"):  # unreachable / timeout\n'
+                                    'if s.startswith("[Error:"): '
+                                    " # unreachable / timeout\n"
                                 ),
                             }
                         ),

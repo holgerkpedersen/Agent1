@@ -47,7 +47,8 @@ FILES: tuple[str, ...] = (str(_TARGET),)
 #: and the mutation-tracking accumulator are inserted.
 _ANCHOR_MUT = 'MUTATING_TOOLS = frozenset({"write", "edit", "fix"})'
 _HINT_SENTINEL = "_RESUME_NOTE = ("
-_INSERT_BLOCK = """#: Injected when a run ends non-completed AFTER mutating the workspace
+_INSERT_BLOCK = """#: \
+Injected when a run ends non-completed AFTER mutating the workspace
 #: (repair abandonment-resume-protocol): the model has no memory of what it
 #: touched, so without this it starts the next turn cold and repeats or
 #: contradicts the half-applied work.  Travels as a "user" message (strict

@@ -381,7 +381,10 @@ class ReplaySession:
         if kind == "tool_call":
             tool = ev.get("tool", "")
             args = _parse_args(ev)
-            return f"{header}\n    -> call {tool} {_shorten(json.dumps(args, ensure_ascii=False), 160)}"
+            return (
+                f"{header}\n    -> call {tool} "
+                f"{_shorten(json.dumps(args, ensure_ascii=False), 160)}"
+            )
         if kind == "tool_result":
             tool = ev.get("tool", "")
             result = _shorten(str(ev.get("result", "")), 200)
@@ -399,7 +402,10 @@ class ReplaySession:
             return f"{header}\n    # loop_end outcome={outcome}"
         if kind == "task_begin":
             prompt = _shorten(self.prompt, 200)
-            return f"{header}\n    task_begin model={self.model} profile={self.profile}\n    prompt: {prompt}"
+            return (
+                f"{header}\n    task_begin model={self.model} "
+                f"profile={self.profile}\n    prompt: {prompt}"
+            )
         if kind == "step_start":
             it = ev.get("iteration", "?")
             return f"{header}\n    step_start iteration={it}"
@@ -562,7 +568,8 @@ class ReconstructCommand(Command):
                 # No write found — file must already exist; we can't create it
                 # from edits alone.
                 print(
-                    f"  SKIP: {path} — no write operation found (edits only, file must exist)"
+                    f"  SKIP: {path} — no write operation "
+                    f"found (edits only, file must exist)"
                 )
                 skipped += len(ops)
                 continue
@@ -682,7 +689,8 @@ class ReconstructCommand(Command):
 
         if not task:
             self.error(
-                "Usage: reconstruct replay <task> [--from <n>] [--event <kind>] [--save-prefix <dir>] [--apply]"
+                "Usage: reconstruct replay <task> [--from <n>] "
+                "[--event <kind>] [--save-prefix <dir>] [--apply]"
             )
             return True
         if not os.path.isdir(traces_dir):

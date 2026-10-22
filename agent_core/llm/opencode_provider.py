@@ -552,7 +552,8 @@ class OpencodeProvider:
             # Cloudflare's Browser Integrity Check (error 1010) blocks
             # requests with non-browser User-Agents.  Use a real browser
             # signature for ALL modes (zen AND go).
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
             "x-opencode-project": "agent1",
             "x-opencode-session": "agent1-session",
             "x-opencode-request": "req-1",
@@ -748,7 +749,10 @@ class OpencodeProvider:
             )
         except urllib.error.HTTPError as exc:
             detail = _http_error_body(exc) or str(exc.reason)
-            return f"[Error: opencode /messages request failed: HTTP Error {exc.code}: {detail}]"
+            return (
+                f"[Error: opencode /messages request "
+                f"failed: HTTP Error {exc.code}: {detail}]"
+            )
         except Exception as exc:
             return f"[Error: opencode /messages request failed: {exc}]"
         return self._anthropic_result_to_chat(result)

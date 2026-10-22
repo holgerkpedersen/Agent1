@@ -93,7 +93,8 @@ class TestMechanicalFixersRefuseStringLiterals:
     def test_dead_assignment_removal_refused_inside_fixture(self):
         src = 'CODE = """\n    ws_path = tmp\n"""\nuse(CODE)\n'
         finding = {
-            "suggestion": "Variable 'ws_path' assigned at line 2 but never used after. Remove the dead assignment."
+            "suggestion": "Variable 'ws_path' assigned at line 2 but "
+            "never used after. Remove the dead assignment."
         }
         assert (
             _tri_mech_fix(src.split("\n"), 2, "dead_assignment", "t.py", finding)
