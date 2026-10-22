@@ -359,6 +359,70 @@ def _summarize_payload(dropped: list[dict[str, Any]]) -> str:
     return payload
 
 
+def _shrinkable_body(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The messages the SHRINK path stubs: everything except the system
+    prompt, the leading task prompt and the newest exchange.
+
+    :func:`_shrink_to_budget` Phase 1 + the final sweep stub exactly this
+    span, oldest-first.  The summarize strategy feeds it to the LLM *before*
+    the stubbing so the evicted content survives as a working-memory note
+    instead of vanishing.
+    """
+    start = 1 if messages and messages[0].get("role") == "system" else 0
+    body = messages[start:]
+    first_user = next((i for i, m in enumerate(body) if m.get("role") == "user"), None)
+    last_assistant = next(
+        (i for i in range(len(body) - 1, -1, -1) if body[i].get("role") == "assistant"),
+        None,
+    )
+    newest_start = last_assistant if last_assistant is not None else len(body)
+    lo = (first_user + 1) if first_user is not None else 0
+    hi = newest_start
+    return body[lo:hi]
+
+
+async def _summarize_dropped(
+    dropped: list[dict[str, Any]],
+    llm_chat_fn: Callable[
+        [list[dict[str, Any]], list[dict[str, Any]]],
+        Awaitable[tuple[str, list[dict[str, Any]]]],
+    ]
+    | None,
+) -> str | None:
+    """Ask the LLM to condense *dropped* into a working-memory note.
+
+    Returns the summary text, or ``None`` when no summarizer is available,
+    the call fails, or the model returns nothing — the caller fail-opens to
+    the plain note.  The payload is bounded by :func:`_summarize_payload`, so
+    summarizing costs one small call, never a re-send of the evicted history.
+    """
+    if llm_chat_fn is None or not dropped:
+        return None
+    try:
+        raw, _ = await llm_chat_fn(
+            [
+                {
+                    "role": "system",
+                    "content": "Summarize the tool-call history.",
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        _SUMMARIZE_INSTRUCTION
+                        + "\n"
+                        + _summarize_payload(dropped)
+                    ),
+                },
+            ],
+            [],
+        )
+    except Exception:  # pragma: no cover - fail-open to the plain note
+        return None
+    if raw and raw.strip():
+        return raw.strip()
+    return None
+
+
 def _split_for_compaction(
     messages: list[dict[str, Any]],
     max_messages: int,
@@ -420,6 +484,8 @@ def _compact_messages(
     max_messages: int,
     char_budget: int,
     summary: str | None,
+    *,
+    shrink_summary: str | None = None,
 ) -> tuple[list[dict[str, Any]], str | None]:
     """Compact *messages* to a bounded working set.
 
@@ -440,6 +506,11 @@ def _compact_messages(
     that used to make compaction return the list UNTOUCHED and let the prompt
     grow to 435k tokens), the shrink fallback truncates older contents in
     place instead of doing nothing.
+
+    *shrink_summary* is the LLM's condensation of the content the SHRINK path
+    stubbed out.  The drop path carries a summary in the note it inserts;
+    without this, the shrink path's note was a bare "contents were truncated"
+    notice and the evicted knowledge was gone with no trace.
     """
     dropped, kept_full = _split_for_compaction(messages, max_messages, char_budget)
     if dropped is None:
@@ -450,16 +521,21 @@ def _compact_messages(
         if not changed:
             return messages, None
         shrunk = [m for m in shrunk if m.get(LOOP_NOTE_TAG_KEY) != _COMPACT_NOTE_TAG]
+        shrunk_stripped = (shrink_summary or "").strip()
+        shrink_note = (
+            _COMPACT_SHRINK_NOTE
+            + (f"\n{shrunk_stripped}" if shrunk_stripped else "")
+        )
         return (
             shrunk
             + [
                 {
                     "role": "user",
-                    "content": _COMPACT_SHRINK_NOTE,
+                    "content": shrink_note,
                     LOOP_NOTE_TAG_KEY: _COMPACT_NOTE_TAG,
                 }
             ],
-            _COMPACT_SHRINK_NOTE,
+            shrink_note,
         )
     kept_full = [m for m in kept_full if m.get(LOOP_NOTE_TAG_KEY) != _COMPACT_NOTE_TAG]
     stripped = (summary or "").strip()
@@ -550,8 +626,14 @@ def _shrink_message(
     msg = _strip_oversized_tool_args(message)
     out = dict(msg)
     content = msg.get("content")
+    # keep=0 is the sweep's "stub EVERYTHING" mode: shrink any non-empty
+    # string field to a short placeholder, not only fields over the
+    # _SHRINK_MIN_CHARS threshold (medium-sized messages must be shrinkable
+    # when their SUM is what breaks the budget).
+    _stub_everything = stub and keep == 0
+    _min_len = 0 if _stub_everything else _SHRINK_MIN_CHARS
     if stub:
-        if isinstance(content, str) and len(content) > _SHRINK_MIN_CHARS:
+        if isinstance(content, str) and len(content) > _min_len:
             kb = max(1, len(content) // 1024)
             out["content"] = (
                 f"[truncated {kb} KB message — dropped to fit context; "
@@ -561,7 +643,7 @@ def _shrink_message(
             out["content"] = _shrink_content(content, 0)
     elif content is not None:
         out["content"] = _shrink_content(content, keep)
-    threshold = _SHRINK_MIN_CHARS if stub else keep
+    threshold = _min_len if stub else keep
     for key, value in msg.items():
         if key in _SHRINK_PROTECTED_STR_KEYS or key == "content":
             continue
@@ -609,7 +691,10 @@ def _shrink_to_budget(
     if _total_chars(msgs) <= char_budget:
         return msgs, False
     start = 1 if msgs and msgs[0].get("role") == "system" else 0
-    head, body = msgs[:start], msgs[start:]
+    # Phases must work on the same list object they return (head[0] / body[i]
+    # are mutated in place); deep-copy so the caller's messages are untouched.
+    head = [dict(m) for m in msgs[:start]]
+    body = [dict(m) for m in msgs[start:]]
     first_user = next((i for i, m in enumerate(body) if m.get("role") == "user"), None)
     last_assistant = next(
         (i for i in range(len(body) - 1, -1, -1) if body[i].get("role") == "assistant"),
@@ -617,6 +702,25 @@ def _shrink_to_budget(
     )
     newest_start = last_assistant if last_assistant is not None else len(body)
     changed = False
+
+    def _protect_set() -> set[int]:
+        """Indices the sweep must not stub: the newest exchange AND every
+        assistant that announces ``tool_calls``.  Stubbing an announced
+        assistant while its tool result stays in the list breaks the
+        announce/answer pairing contract; keeping the announcement intact
+        keeps the contract by construction (the sweep is size-preserving,
+        so the tool result cannot be dropped alongside it)."""
+        protect: set[int] = set()
+        if first_user is not None:
+            protect.add(first_user)
+        protect.update(
+            i for i in range(newest_start, len(body))
+        )
+        protect.update(
+            i for i, m in enumerate(body)
+            if m.get("role") == "assistant" and m.get("tool_calls")
+        )
+        return protect
 
     def _total() -> int:
         return _total_chars(head) + _total_chars(body)
@@ -657,9 +761,49 @@ def _shrink_to_budget(
             body[first_user] = stripped
             changed = True
 
-    # Phase 4 (very last resort): the system prompt itself.
+    # Phase 4 (very last resort): the system prompt itself - and every other
+    # string field it carries (skills block, tool definitions, memory context).
+    # ``_shrink_message`` shrinks content AND fat non-content fields, so a
+    # system prompt whose bulk lives in a side field is shrinkable too: a
+    # marked truncation beats killing the whole turn with a RuntimeError.
     if _total() > char_budget and head:
         stripped = _shrink_message(head[0], keep=_SHRINK_NEWEST_KEEP, stub=False)
+        if stripped != head[0]:
+            head[0] = stripped
+            changed = True
+
+    # Phase 5: final sweep.  Phases 1-4 each SKIP messages under
+    # ``_SHRINK_MIN_CHARS`` (Phase 1) or leave them at the keep size
+    # (Phases 2-4), so many medium-sized messages survive every pass and
+    # their SUM still exceeds the budget — the fallback then raised
+    # RuntimeError and killed a productive turn (2026-10-22).  Sweep the
+    # eligible middle oldest-first stubbing everything shrinkable (content
+    # -> short placeholder, args -> valid JSON), then the protected first
+    # user message and the system prompt as the very last resort.  Nothing
+    # is DROPPED, so count, roles and tool_call pairings are preserved.
+    def _sweep(protect: set[int]) -> None:
+        nonlocal changed
+        for i, m in enumerate(body):
+            if _total() <= char_budget:
+                return
+            if i in protect:
+                continue
+            # keep=0: stub EVERY shrinkable field (content AND fat non-content
+            # strings like reasoning_content) to a short placeholder, so no
+            # message can escape the sweep at a medium size.
+            stripped = _shrink_message(m, keep=0, stub=True)
+            if stripped != m:
+                body[i] = stripped
+                changed = True
+
+    if _total() > char_budget:
+        _sweep(_protect_set())
+    if _total() > char_budget and first_user is not None:
+        # Second resort: the protected first user message (the task prompt)
+        # may be stubbed — a marked truncation beats killing the turn.
+        _sweep(set())
+    if _total() > char_budget and head:
+        stripped = _shrink_message(head[0], keep=_SHRINK_NEWEST_KEEP, stub=True)
         if stripped != head[0]:
             head[0] = stripped
             changed = True
@@ -748,7 +892,7 @@ class ToolLoopRunner:
         trace: TraceSink | None = None,
         effects_fn: Callable[[str, dict[str, Any]], list[str]] | None = None,
         in_loop_compact: bool = True,
-        compact_strategy: str = "note",
+        compact_strategy: str = "summarize",
         compact_max_messages: int = _IN_LOOP_MAX_MESSAGES,
         compact_char_budget: int | None = None,
         context_limit_tokens: int | None = None,
@@ -1084,38 +1228,30 @@ class ToolLoopRunner:
                 #: to save context", sending the model looking for memory that
                 #: was never written.
                 summary: str | None = None
+                shrink_summary: str | None = None
                 if self.compact_strategy == "summarize":
-                    dropped, _ = _split_for_compaction(
+                    dropped, _kept = _split_for_compaction(
                         current_messages,
                         self.compact_max_messages,
                         self.compact_char_budget,
                     )
                     if dropped:
-                        try:
-                            raw_summary, _ = await llm_chat_fn(
-                                [
-                                    {
-                                        "role": "system",
-                                        "content": "Summarize the tool-call history.",
-                                    },
-                                    {
-                                        "role": "user",
-                                        "content": _SUMMARIZE_INSTRUCTION
-                                        + "\n"
-                                        + _summarize_payload(dropped),
-                                    },
-                                ],
-                                [],
-                            )
-                            if raw_summary and raw_summary.strip():
-                                summary = raw_summary.strip()
-                        except Exception:  # pragma: no cover - fail-open to note
-                            summary = None
+                        summary = await _summarize_dropped(dropped, llm_chat_fn)
+                    else:
+                        # The DROP path cannot help (the newest tail alone is
+                        # over budget) — the SHRINK path is about to stub the
+                        # middle contents in place.  Summarize what it is about
+                        # to destroy, so the evicted knowledge survives in the
+                        # note instead of vanishing.
+                        shrink_summary = await _summarize_dropped(
+                            _shrinkable_body(current_messages), llm_chat_fn
+                        )
                 compacted, note = _compact_messages(
                     current_messages,
                     self.compact_max_messages,
                     self.compact_char_budget,
                     summary,
+                    shrink_summary=shrink_summary,
                 )
                 if note is not None:
                     injected_notes.append(note)

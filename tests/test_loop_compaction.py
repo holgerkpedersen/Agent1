@@ -18,11 +18,15 @@ from agent_core.llm.tool_loop import (
     GUARD_COMPACT,
     ToolLoopRunner,
     _compact_messages,
+    _shrink_to_budget,
+    _shrinkable_body,
     _split_for_compaction,
     _summarize_payload,
     _total_chars,
     _SUMMARIZE_MAX_CHARS,
     _IN_LOOP_CHAR_BUDGET,
+    _COMPACT_NOTE_TAG,
+    LOOP_NOTE_TAG_KEY,
 )
 from agent_core.tool_schemas import NLP_TOOL_SCHEMAS
 
@@ -375,6 +379,172 @@ class TestSummarizePayloadCap:
         )
 
 
+class TestShrinkPathSummary:
+    """The SHRINK path (newest tail alone over budget) must not destroy the
+    middle history silently: in ``summarize`` mode the LLM condenses it into
+    the compaction note BEFORE the stubbing wipes it (2026-10-22)."""
+
+    def test_shrink_summary_is_carried_into_the_note(self):
+        msgs = [
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "task"},
+            # Middle history: many medium messages whose SUM busts the budget.
+            *[
+                {"role": "user", "content": f"finding {i}: " + "x" * 900}
+                for i in range(30)
+            ],
+            # Newest exchange: giant, and NOT droppable -> forces the shrink path.
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "pend",
+                        "type": "function",
+                        "function": {"name": "run", "arguments": "{}"},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "pend", "content": "y" * 60_000},
+        ]
+        budget = 20_000
+        assert _total_chars(msgs) > budget
+        # Precondition: the DROP path cannot help — shrink path must be taken.
+        dropped, _kept = _split_for_compaction(msgs, 80, budget)
+        assert dropped is None
+
+        shrunk, note = _compact_messages(
+            msgs,
+            80,
+            budget,
+            None,
+            shrink_summary="FINDINGS: 30 reads, all under budget.",
+        )
+        assert note is not None
+        assert "FINDINGS: 30 reads, all under budget." in note
+        assert _total_chars(shrunk) <= budget
+        # The note is tagged so the run-end strip removes it from history.
+        assert shrunk[-1][LOOP_NOTE_TAG_KEY] == _COMPACT_NOTE_TAG
+
+    def test_shrink_without_summary_keeps_plain_note(self):
+        msgs = [
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "task"},
+            {"role": "user", "content": "m" * 40_000},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "pend",
+                        "type": "function",
+                        "function": {"name": "run", "arguments": "{}"},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "pend", "content": "y" * 60_000},
+        ]
+        budget = 20_000
+        shrunk, note = _compact_messages(msgs, 80, budget, None)
+        assert note is not None
+        assert "working summary" not in note.lower()
+        assert _total_chars(shrunk) <= budget
+
+    def test_shrinkable_body_excludes_protected_messages(self):
+        msgs = [
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "task"},
+            # The leading task prompt is PROTECTED by _shrink_to_budget
+            # (phase 1 skips first_user), so it is never in the span.
+            {"role": "assistant", "content": "step 1"},
+            {"role": "user", "content": "step 2"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "p",
+                        "type": "function",
+                        "function": {"name": "run", "arguments": "{}"},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "p", "content": "done"},
+        ]
+        body = _shrinkable_body(msgs)
+        # System prompt, the protected task prompt and the newest exchange are
+        # excluded; the closed middle is what the sweep stubs.
+        assert [m["content"] for m in body] == ["step 1", "step 2"]
+
+    def test_shrinkable_body_is_the_span_the_sweep_stubs(self):
+        msgs = [
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "task"},
+            {"role": "user", "content": "middle 1"},
+            {"role": "assistant", "content": "middle 2"},
+            {"role": "user", "content": "middle 3"},
+            # Newest exchange (last assistant + everything after) is kept.
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "p",
+                        "type": "function",
+                        "function": {"name": "run", "arguments": "{}"},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "p", "content": "done"},
+        ]
+        body = _shrinkable_body(msgs)
+        # System prompt, protected task prompt and the newest exchange are
+        # excluded; everything in between is what the sweep stubs.
+        assert [m["content"] for m in body] == ["middle 1", "middle 2", "middle 3"]
+
+    def test_summarize_strategy_summarizes_before_shrinking(self):
+        """End-to-end: the shrink path must ASK the LLM, and the answer must
+        reach the live prompt (as the note) before the stubbing destroys it."""
+        script = [
+            ("read", {"path": "big.py"}),
+            ("read", {"path": "big2.py"}),
+            "Done.",
+        ]
+        fake = _ScriptedLLM(script)
+        summarizer_calls: list[int] = []
+        orig_chat = fake.chat
+
+        async def spy_chat(messages, tools=None, **kwargs):
+            is_summarizer = any(
+                m.get("role") == "system"
+                and "Summarize the tool-call history" in str(m.get("content"))
+                for m in messages
+            )
+            if is_summarizer:
+                summarizer_calls.append(
+                    sum(len(str(m.get("content") or "")) for m in messages)
+                )
+                return "SUMMARY: big.py content was read and is huge."
+            return await orig_chat(messages, tools, **kwargs)
+
+        fake.chat = spy_chat
+
+        async def execute_tool(name, args):
+            return "z" * 30_000  # each result is big: the SUM busts the budget
+
+        runner = ToolLoopRunner(
+            max_iterations=10,
+            in_loop_compact=True,
+            compact_strategy="summarize",
+            compact_max_messages=80,
+            compact_char_budget=20_000,
+        )
+        _loop_runner_sync(runner, fake, execute_tool)
+        assert summarizer_calls, "the shrink path must invoke the summarizer"
+        # The summarizer payload itself stays bounded.
+        assert max(summarizer_calls) <= _SUMMARIZE_MAX_CHARS + 5_000
+
+
 class TestInLoopCompaction:
     def test_compacts_during_run(self):
         """A long scripted run must plateau the message count via compaction."""
@@ -553,6 +723,70 @@ class TestShrinkFallback:
         msgs = self._newest_giant_history(size=100)
         with pytest.raises(RuntimeError, match="cannot fit"):
             _compact_messages(msgs, 80, 100, None)
+
+    def test_many_medium_messages_shrink_instead_of_raising(self):
+        # The 2026-10-22 turn-killer shape: a long autonomous run whose
+        # history is many messages UNDER the per-message shrink threshold
+        # whose SUM exceeds the char budget, and whose newest exchange is
+        # PENDING (assistant announcing tool_calls + its tool result).  The
+        # drop path refuses (orphan guard), phases 1-4 skip every medium
+        # message, and the fallback used to raise RuntimeError and kill the
+        # turn.  The final sweep must stub them (oldest-first) and keep it.
+        msgs = [
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "task"},
+        ]
+        for i in range(40):
+            msgs.append(
+                {
+                    "role": "assistant",
+                    "content": f"step {i}",
+                    "tool_calls": [
+                        {
+                            "id": f"x{i}",
+                            "type": "function",
+                            "function": {"name": "run", "arguments": "{}"},
+                        }
+                    ],
+                }
+            )
+            msgs.append(
+                {"role": "tool", "tool_call_id": f"x{i}", "content": "m" * 900}
+            )
+        msgs.append(
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "pend",
+                        "type": "function",
+                        "function": {"name": "run", "arguments": "{}"},
+                    }
+                ],
+            }
+        )
+        msgs.append({"role": "tool", "tool_call_id": "pend", "content": "done"})
+        budget = 20_000
+        assert _total_chars(msgs) > budget  # precondition: compaction must run
+        # The turn-killer was the SHRINK fallback raising RuntimeError; the
+        # drop path is a separate strategy that legitimately compacts when it
+        # can.  Exercise the shrink path directly — it must stub, never raise.
+        out, changed = _shrink_to_budget(msgs, budget)
+        assert changed is True
+        assert _total_chars(out) <= budget
+        # Nothing dropped: roles preserved, pairing contract intact.
+        assert [m["role"] for m in out] == [m["role"] for m in msgs]
+        announced = {
+            str(tc.get("id"))
+            for m in out
+            if m.get("role") == "assistant"
+            for tc in (m.get("tool_calls") or [])
+        }
+        answered = {str(m.get("tool_call_id")) for m in out if m.get("role") == "tool"}
+        assert announced == answered
+        assert out[0]["content"] == "system"
+        assert out[1]["content"] == "task"
 
     def test_newest_reasoning_content_is_truncated_not_raised(self):
         # A reasoning model's ``reasoning_content`` is counted by
