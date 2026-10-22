@@ -1,7 +1,9 @@
 """Metrics storage module for the Performance Dashboard.
 
-This module provides a unified interface to store and retrieve metrics from various sources,
-including Prometheus, InfluxDB, and custom metric collectors. It supports multiple backends,
+This \
+module provides a unified interface to store and retrieve metrics from various sources,
+including \
+Prometheus, InfluxDB, and custom metric collectors. It supports multiple backends,
 caching strategies, and query optimization techniques.
 """
 
@@ -249,7 +251,8 @@ class PrometheusBackend(MetricsBackend):
             len(series.points),
             series.name,
         )
-        # In a real implementation this would POST to /api/v1/write or use remote_write protocol.
+        # In a real implementation this would POST to /api/v1/write or use remote_write
+        # protocol.
         pass
 
     async def close(self) -> None:
@@ -286,7 +289,8 @@ class InfluxDBBackend(MetricsBackend):
         # from influxdb_client import InfluxDBClient, QueryApi
         # flux_query = f'''
         #   from(bucket: "{self.bucket}")
-        #     |> range(start: {request.start_time.isoformat()}, stop: {request.end_time.isoformat()})
+        # |> range(start: {request.start_time.isoformat()}, stop:
+        # {request.end_time.isoformat()})
         #     |> filter(fn: (r) => r._measurement == "{request.metric_name}")
         # '''
 
@@ -312,7 +316,8 @@ class InfluxDBBackend(MetricsBackend):
             len(series.points),
             series.name,
         )
-        # In production: self._client.write_api().write(bucket=self.bucket, org=self.org, record=...)
+        # In production: self._client.write_api().write(bucket=self.bucket,
+        # org=self.org, record=...)
         pass
 
     async def close(self) -> None:
@@ -561,7 +566,8 @@ class MetricsCache:
 class MetricsStore:
     """Main facade for querying and storing metrics across multiple backends.
 
-    This class manages backend selection, caching, concurrency control, and error handling.
+   \
+ This class manages backend selection, caching, concurrency control, and error handling.
     """
 
     def __init__(
@@ -615,7 +621,8 @@ class MetricsStore:
     ) -> Optional[MetricsBackend]:
         """Retrieve a backend instance, initializing if necessary."""
         if not self._initialized:
-            # Run synchronous initialization in executor to avoid blocking event loop unnecessarily.
+            # Run synchronous initialization in executor to avoid blocking event loop
+            # unnecessarily.
             await asyncio.get_event_loop().run_in_executor(
                 None, self._ensure_initialized
             )

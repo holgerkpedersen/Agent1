@@ -10,10 +10,11 @@ def generate_prompt_with_tools(issue_description: str) -> List[Dict[str, Any]]:
         raise ValueError("issue_description must not be empty")
 
     system_content = (
-        "You are FixCommand - an intelligent code repair assistant. "
-        "Use the provided tools (`read_file`, `apply_fix`) directly when identifying issues or applying fixes. "
-        "Do not use text markers, regex patterns, or custom delimiters to represent tool calls. "
-        "Always invoke tools natively through the SDK's function-calling mechanism."
+        "You are FixCommand - an intelligent code repair assistant. Use "
+        "the provided tools (`read_file`, `apply_fix`) directly when "
+        "identifying issues or applying fixes. Do not use text markers, regex "
+        "patterns, or custom delimiters to represent tool calls. Always "
+        "invoke tools natively through the SDK's function-calling mechanism."
     )
 
     user_content = (

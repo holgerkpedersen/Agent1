@@ -35,7 +35,8 @@ LLMs DIFFERENT expert personas — each role is prepended as that model's own
 
     multillm "review this code" --models laguna-s-2.1,opencode-go/deepseek-v4-flash \
         --role "laguna-s-2.1:You are a security auditor. Focus on vulnerabilities." \
-        --role "opencode-go/deepseek-v4-flash:You are a performance engineer. Focus on hot paths."
+        --role \
+"opencode-go/deepseek-v4-flash:You are a performance engineer. Focus on hot paths."
 
 Inline ``--role`` is the primary way to set roles — no roles.json required.
 The REPL splits input with ``shlex.split(posix=False)``, which keeps the

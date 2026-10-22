@@ -278,8 +278,8 @@ class TestOpencodeRetry:
 
         calls = {"n": 0}
         body = (
-            b'{"error":{"type":"server_error","code":"server_error",'
-            b'"message":"Upstream request failed: Upstream response was not valid JSON"}}'
+            b'{"error":{"type":"server_error","code":"server_error","message":'
+            b'"Upstream request failed: Upstream response was not valid JSON"}}'
         )
 
         def fake_urlopen(req, timeout=None):
@@ -466,7 +466,10 @@ class TestDirectApiMode:
         prov = OpencodeProvider(_default_llm(), api_key="sk-test", read_store=False)
 
         def boom(req, timeout=None):
-            body = b'{"error": {"message": "Messages with role \'tool\' must be a response to a preceding message with \'tool_calls\'"}}'
+            body = (
+                b'{"error": {"message": "Messages with role \'tool\' must '
+                b"be a response to a preceding message with 'tool_calls'\"}}"
+            )
             raise urllib.error.HTTPError(
                 req.full_url, 400, "Bad Request", {}, BytesIO(body)
             )

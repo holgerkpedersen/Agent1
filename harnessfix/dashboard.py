@@ -1,8 +1,10 @@
 """Small CLI dashboard for recent harnessfix traces and diagnoses.
 
 Usage:
-  python -m harnessfix.dashboard --traces reports/traces --diagnoses reports/harnessfix/diagnoses --limit 10
-  python -m harnessfix.dashboard --traces reports/traces --diagnoses reports/harnessfix/diagnoses --task <task_id>
+  python -m harnessfix.dashboard \
+--traces reports/traces --diagnoses reports/harnessfix/diagnoses --limit 10
+  python -m harnessfix.dashboard \
+--traces reports/traces --diagnoses reports/harnessfix/diagnoses --task <task_id>
 """
 
 from __future__ import annotations
@@ -154,7 +156,8 @@ def _explain_task(
     outcome = summary["outcome"]
     if outcome == "completed":
         lines.append(
-            f"The task completed after {summary['events']} trace events with no unresolved failure."
+            f"The task completed after {summary['events']} "
+            f"trace events with no unresolved failure."
         )
     elif outcome == "incomplete":
         lines.append("The trace is still open: no loop_end event was recorded yet.")
@@ -166,7 +169,8 @@ def _explain_task(
                 break
         suffix = f" (termination reason: {reason})" if reason else ""
         lines.append(
-            f"The loop terminated with outcome {outcome!r}{suffix} after {summary['events']} trace events."
+            f"The loop terminated with outcome {outcome!r}{suffix} "
+            f"after {summary['events']} trace events."
         )
 
     failures = [
@@ -189,12 +193,14 @@ def _explain_task(
         lines.append(f"Lifecycle guard(s) fired: {names}.")
     if dupes:
         lines.append(
-            f"The model repeated an already-executed tool call {dupes} time(s) (duplicate flag)."
+            f"The model repeated an already-executed "
+            f"tool call {dupes} time(s) (duplicate flag)."
         )
     affected = summary.get("affected_files") or []
     if affected:
         lines.append(
-            f"Files touched: {', '.join(affected[:8])}{' …' if len(affected) > 8 else ''}."
+            f"Files touched: "
+            f"{', '.join(affected[:8])}{' …' if len(affected) > 8 else ''}."
         )
 
     if diag and diag.get("layer"):
@@ -257,7 +263,8 @@ def _show_task(traces_dir: Path, diag_dir: Path, task_id: str, as_json: bool) ->
         print(f"  affected   : {len(affected)} file(s) — {', '.join(affected[:6])}")
     if diag and diag.get("layer"):
         print(
-            f"  diagnosis  : {diag['layer']} — {diag.get('mechanism', '?')}  (confidence {diag.get('confidence', 'n/a')})"
+            f"  diagnosis  : {diag['layer']} — {diag.get('mechanism', '?')} "
+            f" (confidence {diag.get('confidence', 'n/a')})"
         )
         evidence = diag.get("evidence") or []
         if evidence:
@@ -408,7 +415,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--quality",
         action="store_true",
-        help="print a read-only sliding-window quality summary (windowed average + should_evolve)",
+        help="print a read-only sliding-window quality "
+        "summary (windowed average + should_evolve)",
     )
     parser.add_argument(
         "--window-size",
@@ -420,12 +428,14 @@ def main(argv: list[str] | None = None) -> int:
         "--threshold",
         type=float,
         default=DEFAULT_THRESHOLD,
-        help="quality threshold for --quality; below this, should_evolve is True (default: %(default)s)",
+        help="quality threshold for --quality; below this, "
+        "should_evolve is True (default: %(default)s)",
     )
     parser.add_argument(
         "--wiki",
         action="store_true",
-        help="print a read-only wiki knowledge summary (page count, coverage, top pages by retrieval hits)",
+        help="print a read-only wiki knowledge summary (page "
+        "count, coverage, top pages by retrieval hits)",
     )
     args = parser.parse_args(argv)
 
@@ -474,7 +484,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  page count       : {report['page_count']}")
         print(f"  total evidence    : {report['total_evidence']}")
         print(
-            f"  coverage          : {report.get('coverage', 0.0)}% (diagnosed layers with wiki pages)"
+            f"  coverage          : {report.get('coverage', 0.0)}% "
+            f"(diagnosed layers with wiki pages)"
         )
         print(f"  avg hit count     : {avg_hits:.2f}")
         print(f"  last consolidated : {when or '—'}")
@@ -482,7 +493,8 @@ def main(argv: list[str] | None = None) -> int:
         top = report.get("top_pages", [])
         if top:
             print(
-                f"{'key':<48} {'hits':>5} {'evidence':>9} {'layer':<22} lesson (first 60 chars)"
+                f"{'key':<48} {'hits':>5} {'evidence':>9} "
+                f"{'layer':<22} lesson (first 60 chars)"
             )
             print("-" * 100)
             for pg in top:
@@ -535,7 +547,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"HarnessFix dashboard — {len(rows)} recent traces from {args.traces}")
     print("-" * 130)
     print(
-        f"{'task_id':<36} {'outcome':<14} {'events':>6} {'failed':>6} {'guards':>6} {'aff':>4} {'model':<16} {'layer':<18} mechanism"
+        f"{'task_id':<36} {'outcome':<14} {'events':>6} {'failed':>6} "
+        f"{'guards':>6} {'aff':>4} {'model':<16} {'layer':<18} mechanism"
     )
     print("-" * 130)
     for r in rows:
@@ -551,7 +564,8 @@ def main(argv: list[str] | None = None) -> int:
         layer = diag.get("layer") if diag else ""
         mech = (diag.get("mechanism") or "")[:60] if diag else ""
         print(
-            f"{tid:<36} {outcome:<14} {events:>6} {failed:>6} {guards:>6} {aff:>4} {model:<16} {layer:<18} {mech}"
+            f"{tid:<36} {outcome:<14} {events:>6} {failed:>6} "
+            f"{guards:>6} {aff:>4} {model:<16} {layer:<18} {mech}"
         )
 
     if layer_counter:

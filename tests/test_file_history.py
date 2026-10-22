@@ -83,7 +83,10 @@ def test_extract_normalizes_windows_separators() -> None:
 
 
 def test_extract_deduplicates_case_insensitively() -> None:
-    text = "see Agent_Core/Cli/Commands/CLEAR.PY and again agent_core/cli/commands/clear.py"
+    text = (
+        "see Agent_Core/Cli/Commands/CLEAR.PY and "
+        "again agent_core/cli/commands/clear.py"
+    )
     paths = extract_file_paths(text)
     assert len(paths) == 1
     assert paths[0].lower() == "agent_core/cli/commands/clear.py"

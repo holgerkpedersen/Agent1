@@ -92,32 +92,43 @@ OPTIMIZE_RULES = (
     "Do NOT rename, move, or restructure existing variables (e.g. keep `combined += x` "
     "accumulation as-is unless a finding directly targets it)\n"
     "- NEVER use the walrus operator `:=`, especially inside comprehensions — it binds "
-    "the name into the enclosing function scope (PEP 572) and can silently leak/shadow; "
+    "the name into the enclosing function scope "
+    "(PEP 572) and can silently leak/shadow; "
     "assign the value to a named local on its own line first\n"
-    "- Preserve the original control-flow style: an imperative `for` loop stays a loop. "
+    "- Preserve the original control-flow style: "
+    "an imperative `for` loop stays a loop. "
     "The ONLY authorized loop-to-comprehension/generator conversion is when a "
     "list_append_join finding is listed for that loop — and never with `:=`. "
     "The fix must replace the whole loop accumulation with a single comprehension — "
-    "swapping .append(x) for .extend([x]) / += [x] is NOT a fix (same per-iteration cost). "
+    "swapping .append(x) for .extend([x]) / += "
+    "[x] is NOT a fix (same per-iteration cost). "
     "Do NOT fold several statements into a comprehension or compact one-liner in any "
     "other case\n"
     "- Decide and output immediately: do not deliberate at length in reasoning. "
-    "If a change is not unambiguously required by a finding, skip it and keep the original\n"
+    "If a change is not unambiguously required "
+    "by a finding, skip it and keep the original\n"
     "- NEVER leave a dead assignment — every variable you assign must be read by later "
     "code; if an assignment becomes unused, remove it entirely\n"
-    "- For a silent_except finding, replace `pass` with a print/log warning only — never "
+    "- For a silent_except finding, replace "
+    "`pass` with a print/log warning only — never "
     "convert `except ...: pass` to `raise`. Those handlers are usually intentional "
     "fallbacks; re-raising changes control flow and crashes otherwise-normal paths\n"
     "- Only change code inside a loop when a finding targets that exact line; never "
     "rewrite surrounding control flow the findings do not request\n"
-    "- Address ONLY the listed findings. Any edit not required by a finding — comments, "
-    "whitespace, docstrings, unrelated lines — is a failure; change exactly the code the "
+    "- Address ONLY the listed findings. Any "
+    "edit not required by a finding — comments, "
+    "whitespace, docstrings, unrelated lines — "
+    "is a failure; change exactly the code the "
     "findings point at and nothing else\n"
-    "- Hoist `regex_in_loop` matches to MODULE-LEVEL `_RE_*` constants at the top of the "
-    "file (one definition). A `re.compile` inside a function body is NOT a fix — it still "
+    "- Hoist `regex_in_loop` matches to MODULE-LEVEL "
+    "`_RE_*` constants at the top of the "
+    "file (one definition). A `re.compile` inside "
+    "a function body is NOT a fix — it still "
     "re-creates the pattern on every call\n"
-    "- Never ADD an import statement that already exists earlier in the file — duplicate "
-    "imports are a new defect (duplicate_import). Region output must not re-import modules "
+    "- Never ADD an import statement that already "
+    "exists earlier in the file — duplicate "
+    "imports are a new defect (duplicate_import). "
+    "Region output must not re-import modules "
     "the file header already imports\n"
     "- Do NOT introduce new helper variables, caches, or functions that the findings "
     "do not require\n"
@@ -1467,15 +1478,19 @@ def _patch_system_prompt(basename: str) -> str:
         "- The '-' line (old code) is REMOVED and the '+' line REPLACES it — "
         "do NOT keep the old buggy line as context and add a new line next to it. "
         "For single-line replacements keep hunk line counts neutral (as many removed "
-        "as changed).  When REMOVING a loop entirely (list_append_join → comprehension), "
-        "a net line reduction is expected — the comprehension replaces the whole loop.\n"
+        "as changed).  When REMOVING a loop entirely "
+        "(list_append_join → comprehension), "
+        "a net line reduction is expected — the "
+        "comprehension replaces the whole loop.\n"
         "- When fixing **list_append_join**: the finding is that a list is built "
         "incrementally with .append/.extend/+= per-iteration then consumed by .join(). "
         "The fix must REMOVE the per-iteration build: replace the loop (or loop body) "
-        "with a single list comprehension/generator that builds the WHOLE list at once. "
+        "with a single list comprehension/generator "
+        "that builds the WHOLE list at once. "
         "Swapping .append(x) for .extend([x]), .extend((x,)), += [x], or any other "
         "single-element incremental call is NOT a fix — it is the same O(n) building "
-        "cost.  The fix must eliminate the per-iteration call entirely by restructuring "
+        "cost.  The fix must eliminate the "
+        "per-iteration call entirely by restructuring "
         "to a comprehension/generator.\n"
         "- Touch ONLY the code required by the finding. Do NOT reformat "
         "whitespace, docstrings, or unrelated lines. Do NOT rename or move "
@@ -1515,12 +1530,14 @@ def _patch_system_prompt(basename: str) -> str:
         "-                pass\n"
         '+                logger.warning("Failed to scan %s", path)\n\n'
         "Example (list_append_join — the for-loop + .append() are removed, a single "
-        "comprehension line replaces both; line count shrinks because the loop is gone):\n"
+        "comprehension line replaces both; line "
+        "count shrinks because the loop is gone):\n"
         "[PATCH: taskplan_cmd.py]\n"
         "@@ -49,2 +49,1 @@\n"
         "-    for d, names in sorted(taken.items())[:12]:\n"
         "-        lines.append(f\"  {d or 'root'}: {', '.join(names[:12])}\")\n"
-        "+    lines += [f\"  {d or 'root'}: {', '.join(names[:12])}\" for d, names in sorted(taken.items())[:12]]\n"
+        "+    lines += [f\"  {d or 'root'}: {', '.join(names[:12])}\" "
+        "for d, names in sorted(taken.items())[:12]]\n"
     )
 
 
@@ -1730,7 +1747,10 @@ async def _repair_merged_file(
                 f"- {basename}:{i['line']} [{i['pattern']}] {i['suggestion']}"
                 for i in issues
             )
-            user_content = f"## Static findings:\n{static_findings}\n\n## Code to optimize:\n\n{context}"
+            user_content = (
+                f"## Static findings:\n{static_findings}\n\n## "
+                f"Code to optimize:\n\n{context}"
+            )
             if feedback:
                 user_content = feedback + "\n\n" + user_content
             llm_response = await agent.llm.chat(
@@ -1738,9 +1758,11 @@ async def _repair_merged_file(
                     {
                         "role": "system",
                         "content": (
-                            "You are an expert Python optimizer. Apply ALL optimizations to each file.\n\n"
+                            "You are an expert Python optimizer. "
+                            "Apply ALL optimizations to each file.\n\n"
                             "For EACH file, output:\n"
-                            "[FILE: filename.py]\n```python\n# complete fixed code\n```\n\n"
+                            "[FILE: filename.py]\n```python\n# "
+                            "complete fixed code\n```\n\n"
                             "Rules:\n"
                             f"{OPTIMIZE_RULES}"
                         ),
@@ -2070,7 +2092,10 @@ class OptimizeCommand(Command):
 
     @property
     def help_text(self) -> str:
-        return "optimize <file|dir> [--apply] [--yes] [--list] - Find and apply optimizations (batched)"
+        return (
+            "optimize <file|dir> [--apply] [--yes] [--list] "
+            "- Find and apply optimizations (batched)"
+        )
 
     async def execute(self, args: list[str], agent: "Agent") -> bool:
         parts = list(args)
@@ -2108,7 +2133,8 @@ class OptimizeCommand(Command):
             targets = ["<stdin>"]
         elif not parts:
             self.error(
-                "Usage: optimize <file|dir> [--apply] [--yes] [--stdin] [--list] [--verbose]"
+                "Usage: optimize <file|dir> [--apply] "
+                "[--yes] [--stdin] [--list] [--verbose]"
             )
             return True
         else:
@@ -2184,14 +2210,16 @@ class OptimizeCommand(Command):
 
         # Print static findings
         print(
-            f"\n  Static analysis found {len(all_findings)} issue(s) in {len(file_contents)} file(s):\n"
+            f"\n  Static analysis found {len(all_findings)} "
+            f"issue(s) in {len(file_contents)} file(s):\n"
         )
         for fpath, group in sorted(by_file.items()):
             rel = _safe_relpath(fpath, os.getcwd()) if not stdin_mode else fpath
             print(f"  {rel}:")
             for item in group:
                 print(
-                    f"    line {item['line']:>4}: [{item['pattern']}] {item['suggestion']}"
+                    f"    line {item['line']:>4}: "
+                    f"[{item['pattern']}] {item['suggestion']}"
                 )
             print()
 
@@ -2236,7 +2264,8 @@ class OptimizeCommand(Command):
                     continue
                 original = batch["contents"][fpath]
                 print(
-                    f"  {basename}: {len(batch['findings'][fpath])} finding(s) — targeted patches"
+                    f"  {basename}: {len(batch['findings'][fpath])} "
+                    f"finding(s) — targeted patches"
                 )
 
                 work_lines = original.split("\n")
@@ -2251,7 +2280,8 @@ class OptimizeCommand(Command):
                     context = _finding_context("\n".join(work_lines), line)
                     if context is None:
                         print(
-                            f"    line {line} [{pattern}] — context unavailable (line out of range), skipped"
+                            f"    line {line} [{pattern}] — context "
+                            f"unavailable (line out of range), skipped"
                         )
                         continue
                     feedback = ""
@@ -2296,7 +2326,9 @@ class OptimizeCommand(Command):
                                                 pf["line"] += line_delta
                                     resolved = True
                                     print(
-                                        f"    Fixed line {line} [{pattern}] (mechanical, {before_cnt} -> {after_cnt} remaining)"
+                                        f"    Fixed line {line} [{pattern}] "
+                                        f"(mechanical, {before_cnt} "
+                                        f"-> {after_cnt} remaining)"
                                     )
                     if resolved:
                         continue
@@ -2305,7 +2337,8 @@ class OptimizeCommand(Command):
                         f["line"] == line and f["pattern"] == pattern for f in _resync
                     ):
                         print(
-                            f"    line {line} [{pattern}] — no longer present at that line, skipped"
+                            f"    line {line} [{pattern}] — no "
+                            f"longer present at that line, skipped"
                         )
                         continue
                     # ── LLM patch loop ──────────────────────────────────
@@ -2316,12 +2349,14 @@ class OptimizeCommand(Command):
                     for attempt in range(FINDING_MAX_ATTEMPTS):
                         if attempt > 0:
                             print(
-                                f"    Retry {attempt}/{FINDING_MAX_ATTEMPTS - 1} for line {line}..."
+                                f"    Retry {attempt}/{FINDING_MAX_ATTEMPTS - 1} "
+                                f"for line {line}..."
                             )
                         user_content = (
                             "## Finding to resolve\n"
                             f"{basename}:{line} [{pattern}] {finding['suggestion']}\n\n"
-                            "## Numbered context (numbers ARE the absolute file line numbers)\n"
+                            "## Numbered context (numbers ARE "
+                            "the absolute file line numbers)\n"
                             f"```\n{context}\n```\n\n"
                             "Output exactly one [PATCH: "
                             + basename
@@ -2371,9 +2406,13 @@ class OptimizeCommand(Command):
                             break
                         unresolved = _UNRESOLVED_RE.search(llm_response)
                         if unresolved:
+                            unresolved_text = (
+                                unresolved.group(1).strip()
+                                or "model reported un-resolvable"
+                            )
                             print(
                                 f"    Unresolved line {line} [{pattern}]: "
-                                f"{unresolved.group(1).strip() or 'model reported un-resolvable'}"
+                                f"{unresolved_text}"
                             )
                             resolved = False
                             break
@@ -2407,7 +2446,8 @@ class OptimizeCommand(Command):
                                     ids = ", ".join(f"#{d['id']}" for d in overlaps)
                                     titles = "; ".join(d["title"] for d in overlaps)
                                     print(
-                                        f"    WARNING: Fix contradicts past decisions: {ids} ({titles})"
+                                        f"    WARNING: Fix contradicts "
+                                        f"past decisions: {ids} ({titles})"
                                     )
                                     print(
                                         "    Use --force to override and apply anyway."
@@ -2419,7 +2459,8 @@ class OptimizeCommand(Command):
                         )
                         if placeholder_warn:
                             feedback = (
-                                "NEVER use placeholder text. Copy actual source lines from the numbered context. "
+                                "NEVER use placeholder text. Copy actual "
+                                "source lines from the numbered context. "
                                 + (feedback if feedback else "")
                             )
                         ok, patched = apply_patch(raw, work_lines)
@@ -2439,14 +2480,16 @@ class OptimizeCommand(Command):
                             feedback = (
                                 f"Your patch could not be applied: {patched[:200]}\n"
                                 f"Here is the actual numbered context:\n{snippet}\n"
-                                "Copy these EXACTLY for context/'-' lines. Use correct @@ numbers."
+                                "Copy these EXACTLY for context/'-' "
+                                "lines. Use correct @@ numbers."
                             )
                             if placeholder_warn or any(
                                 p in raw.lower() for p in _PLACEHOLDER_PHRASES
                             ):
                                 feedback = (
-                                    'NEVER use placeholder text like "unchanged line". Copy actual source lines from the numbered context. '
-                                    + feedback
+                                    "NEVER use placeholder text like "
+                                    '"unchanged line". Copy actual source '
+                                    "lines from the numbered context. " + feedback
                                 )
                             if attempt < FINDING_MAX_ATTEMPTS - 1:
                                 print(f"    Feedback: {feedback[:600]}")
@@ -2456,8 +2499,10 @@ class OptimizeCommand(Command):
                         new_lines = patched.split("\n")
                         if _cosmetic_only(work_lines, new_lines):
                             feedback = (
-                                "Your patch only changed indentation/whitespace (or nothing). "
-                                f"The finding at line {line} [{pattern}] must actually change. "
+                                "Your patch only changed "
+                                "indentation/whitespace (or nothing). "
+                                f"The finding at line {line} "
+                                f"[{pattern}] must actually change. "
                                 "Output hunks that modify the code the finding targets."
                             )
                             if attempt < FINDING_MAX_ATTEMPTS - 1:
@@ -2478,8 +2523,9 @@ class OptimizeCommand(Command):
                             for off in range(-3, 4)
                         ):
                             feedback = (
-                                "You replaced a functional line (e.g. .append/.write) with `pass` — "
-                                "this destroys the code. Convert it properly (list comprehension, "
+                                "You replaced a functional line (e.g. "
+                                ".append/.write) with `pass` — this destroys the "
+                                "code. Convert it properly (list comprehension, "
                                 "generator, etc.), do NOT nullify it with `pass`."
                             )
                             if attempt < FINDING_MAX_ATTEMPTS - 1:
@@ -2491,7 +2537,8 @@ class OptimizeCommand(Command):
                             compile(patched, "<optimize:patched>", "exec")
                         except SyntaxError as exc:
                             feedback = (
-                                f"Your patched file does not compile: {exc.msg} (line {exc.lineno}). "
+                                f"Your patched file does not compile: "
+                                f"{exc.msg} (line {exc.lineno}). "
                                 "Regenerate valid Python."
                             )
                             if attempt < FINDING_MAX_ATTEMPTS - 1:
@@ -2502,7 +2549,8 @@ class OptimizeCommand(Command):
                         undefined = _undefined_hoisted_names(patched)
                         if undefined:
                             feedback = (
-                                f"Your patch references undefined names: {', '.join(undefined)}. "
+                                f"Your patch references undefined "
+                                f"names: {', '.join(undefined)}. "
                                 "Define these names or restore the original code."
                             )
                             if attempt < FINDING_MAX_ATTEMPTS - 1:
@@ -2513,8 +2561,10 @@ class OptimizeCommand(Command):
                         dropped_names = _regresses_defined_names(original, patched)
                         if dropped_names:
                             feedback = (
-                                f"Your patch removed the definition of: {', '.join(dropped_names)}. "
-                                "Restore the original definitions or keep the old code unchanged."
+                                f"Your patch removed the definition "
+                                f"of: {', '.join(dropped_names)}. "
+                                "Restore the original definitions "
+                                "or keep the old code unchanged."
                             )
                             if attempt < FINDING_MAX_ATTEMPTS - 1:
                                 print(f"    Feedback: {feedback[:240]}")
@@ -2524,9 +2574,12 @@ class OptimizeCommand(Command):
                         missing_imports = _regressed_imports(original, patched)
                         if missing_imports:
                             feedback = (
-                                "Your patch removed an import that the file still uses: "
-                                f"{', '.join(missing_imports)}. Remove ONLY the unused name(s) "
-                                "from the import; keep every imported name that is referenced."
+                                "Your patch removed an import "
+                                "that the file still uses: "
+                                f"{', '.join(missing_imports)}. "
+                                f"Remove ONLY the unused name(s) "
+                                "from the import; keep every "
+                                "imported name that is referenced."
                             )
                             if attempt < FINDING_MAX_ATTEMPTS - 1:
                                 print(f"    Feedback: {feedback[:240]}")
@@ -2536,8 +2589,10 @@ class OptimizeCommand(Command):
                         added = _blocked_added_imports(patched, "\n".join(work_lines))
                         if added:
                             feedback = (
-                                f"Your patch changed the import set: {', '.join(sorted(added))[:160]}. "
-                                "NEVER add or remove import statements — keep the original imports untouched."
+                                f"Your patch changed the import set: "
+                                f"{', '.join(sorted(added))[:160]}. "
+                                "NEVER add or remove import statements "
+                                "— keep the original imports untouched."
                             )
                             if attempt < FINDING_MAX_ATTEMPTS - 1:
                                 print(f"    Feedback: {feedback[:240]}")
@@ -2552,8 +2607,10 @@ class OptimizeCommand(Command):
                         if after_cnt >= before_cnt:
                             feedback = (
                                 f"After your patch the file still contains [{pattern}] "
-                                f"({after_cnt} occurrence(s), {before_cnt} before). The patch must "
-                                "actually remove the finding - change exactly the code it targets."
+                                f"({after_cnt} occurrence(s), "
+                                f"{before_cnt} before). The patch must "
+                                "actually remove the finding - "
+                                "change exactly the code it targets."
                             )
                             if attempt < FINDING_MAX_ATTEMPTS - 1:
                                 print(f"    Feedback: {feedback[:240]}")
@@ -2565,9 +2622,11 @@ class OptimizeCommand(Command):
                         )
                         if regressed:
                             feedback = (
-                                f"Your patch reduced [{pattern}] but introduced or increased: "
+                                f"Your patch reduced [{pattern}] "
+                                f"but introduced or increased: "
                                 f"{', '.join(sorted(regressed))[:160]}. "
-                                "Refactor without introducing new static-analysis issues."
+                                "Refactor without introducing "
+                                "new static-analysis issues."
                             )
                             if attempt < FINDING_MAX_ATTEMPTS - 1:
                                 print(f"    Feedback: {feedback[:240]}")
@@ -2582,9 +2641,12 @@ class OptimizeCommand(Command):
                                 out_of_scope.append(hunk_start)
                         if out_of_scope:
                             feedback = (
-                                f"Your patch changed line(s) near {out_of_scope} which are far "
-                                f"from the finding at line {line}. Only modify the target area "
-                                f"(±{SCOPE_TOLERANCE} lines). Strip unrelated hunks and re-emit only "
+                                f"Your patch changed line(s) near "
+                                f"{out_of_scope} which are far "
+                                f"from the finding at line {line}. "
+                                f"Only modify the target area "
+                                f"(±{SCOPE_TOLERANCE} lines). Strip "
+                                f"unrelated hunks and re-emit only "
                                 "the fix for this finding."
                             )
                             if attempt < FINDING_MAX_ATTEMPTS - 1:
@@ -2630,7 +2692,8 @@ class OptimizeCommand(Command):
                 if new_full != original:
                     all_fixes[fpath] = new_full
                     print(
-                        f"  {basename}: patched ({len(original)} -> {len(new_full)} bytes)"
+                        f"  {basename}: patched ({len(original)} "
+                        f"-> {len(new_full)} bytes)"
                     )
         if not all_fixes:
             print("\n  No fixes were generated.")
@@ -2638,7 +2701,8 @@ class OptimizeCommand(Command):
 
         if stop_requested():
             print(
-                f"\n  Stopped by user — {len(all_fixes)} fix(es) generated but NOT applied."
+                f"\n  Stopped by user — {len(all_fixes)} "
+                f"fix(es) generated but NOT applied."
             )
             return True
 
@@ -2660,7 +2724,8 @@ class OptimizeCommand(Command):
                 ratio = new_size / original_size
                 if ratio < 0.5 or ratio > 2.0:
                     print(
-                        f"  Skipping {basename} — suspicious size change ({original_size} -> {new_size} bytes)"
+                        f"  Skipping {basename} — suspicious size "
+                        f"change ({original_size} -> {new_size} bytes)"
                     )
                     continue
 
@@ -2669,7 +2734,8 @@ class OptimizeCommand(Command):
                 print(f"  Fixes {len(file_findings)} finding(s) in {basename}:")
                 for fnd in file_findings[:20]:
                     print(
-                        f"    line {fnd['line']}: [{fnd['pattern']}] {fnd['suggestion']}"
+                        f"    line {fnd['line']}: "
+                        f"[{fnd['pattern']}] {fnd['suggestion']}"
                     )
 
             show_file_diff(basename, original, new_code)

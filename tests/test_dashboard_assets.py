@@ -221,7 +221,8 @@ def test_dark_mode_is_default_when_no_preference_stored(
     harness = tmp_path / "theme_resolver_harness.js"
     harness.write_text(
         f"{fn_src}\n"
-        "global.document = { documentElement: { getAttribute: () => global.__declared } };\n"
+        "global.document = { documentElement: { "
+        "getAttribute: () => global.__declared } };\n"
         "const run = (stored, declared) => {\n"
         "  global.__declared = declared;\n"
         "  return calculateSettingAsThemeString({ localStorageTheme: stored });\n"

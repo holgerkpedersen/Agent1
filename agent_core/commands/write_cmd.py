@@ -25,7 +25,10 @@ class WriteCommand(Command):
 
     @property
     def help_text(self) -> str:
-        return "write <path> <content> [--yes] - Write content to file (per-hunk diff review for existing files)"
+        return (
+            "write <path> <content> [--yes] - Write content "
+            "to file (per-hunk diff review for existing files)"
+        )
 
     def _review_hunks(self, old_text: str, new_text: str) -> str:
         """Interactive per-hunk approve/reject over the old->new diff.

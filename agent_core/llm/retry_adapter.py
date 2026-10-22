@@ -38,7 +38,10 @@ class RateLimiter:
 
 
 class RetryAdapter:
-    """Applies exponential backoff retries and optional rate limiting to callable targets."""
+    (
+        """Applies exponential backoff retries and """
+        """optional rate limiting to callable targets."""
+    )
 
     def __init__(
         self, config: RetryConfig | None = None, rate_limiter: RateLimiter | None = None

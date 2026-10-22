@@ -250,7 +250,8 @@ def validate_roles() -> list[str]:
             leaking = role.tools_allowed - PLAN_MODE_TOOLS
             if leaking:
                 problems.append(
-                    f"{role.name}: read-only role uses mutating tools: {sorted(leaking)}"
+                    f"{role.name}: read-only role uses "
+                    f"mutating tools: {sorted(leaking)}"
                 )
             if role.mode != MODE_PLAN:
                 problems.append(

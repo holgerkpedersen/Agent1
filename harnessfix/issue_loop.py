@@ -116,7 +116,8 @@ def find_duplicate_handlers(files: list[Path]) -> list[dict[str, Any]]:
                                 f,
                                 h.lineno,
                                 "duplication",
-                                f"exception class {name!r} caught by more than one handler",
+                                f"exception class {name!r} "
+                                f"caught by more than one handler",
                             )
                         )
                     seen.add(name)
@@ -465,7 +466,8 @@ def _rewrite_log_swallow(src: str) -> tuple[str, int]:
 def _ensure_suppress_import(src: str) -> str:
     """Add `from agent_core.suppress_log import _suppress_and_log` if not present."""
     if re.search(
-        r"\bdef _suppress_and_log\b|\bfrom agent_core\.suppress_log import _suppress_and_log\b",
+        r"\bdef _suppress_and_log\b|\bfrom "
+        r"agent_core\.suppress_log import _suppress_and_log\b",
         src,
     ):
         return src

@@ -72,7 +72,8 @@ def _infer_control_flow(graph: TraceGraph) -> list[HTIRLink]:
                     kind="control_flow",
                     source=step.index,
                     target=nxt.index,
-                    detail=f"step follows injected guard note ({step.payload.get('guard', '')})",
+                    detail=f"step follows injected guard note "
+                    f"({step.payload.get('guard', '')})",
                 )
             )
     # Stuck cycle: the third consecutive identical call is forced to stop.

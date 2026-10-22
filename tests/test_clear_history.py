@@ -9,7 +9,8 @@ async def test_clear_history_clears_conversation():
     # or we need to provide a way for it not to fail during instantiation.
 
     with patch("agent.LLMClient"):
-        # To avoid the KeyError in get_profile, we'll mock resolve_model and build_transport too
+        # To avoid the KeyError in get_profile, we'll mock resolve_model and
+        # build_transport too
         with (
             patch("agent.resolve_model", return_value="mock-model"),
             patch("agent.to_windows_path", side_effect=lambda x: x),
@@ -35,7 +36,8 @@ async def test_clear_history_clears_conversation():
 
             # Verify _chat_history is empty
             assert len(agent._chat_history) == 0, (
-                f"Expected _chat_history to be empty, but got {len(agent._chat_history)}"
+                f"Expected _chat_history to be empty, "
+                f"but got {len(agent._chat_history)}"
             )
 
             # Verify _turn_start_index is reset

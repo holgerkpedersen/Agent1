@@ -374,7 +374,8 @@ def _finish(summary: dict[str, Any], output_dir: Path) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="harnessfix.loop",
-        description="HarnessFix closed loop: diagnose traces, apply scoped repair, verify gates.",
+        description="HarnessFix closed loop: diagnose traces, "
+        "apply scoped repair, verify gates.",
     )
     parser.add_argument(
         "--traces", type=Path, default=TRACE_DIR, help="trace corpus dir"

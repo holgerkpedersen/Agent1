@@ -151,7 +151,8 @@ def apply_patch(patch_text: str, original_lines: list[str]) -> tuple[bool, str]:
     if not hunks:
         return False, "Could not parse patch"
 
-    # Filter out broken hunks (incomplete: has - but no +, empty + lines, or incomplete lines)
+    # Filter out broken hunks (incomplete: has - but no +, empty + lines, or incomplete
+    # lines)
     incomplete_ops = ("=", "+", "-", "*", "/")
     valid_hunks = []
     for start, chunks in hunks:

@@ -265,7 +265,8 @@ class LemonadeProvider:
         self._label()
         from .lmstudio import sanitize_message_roles
 
-        # Cap max_tokens at the model's actual context window to avoid "max length" errors.
+        # Cap max_tokens at the model's actual context window to avoid "max length"
+        # errors.
         requested_tokens = max_tokens if max_tokens is not None else self.max_tokens
         ctx_limit = self._fetch_context_limit()
         effective_tokens = (

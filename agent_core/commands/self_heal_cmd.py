@@ -43,7 +43,10 @@ class SelfHealCommand(Command):
 
     @property
     def help_text(self) -> str:
-        return "self_heal [path] [--rounds N] [--yes] - patch failing tests and re-run until green"
+        return (
+            "self_heal [path] [--rounds N] [--yes] - "
+            "patch failing tests and re-run until green"
+        )
 
     @staticmethod
     def _run_pytest(target: str) -> tuple[int, str]:
@@ -183,7 +186,8 @@ class SelfHealCommand(Command):
 
         baseline_failures = self._failing_files(output)
         print(
-            f"[self_heal] {len(baseline_failures)} failing file(s): {', '.join(baseline_failures)}"
+            f"[self_heal] {len(baseline_failures)} failing "
+            f"file(s): {', '.join(baseline_failures)}"
         )
 
         for round_no in range(1, rounds + 1):

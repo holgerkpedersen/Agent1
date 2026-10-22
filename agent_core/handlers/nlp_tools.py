@@ -490,7 +490,8 @@ def _nlp_tool_handlers(agent: "Agent") -> dict[str, NlpToolHandler]:
             # Late-bound through the Agent attribute so tests (and any
             # subclass) that patch Agent._nlp_read intercept this route.
             # The module-level function reference bypassed the patch and
-            # the dispatcher's exception containment (test_handler_exception_is_contained).
+            # the dispatcher's exception containment
+            # (test_handler_exception_is_contained).
             "read": lambda a: agent._nlp_read(a),
             "read_skill": lambda a: _nlp_read_skill(agent, a),
             "references": lambda a: _nlp_references(agent, a),
@@ -1353,7 +1354,10 @@ async def _nlp_get_current_datetime(agent: "Agent", args: dict[str, Any]) -> str
         try:
             tz = zoneinfo.ZoneInfo(str(tz_name))
         except (ValueError, zoneinfo.ZoneInfoNotFoundError):
-            return f"Error: unknown timezone '{tz_name}'. Use IANA names like 'UTC' or 'America/New_York'."
+            return (
+                f"Error: unknown timezone '{tz_name}'. Use "
+                f"IANA names like 'UTC' or 'America/New_York'."
+            )
         return datetime.now(tz).isoformat()
     return datetime.now().isoformat()
 
@@ -1437,7 +1441,10 @@ async def _nlp_hue_control(agent: "Agent", args: dict[str, Any]) -> str:
             has_hsv = "h" in args or "s" in args or "v" in args
 
             if not has_rgb and not has_xy and not has_hsv:
-                return "Error: set_color requires at least one color parameter (r/g/b, x/y, or h/s/v)."
+                return (
+                    "Error: set_color requires at least one "
+                    "color parameter (r/g/b, x/y, or h/s/v)."
+                )
 
             kwargs: dict[str, Any] = {}
             if "r" in args:

@@ -34,7 +34,10 @@ class MetricEncoder:
 
 
 class MetricSerializer(MetricEncoder):
-    """Serialize CommandMetric or TaskMetric to ordered dict preserving client expectations."""
+    (
+        """Serialize CommandMetric or TaskMetric to """
+        """ordered dict preserving client expectations."""
+    )
 
     def serialize(self, metric: Union[CommandMetric, TaskMetric]) -> Dict[str, Any]:
         return self.encode(metric)
@@ -65,7 +68,10 @@ class TrendReportSerializer(TrendFormatter):
 
 
 class ErrorDiagnosticBuilder:
-    """Transform validation failures and processing errors into actionable diagnostics."""
+    (
+        """Transform validation failures and processing """
+        """errors into actionable diagnostics."""
+    )
 
     def build(self, error_details: Union[str, None]) -> List[Dict[str, str]]:
         if not error_details:

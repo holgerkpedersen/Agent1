@@ -177,7 +177,8 @@ class TestEpisodeExtraction:
             _tool("t5", "write", {"path": "c.py"}),
             _llm(
                 "t5",
-                "I delivered the final answer with a full explanation of the fix and why it works.",
+                "I delivered the final answer with a full "
+                "explanation of the fix and why it works.",
                 n=2,
             ),
             _loop_end("t5", "stuck"),

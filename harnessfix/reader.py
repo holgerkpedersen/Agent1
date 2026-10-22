@@ -49,7 +49,8 @@ def read_trace(path: Path | str) -> list[dict[str, Any]]:
                 )
             if record.get("layer") not in LAYERS:
                 raise TraceValidationError(
-                    f"{p}:{lineno}: missing/invalid layer facet: {record.get('layer')!r}"
+                    f"{p}:{lineno}: missing/invalid "
+                    f"layer facet: {record.get('layer')!r}"
                 )
             events.append(record)
     return events

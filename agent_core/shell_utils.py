@@ -272,7 +272,8 @@ def platform_unix_hint() -> str:
         f"\nHint: this shell ({detect_shell()}) has no Unix tools like tail/grep/ls, "
         "and installed Python tools must be called as 'python -m <tool>'. Use Python "
         'one-liners (python -c "...") or the built-in tools — run output is truncated '
-        "automatically, so pipes like '2>&1 | tail -40' are neither needed nor supported."
+        "automatically, so pipes like '2>&1 | tail "
+        "-40' are neither needed nor supported."
     )
 
 
@@ -397,7 +398,10 @@ def run_subprocess_captured(
     timeout: int = 60,
     capture_stderr: bool = True,
 ) -> tuple[int, str, str]:
-    """Run a subprocess, capture stdout (and optionally stderr), return (code, stdout, stderr)."""
+    (
+        """Run a subprocess, capture stdout (and optionally """
+        """stderr), return (code, stdout, stderr)."""
+    )
     kwargs: dict = {
         "capture_output": capture_stderr,
         "text": True,
@@ -665,7 +669,8 @@ SYSTEM_PROMPT = (
     "write those yourself. It is a decision model, not a writer."
     "\n\nMANAGER WORKFLOW (for complex tasks):\n"
     "1. Analyze if the task benefits from parallel specialists.\n"
-    "2. Use create_subagent to spawn specialists (e.g. one for research, one for coding).\n"
+    "2. Use create_subagent to spawn specialists "
+    "(e.g. one for research, one for coding).\n"
     "3. Use run_subagent_task to assign work to each.\n"
     "4. Collect results and synthesize the final answer."
     "\n\nSPECULATE - parallel grounded answers on demand:\n"

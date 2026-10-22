@@ -2639,5 +2639,19 @@
     "resolved_by": null,
     "status": "active",
     "category": ""
+  },
+  {
+    "id": "123",
+    "date": "2026-10-22T10:26:05+00:00",
+    "title": "\"Pre-existing errors action\"",
+    "context": "\"We don't need to avoid pre-existing errors. We need to book the errors as Issues in Kanban og Agent1 if pre-existing errors found\"",
+    "decision": "\"Pre-existing errors must be handled\"",
+    "rationale": "",
+    "affected_files": [],
+    "tags": [],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": ""
   }
 ]

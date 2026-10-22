@@ -221,7 +221,8 @@ class ResponsiveAdapter:
         elif width >= self._BREAKPOINTS["wide"][0]:
             context = "wide"
 
-        # Calculate fidelity level: high for wide, medium for desktop/tablet, low for mobile
+        # Calculate fidelity level: high for wide, medium for desktop/tablet, low for
+        # mobile
         fidelity_levels = {"high": 3, "medium": 2, "low": 1}
         base_fidelity = {
             "mobile": "low",

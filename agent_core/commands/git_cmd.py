@@ -29,7 +29,10 @@ class GitCommand(Command):
 
     @property
     def help_text(self) -> str:
-        return "git <args>  - Run a git command in the workspace (e.g. `git status`, `git diff --stat`)"
+        return (
+            "git <args>  - Run a git command in the "
+            "workspace (e.g. `git status`, `git diff --stat`)"
+        )
 
     async def execute(self, args: list[str], agent: "Agent") -> bool:
         if not args or not any(a.strip() for a in args):

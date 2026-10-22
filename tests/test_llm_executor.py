@@ -118,7 +118,8 @@ def test_run_fix_command_concurrent_tool_calls_with_mixed_results() -> None:
     """Multiple tool calls run concurrently; success and failure coexist in the list."""
     executor = LLMExecutor(api_key="fake-key", model="qwen3-coder-30b-a3b-instruct")
 
-    # Build arguments as proper JSON strings so they parse cleanly regardless of quote style.
+    # Build arguments as proper JSON strings so they parse cleanly regardless of quote
+    # style.
     a_args_json: str = json.dumps({"filename": "a.txt"})
     b_args_json: str = json.dumps({"filename": "b.txt"})
 

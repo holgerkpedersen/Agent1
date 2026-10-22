@@ -132,7 +132,8 @@ class PlanDecisionGate:
                     if "self-modification-prevention" in tags:
                         if "security" in plan_text_lower or "guard" in plan_text_lower:
                             violations.append(
-                                f"Decision {decision_id} ({title}): Plan attempts to modify security-guarded path '{affected}'"
+                                f"Decision {decision_id} ({title}): Plan attempts "
+                                f"to modify security-guarded path '{affected}'"
                             )
 
                     # Decision 001: Schema validation must remain
@@ -142,14 +143,16 @@ class PlanDecisionGate:
                             and "pydantic" not in plan_content
                         ):
                             violations.append(
-                                f"Decision {decision_id} ({title}): Plan uses raw json.loads instead of Pydantic schema validation"
+                                f"Decision {decision_id} ({title}): Plan uses raw "
+                                f"json.loads instead of Pydantic schema validation"
                             )
 
             # Check 2: Ensure no plan contradicts resolved decisions
             resolved_by = decision.get("resolved_by")
             if resolved_by and _references_decision(str(resolved_by), plan_text_lower):
                 violations.append(
-                    f"Decision {decision_id} ({title}): Plan references resolved decision '{resolved_by}'"
+                    f"Decision {decision_id} ({title}): Plan "
+                    f"references resolved decision '{resolved_by}'"
                 )
 
         return DecisionGateResult(

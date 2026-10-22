@@ -173,7 +173,8 @@ _PATH_VERIFICATION_RULE = (
 def _detect_subpackages(workspace: str) -> list[str]:
     """Find existing subpackage directories (containing __init__.py) in the workspace.
 
-    Returns a sorted list of relative paths like ``['agent_core', 'agent1', 'src/agent1']``.
+    \
+Returns a sorted list of relative paths like ``['agent_core', 'agent1', 'src/agent1']``.
     Used to generate workspace-agnostic path rules for LLM prompts.
     """
     if not os.path.isdir(workspace):
@@ -252,10 +253,12 @@ def _collision_warning(taken: dict[str, list[str]], filenames: list[str]) -> str
             d = os.path.dirname(f).replace("\\", "/")
             by_dir.setdefault(d or "root", []).append(os.path.basename(f))
         parts.append(
-            "CRITICAL: Do NOT create filenames that overlap with existing ones in the same directory."
+            "CRITICAL: Do NOT create filenames that overlap "
+            "with existing ones in the same directory."
         )
         parts.append(
-            "Use distinct names. Example: use llm_config.py not config.py, retry_adapter.py not retry_policy.py."
+            "Use distinct names. Example: use llm_config.py not "
+            "config.py, retry_adapter.py not retry_policy.py."
         )
         parts += [
             f"  {d}: {', '.join(sorted(names)[:12])}"
@@ -326,8 +329,8 @@ def _tailored_implement_parts(
             example = dup_reasons[0].split(" — ", 1)[-1]
             example = example.replace("duplicates existing module(s): ", "")
             hints.append(
-                f"{len(dup_reasons)} planned file(s) duplicate existing modules "
-                f"(e.g. {example}) — implement will offer to drop them; no --force is used."
+                f"{len(dup_reasons)} planned file(s) duplicate existing modules (e.g. "
+                f"{example}) — implement will offer to drop them; no --force is used."
             )
 
         # Brownfield: planned files that already exist would be skipped by
@@ -371,7 +374,10 @@ def _tailored_implement_parts(
         if hints
         else "  No known conflicts — the plan matches the current codebase."
     )
-    hint += "\n  Optional verification: --fix (auto-fix loop on syntax/mypy failures) or --review (deep LLM pass)."
+    hint += (
+        "\n  Optional verification: --fix (auto-fix loop on "
+        "syntax/mypy failures) or --review (deep LLM pass)."
+    )
     return parts, hint
 
 
@@ -412,7 +418,8 @@ def _module_inventory(workspace: str, limit: int = 150) -> str:
 
 
 def _scan_workspace_context(ws_path: Path, spec_content: str) -> tuple[bool, str]:
-    """Scan target workspace for relevant Python files when spec mentions agent/self-improvement.
+    """Scan \
+target workspace for relevant Python files when spec mentions agent/self-improvement.
 
     Prioritises LLM-layer files first so they fit within the context budget.
     Returns (used_any, combined_code_text).
@@ -559,12 +566,12 @@ async def _repair_analysis(
     inventory = _module_inventory(ws_path_str) or "(no modules found)"
     report = report_text.split("## Verification Report", 1)[-1].strip()
     repair_system = (
-        _PATH_VERIFICATION_RULE + "\n\n"
-        "You are a precise code auditor. The analysis below has UNVERIFIED claims — paths,\n"
-        "symbols, or line numbers that could not be confirmed against the workspace.\n"
-        "Rewrite ONLY those flagged lines with correct values drawn from the module inventory\n"
-        "and file listings given above; leave every verified claim unchanged. Output the full\n"
-        "corrected analysis text — no intro, no tags."
+        _PATH_VERIFICATION_RULE + "\n\nYou are a precise code auditor. The analysis "
+        "below has UNVERIFIED claims — paths,\nsymbols, or line numbers that "
+        "could not be confirmed against the workspace.\nRewrite ONLY those "
+        "flagged lines with correct values drawn from the module inventory\nand "
+        "file listings given above; leave every verified claim unchanged. "
+        "Output the full\ncorrected analysis text — no intro, no tags."
     )
     repair_user = (
         f"## Module inventory (ground truth):\n{inventory}\n\n"
@@ -892,7 +899,8 @@ async def _extract_decisions_if_any(
             ).strip().lower().startswith("y"):
                 for i in warned:
                     print(
-                        f"  Skipped: {candidates[i].get('title', 'Untitled')} (unverified claims)"
+                        f"  Skipped: {candidates[i].get('title', 'Untitled')} "
+                        f"(unverified claims)"
                     )
                 selected = [i for i in selected if i not in warned]
             for idx in selected:
@@ -930,12 +938,13 @@ class WorkflowCommand(Command):
     def help_text(self) -> str:
         return (
             "workflow <target> [--from spec.md] [--stdin] [--brainstorm] "
-            "[--features spec.md] [--workspace <path>] - Full pipeline\n"
-            "  Greenfield analyze auto-scans the target workspace when the spec references\n"
-            "  agent/self-improvement/security. Produces a structured 8-section analysis and\n"
-            "  halts at an ambiguity gate (print clarifying questions) unless --force is given.\n"
-            "  Docs (spec/analysis/plan/entities/tasks) are written to .docs/<timestamp>/\n"
-            "  (git-ignored) — one folder per run; the newest run is found by readers."
+            "[--features spec.md] [--workspace <path>] - Full pipeline\n  "
+            "Greenfield analyze auto-scans the target workspace when the spec "
+            "references\n  agent/self-improvement/security. Produces a structured "
+            "8-section analysis and\n  halts at an ambiguity gate (print "
+            "clarifying questions) unless --force is given.\n  Docs "
+            "(spec/analysis/plan/entities/tasks) are written to .docs/<timestamp>/\n "
+            " (git-ignored) — one folder per run; the newest run is found by readers."
         )
 
     async def execute(self, args: list[str], agent: "Agent") -> bool:
@@ -943,7 +952,8 @@ class WorkflowCommand(Command):
 
         if len(parts) < 1:
             self.error(
-                "Usage: workflow <target> [--from <spec.md>] [--stdin] [--force] [--brainstorm] [--workspace <path>]"
+                "Usage: workflow <target> [--from <spec.md>] [--stdin] "
+                "[--force] [--brainstorm] [--workspace <path>]"
             )
             self.error(
                 "  target: .  |  --desc/-from spec | --features spec (file or inline)"
@@ -1066,7 +1076,10 @@ class WorkflowCommand(Command):
         if not pkgs:
             pkgs = ["agent_core", "agent1", "src/agent1"]  # fallback
         pkg_list = "`, `".join(pkgs[:5])
-        path_rule = f"\n\nPATH RULES: New files MUST use a sub-package prefix (`{pkg_list}/`). BAD: bare filenames or `src/` without subdirectory."
+        path_rule = (
+            f"\n\nPATH RULES: New files MUST use a sub-package prefix "
+            f"(`{pkg_list}/`). BAD: bare filenames or `src/` without subdirectory."
+        )
         stdlib_shadow = (
             "\n\nSTDLIB SHADOWING (CRITICAL): Never create a package or directory whose"
             " name matches one of these Python standard-library modules: "
@@ -1077,8 +1090,8 @@ class WorkflowCommand(Command):
         prompt_context = (
             collision_warning
             + path_rule
-            + "\n\nSIZE RULES: New files max 150 lines (SRP). Split large concepts. Modifying: minimal changes only."
-            + stdlib_shadow
+            + "\n\nSIZE RULES: New files max 150 lines (SRP). Split "
+            "large concepts. Modifying: minimal changes only." + stdlib_shadow
         )
         prompt_context += (
             "\n\nMODULE POLICY (CRITICAL): This is an established repository. "
@@ -1128,12 +1141,13 @@ class WorkflowCommand(Command):
                     if _specs_match(prev_run / "project_spec.md", spec_content):
                         shutil.copy2(cand, cur)
                         print(
-                            f"\n[Skipping {label}] exists — carried over from {prev_run.name}"
+                            f"\n[Skipping {label}] exists — "
+                            f"carried over from {prev_run.name}"
                         )
                         return True
                     print(
-                        f"\n[analyze] Previous run {prev_run.name} has a DIFFERENT spec — "
-                        f"regenerating {label} (no carry-over)."
+                        f"\n[analyze] Previous run {prev_run.name} has a "
+                        f"DIFFERENT spec — regenerating {label} (no carry-over)."
                     )
             return False
 
@@ -1148,7 +1162,8 @@ class WorkflowCommand(Command):
             from .implement_cmd import ImplementCommand
 
             print(
-                f"\n[workflow] Running next step: implement {parts_next[1] if len(parts_next) > 1 else ''} ..."
+                f"\n[workflow] Running next step: implement "
+                f"{parts_next[1] if len(parts_next) > 1 else ''} ..."
             )
             clear_stop()
             _llm = getattr(agent, "llm", None)
@@ -1208,13 +1223,15 @@ class WorkflowCommand(Command):
                 else:
                     print("\n[analyze] Analyzing spec...")
 
-                    # Scan target workspace for code context when spec references agent/self-improvement
+                    # Scan target workspace for code context when spec references
+                    # agent/self-improvement
                     ws_ctx_found, ws_code_context = _scan_workspace_context(
                         ws_path, spec_content
                     )
                     if ws_ctx_found:
                         print(
-                            "  [analyze] Included workspace code context (self-improvement detected)"
+                            "  [analyze] Included workspace code "
+                            "context (self-improvement detected)"
                         )
                     module_inventory = _module_inventory(str(ws_path))
                     trace_header = f"# Analysis for workspace {ws_path}\n"
@@ -1227,58 +1244,82 @@ class WorkflowCommand(Command):
 
                     analyze_system = (
                         _PATH_VERIFICATION_RULE + "\n"
-                        "You are an expert software analyst and security reviewer. Produce a structured analysis.\n"
+                        "You are an expert software analyst and security "
+                        "reviewer. Produce a structured analysis.\n"
                         "Use exactly these section headers, in this order:\n\n"
                         "## 1. SCOPE\n"
-                        "  What is being built, key deliverables, boundaries of the system.\n"
+                        "  What is being built, key "
+                        "deliverables, boundaries of the system.\n"
                         "## 2. ASSUMPTIONS\n"
                         "  What the spec assumes but does not state explicitly.\n"
                         "## 3. RISKS\n"
-                        "  Ambiguity, missing details, technical challenges, and recursive risks\n"
+                        "  Ambiguity, missing details, technical "
+                        "challenges, and recursive risks\n"
                         "  (e.g. hardening one path may create another).\n"
                         "## 4. DEPENDENCIES\n"
-                        "  External systems, libraries, tooling, compliance requirements.\n"
+                        "  External systems, libraries, "
+                        "tooling, compliance requirements.\n"
                         "## 5. THREAT MODEL & ATTACK SURFACE\n"
-                        "  Identify likely attack vectors: prompt injection, reward hacking,\n"
-                        "  capability escalation, sandbox escapes, LLM-output trust boundaries.\n"
-                        "  Reference specific code files from the provided context where relevant.\n"
+                        "  Identify likely attack vectors: "
+                        "prompt injection, reward hacking,\n"
+                        "  capability escalation, sandbox "
+                        "escapes, LLM-output trust boundaries.\n"
+                        "  Reference specific code files from "
+                        "the provided context where relevant.\n"
                         "## 6. MISSING INFORMATION (BLOCKERS)\n"
-                        "  Enumerate every piece of required information that is absent from\n"
-                        "  the spec and must be supplied before implementation can proceed.\n"
-                        "  If none, write: 'No blockers — spec is sufficient to proceed.'\n"
+                        "  Enumerate every piece of required "
+                        "information that is absent from\n"
+                        "  the spec and must be supplied "
+                        "before implementation can proceed.\n"
+                        "  If none, write: 'No blockers — "
+                        "spec is sufficient to proceed.'\n"
                         "## 7. CLARIFYING QUESTIONS\n"
-                        "  List concrete questions for the user. Each question must be answerable\n"
+                        "  List concrete questions for the "
+                        "user. Each question must be answerable\n"
                         "  via --desc or an answers file.\n"
                         "## 8. SUCCESS METRICS & OVERSIGHT\n"
-                        "  Define measurable safety criteria (e.g. % prompt-injection blocked,\n"
+                        "  Define measurable safety criteria "
+                        "(e.g. % prompt-injection blocked,\n"
                         "  rollback capability, human-approval gates, audit trail).\n"
-                        "  Specify oversight and recovery: who approves changes to safety mechanisms,\n"
+                        "  Specify oversight and recovery: who "
+                        "approves changes to safety mechanisms,\n"
                         "  how to revert self-modification.\n\n"
                         "Rules:\n"
-                        "- Be concise. Max 3 bullet points per section unless detail is needed.\n"
-                        "- Cite file paths from the workspace context when identifying risks.\n"
-                        "- End your output with exactly one of these lines (no extra text after):\n"
+                        "- Be concise. Max 3 bullet points "
+                        "per section unless detail is needed.\n"
+                        "- Cite file paths from the workspace "
+                        "context when identifying risks.\n"
+                        "- End your output with exactly one of "
+                        "these lines (no extra text after):\n"
                         "  **BLOCKED:** yes   (when section 6 has blockers)\n"
                         "  **BLOCKED:** no\n"
                         "- Never use <tool_call> or XML tags."
                     )
 
-                    user_prompt = f"Analyze this specification for the agent in workspace {ws_path}:\n\n{spec_content}"
+                    user_prompt = (
+                        f"Analyze this specification for the agent "
+                        f"in workspace {ws_path}:\n\n{spec_content}"
+                    )
                     # Always provide the ground-truth module listing: the PATH
                     # VERIFICATION rule requires every cited path to come from the
                     # workspace context, so without this the model must either
                     # fabricate (forbidden) or BLOCK asking for locations.
                     if module_inventory:
                         user_prompt += (
-                            "\n\n## Workspace module inventory (ground truth — only these modules exist):\n"
+                            "\n\n## Workspace module inventory (ground "
+                            "truth — only these modules exist):\n"
                             f"{module_inventory}\n"
                         )
                     if ws_ctx_found:
                         user_prompt += (
-                            "\n\n## Workspace code context (target agent being hardened):\n"
+                            "\n\n## Workspace code context "
+                            "(target agent being hardened):\n"
                             f"{ws_code_context}\n"
                         )
-                    user_prompt += f"\n\nSpec file reference: {os.path.basename(spec_file) if spec_file else 'inline'}"
+                    user_prompt += (
+                        f"\n\nSpec file reference: "
+                        f"{os.path.basename(spec_file) if spec_file else 'inline'}"
+                    )
 
                     r = await agent.llm.chat(
                         [
@@ -1296,7 +1337,8 @@ class WorkflowCommand(Command):
                         f.write(strip_reasoning(r, mode="analysis"))
                     print("  [analyze] First pass generated")
 
-                    # Ambiguity gate — halt before plan if blockers exist and --force not given
+                    # Ambiguity gate — halt before plan if blockers exist and --force
+                    # not given
                     blocked_match = re.search(
                         r"\*\*BLOCKED:\*\*\s*(yes|no)", r, re.IGNORECASE
                     )
@@ -1306,7 +1348,8 @@ class WorkflowCommand(Command):
                         and not force
                     ):
                         print(
-                            "\n[analyze] BLOCKED — spec requires clarification before proceeding."
+                            "\n[analyze] BLOCKED — spec requires "
+                            "clarification before proceeding."
                         )
                         # Extract and print the blocker / questions sections.
                         # Dedupe first: models repeat a section header and its
@@ -1326,7 +1369,8 @@ class WorkflowCommand(Command):
                             print("")
                         print("\nNext steps:")
                         print(
-                            '  1. Answer the questions above, then run again with --desc "<answers>"'
+                            "  1. Answer the questions above, "
+                            'then run again with --desc "<answers>"'
                         )
                         print("     or create a file and pass it via --from <file>")
                         print(
@@ -1351,11 +1395,13 @@ class WorkflowCommand(Command):
                             {
                                 "role": "system",
                                 "content": (
-                                    _PATH_VERIFICATION_RULE + "\n"
-                                    "You are a senior security engineer. Critique the following analysis.\n"
-                                    "List concrete gaps, missed attack vectors, missing metrics, or overlooked\n"
-                                    "code references. Be specific — cite file paths and line-level concerns.\n"
-                                    "If the analysis is already thorough, say so concisely."
+                                    _PATH_VERIFICATION_RULE + "\nYou are a senior "
+                                    "security engineer. Critique the following "
+                                    "analysis.\nList concrete gaps, missed attack "
+                                    "vectors, missing metrics, or overlooked\ncode "
+                                    "references. Be specific — cite file paths "
+                                    "and line-level concerns.\nIf the analysis "
+                                    "is already thorough, say so concisely."
                                 ),
                             },
                             {"role": "user", "content": critique_user},
@@ -1368,7 +1414,8 @@ class WorkflowCommand(Command):
                         print("  [analyze] Appended refinement pass")
                     else:
                         print(
-                            f"  [analyze] Critique failed (non-blocking): {critique_r[:100]}"
+                            f"  [analyze] Critique failed "
+                            f"(non-blocking): {critique_r[:100]}"
                         )
 
                     with open(analysis_md, "r", encoding="utf-8") as f:
@@ -1387,7 +1434,8 @@ class WorkflowCommand(Command):
                         force,
                     ):
                         print(
-                            "\n[analyze] Stopped at the verification gate — fix the spec or re-run with --force."
+                            "\n[analyze] Stopped at the verification "
+                            "gate — fix the spec or re-run with --force."
                         )
                         return True
 
@@ -1399,10 +1447,12 @@ class WorkflowCommand(Command):
                 missing = [h for h in expected if h not in analysis]
                 if missing:
                     print(
-                        f"  [analyze] WARNING: missing expected sections: {', '.join(missing)}"
+                        f"  [analyze] WARNING: missing expected "
+                        f"sections: {', '.join(missing)}"
                     )
                     print(
-                        "  The analysis format may be non-standard. Plan/task quality may be reduced."
+                        "  The analysis format may be non-standard. "
+                        "Plan/task quality may be reduced."
                     )
 
                 await _extract_decisions_if_any(agent, analysis_md, ws_path)
@@ -1412,12 +1462,20 @@ class WorkflowCommand(Command):
                     [
                         {
                             "role": "system",
-                            "content": "You are an expert software architect. Create a detailed coding plan with ALL files needed. Follow SOLID principles — each file has a single responsibility. New files should be small and focused (max 150 lines). If a concept needs more code, split across multiple files. Ensure all Python code passes mypy strict type checking. No unbound TypeVars, no type mismatches. Never use <tool_call> or XML tags."
+                            "content": "You are an expert software architect. Create a "
+                            "detailed coding plan with ALL files needed. Follow "
+                            "SOLID principles — each file has a single responsibility. "
+                            "New files should be small and focused (max 150 "
+                            "lines). If a concept needs more code, split across "
+                            "multiple files. Ensure all Python code passes mypy "
+                            "strict type checking. No unbound TypeVars, no "
+                            "type mismatches. Never use <tool_call> or XML tags."
                             + prompt_context,
                         },
                         {
                             "role": "user",
-                            "content": f"Create coding plan:\n\n## Spec:\n{spec_content}\n\n## Analysis:\n{analysis}",
+                            "content": f"Create coding plan:\n\n## "
+                            f"Spec:\n{spec_content}\n\n## Analysis:\n{analysis}",
                         },
                     ]
                 )
@@ -1455,11 +1513,17 @@ class WorkflowCommand(Command):
                     [
                         {
                             "role": "system",
-                            "content": "Extract shared classes/types. Output ONLY Python code — no intro text. Start with ```python. All types must be valid — no unbound TypeVars, no forward-ref errors. Must pass mypy strict. Avoid circular imports. Never use <tool_call> or XML tags.",
+                            "content": "Extract shared classes/types. Output ONLY "
+                            "Python code — no intro text. Start with ```python. "
+                            "All types must be valid — no unbound TypeVars, no "
+                            "forward-ref errors. Must pass mypy strict. Avoid "
+                            "circular imports. Never use <tool_call> or XML tags.",
                         },
                         {
                             "role": "user",
-                            "content": f"Extract entities:\n\n## Spec:\n{spec_content}\n\n## Analysis:\n{analysis}\n\n## Plan:\n{plan}",
+                            "content": f"Extract entities:\n\n## "
+                            f"Spec:\n{spec_content}\n\n## "
+                            f"Analysis:\n{analysis}\n\n## Plan:\n{plan}",
                         },
                     ]
                 )
@@ -1500,22 +1564,25 @@ class WorkflowCommand(Command):
                         {
                             "role": "system",
                             "content": (
-                                _PATH_VERIFICATION_RULE + "\n\n"
-                                "Create a numbered task plan. Output ONLY tasks — no reasoning, no planning notes, no self-talk.\n\n"
-                                "FORMAT — exactly one task per line:\n"
-                                "  N. `path/to/file.py` — short description\n\n"
-                                "RULES:\n"
-                                "- Every file path MUST be backtick-wrapped\n"
-                                "- One file per line, numbered sequentially (1. 2. 3.)\n"
-                                "- No bullet markers (-, *), no [TAGS], no brackets around filenames\n"
-                                "- If modifying an existing file, use its EXACT current path\n"
-                                "- List in dependency order (configs first, then utilities, then consumers)\n"
+                                _PATH_VERIFICATION_RULE + "\n\nCreate a numbered task "
+                                "plan. Output ONLY tasks — no reasoning, no "
+                                "planning notes, no self-talk.\n\nFORMAT — exactly "
+                                "one task per line:\n  N. `path/to/file.py` — "
+                                "short description\n\nRULES:\n- Every file path "
+                                "MUST be backtick-wrapped\n- One file per line, "
+                                "numbered sequentially (1. 2. 3.)\n- No bullet "
+                                "markers (-, *), no [TAGS], no brackets around "
+                                "filenames\n- If modifying an existing file, use "
+                                "its EXACT current path\n- List in dependency order "
+                                "(configs first, then utilities, then consumers)\n"
                                 + prompt_context
                             ),
                         },
                         {
                             "role": "user",
-                            "content": f"## Spec:\n{spec_content}\n\n## Analysis:\n{analysis}\n\n## Plan:\n{plan}\n\n## Entities:\n{entities}",
+                            "content": f"## Spec:\n{spec_content}\n\n## "
+                            f"Analysis:\n{analysis}\n\n## "
+                            f"Plan:\n{plan}\n\n## Entities:\n{entities}",
                         },
                     ]
                 )
@@ -1576,11 +1643,15 @@ class WorkflowCommand(Command):
                     [
                         {
                             "role": "system",
-                            "content": "You are an expert code reviewer. Analyze the existing code AND these new features. Find bugs, gaps, and what needs to change.",
+                            "content": "You are an expert code reviewer. Analyze "
+                            "the existing code AND these new features. "
+                            "Find bugs, gaps, and what needs to change.",
                         },
                         {
                             "role": "user",
-                            "content": f"## Existing Code:\n{combined}\n\n## New Features:\n{features}\n\nAnalyze both existing issues and what must change for the new features.",
+                            "content": f"## Existing Code:\n{combined}\n\n## New "
+                            f"Features:\n{features}\n\nAnalyze both existing "
+                            f"issues and what must change for the new features.",
                         },
                     ]
                 )
@@ -1594,7 +1665,8 @@ class WorkflowCommand(Command):
                     agent, r, analysis_md, ws_path, v_checked, v_flagged, v_text, force
                 ):
                     print(
-                        "\n[analyze] Stopped at the verification gate — fix the spec or re-run with --force."
+                        "\n[analyze] Stopped at the verification "
+                        "gate — fix the spec or re-run with --force."
                     )
                     return True
                 await _extract_decisions_if_any(agent, analysis_md, ws_path)
@@ -1615,11 +1687,22 @@ class WorkflowCommand(Command):
                     [
                         {
                             "role": "system",
-                            "content": "You are an expert software architect. Create a plan that extends the EXISTING codebase with these new features.\n\nIMPORTANT:\n- Start with '## Feature Addition: <summary>'\n- List NEW files to create\n- List EXISTING files to modify and what minimal changes are needed\n- Explain WHY each change is needed\n- Preserve existing architecture",
+                            "content": "You are an expert software architect. Create a "
+                            "plan that extends the EXISTING codebase with these "
+                            "new features.\n\nIMPORTANT:\n- Start with '## "
+                            "Feature Addition: <summary>'\n- List NEW files to "
+                            "create\n- List EXISTING files to modify and what "
+                            "minimal changes are needed\n- Explain WHY each "
+                            "change is needed\n- Preserve existing architecture",
                         },
                         {
                             "role": "user",
-                            "content": f"## Existing code analysis:\n{analysis}\n\n## Existing plan:\n{existing_plan if existing_plan else 'No existing plan'}\n\n## New features to add:\n{features}\n\nCreate a plan that integrates these features into the existing codebase.",
+                            "content": f"## Existing code analysis:\n{analysis}"
+                            f"\n\n## Existing plan:\n"
+                            f"{existing_plan if existing_plan else 'No existing plan'}"
+                            f"\n\n## New features to add:\n{features}"
+                            f"\n\nCreate a plan that integrates thes"
+                            f"e features into the existing codebase.",
                         },
                     ]
                 )
@@ -1659,11 +1742,15 @@ class WorkflowCommand(Command):
                     [
                         {
                             "role": "system",
-                            "content": "Extract ONLY NEW shared entities. Output ONLY Python code — no intro text. Start with ```python. All types must pass mypy strict.",
+                            "content": "Extract ONLY NEW shared entities. Output "
+                            "ONLY Python code — no intro text. Start with "
+                            "```python. All types must pass mypy strict.",
                         },
                         {
                             "role": "user",
-                            "content": f"## Plan:\n{plan}\n\n## Existing entities:\n{entities_existing}\n\nExtract only new entities needed.",
+                            "content": f"## Plan:\n{plan}\n\n## Existing "
+                            f"entities:\n{entities_existing}\n\nExtract "
+                            f"only new entities needed.",
                         },
                     ]
                 )
@@ -1702,17 +1789,18 @@ class WorkflowCommand(Command):
                         {
                             "role": "system",
                             "content": (
-                                _PATH_VERIFICATION_RULE + "\n\n"
-                                "Create a numbered task plan for adding these features. Output ONLY tasks — no reasoning, no planning notes, no self-talk.\n\n"
-                                "FORMAT — exactly one task per line:\n"
-                                "  N. [NEW] `path/to/new.py` — short description\n"
-                                "  N. [MODIFY] `existing/file.py` — short description\n\n"
-                                "RULES:\n"
-                                "- Every file path MUST be backtick-wrapped\n"
-                                "- Prefix each task with [NEW] or [MODIFY]\n"
-                                "- One file per line, numbered sequentially\n"
-                                "- No bullet markers, no extra [TAGS], no brackets around filenames\n"
-                                "- If modifying an existing file, use its EXACT current path\n"
+                                _PATH_VERIFICATION_RULE + "\n\nCreate a numbered task "
+                                "plan for adding these features. Output ONLY "
+                                "tasks — no reasoning, no planning notes, no "
+                                "self-talk.\n\nFORMAT — exactly one task per "
+                                "line:\n  N. [NEW] `path/to/new.py` — short "
+                                "description\n  N. [MODIFY] `existing/file.py` — "
+                                "short description\n\nRULES:\n- Every file path "
+                                "MUST be backtick-wrapped\n- Prefix each task with "
+                                "[NEW] or [MODIFY]\n- One file per line, numbered "
+                                "sequentially\n- No bullet markers, no extra "
+                                "[TAGS], no brackets around filenames\n- If modifying "
+                                "an existing file, use its EXACT current path\n"
                                 + prompt_context
                             ),
                         },
@@ -1786,25 +1874,27 @@ class WorkflowCommand(Command):
                     combined += entry
                     lines_used += entry_lines
                 analyze_system = (
-                    "You are an expert software architect. Evaluate this codebase.\n"
-                    "Output ONLY the numbered sections below, exactly in this order.\n\n"
-                    "## 1. CODE QUALITY — bugs, edge cases, type safety, error handling gaps\n"
-                    "## 2. COMPLETENESS — missing tests, missing docs, missing features\n"
-                    "## 3. ARCHITECTURE — DRY violations, coupling, SRP breaks\n"
-                    "## 4. INNOVATION — new capabilities that would make this system more useful\n"
-                    "## 5. PRODUCTION — logging, monitoring, config, security gaps\n"
+                    "You are an expert software architect. Evaluate this "
+                    "codebase.\nOutput ONLY the numbered sections below, exactly "
+                    "in this order.\n\n## 1. CODE QUALITY — bugs, edge cases, type "
+                    "safety, error handling gaps\n## 2. COMPLETENESS — missing "
+                    "tests, missing docs, missing features\n## 3. ARCHITECTURE — "
+                    "DRY violations, coupling, SRP breaks\n## 4. INNOVATION — new "
+                    "capabilities that would make this system more useful\n## "
+                    "5. PRODUCTION — logging, monitoring, config, security gaps\n"
                     + (
                         "## 6. BRAINSTORMING — bold creative features\n"
                         if brainstorm
                         else ""
                     )
-                    + "RULES:\n"
-                    "- Max 3 bullet points per section, max 50 words per bullet\n"
-                    "- Cite file paths from the code when identifying issues\n"
-                    "- Total output under 800 words — no intro, no conclusion, no repetition of the code\n"
+                    + "RULES:\n- Max 3 bullet points per section, max 50 "
+                    "words per bullet\n- Cite file paths from the code when "
+                    "identifying issues\n- Total output under 800 words — "
+                    "no intro, no conclusion, no repetition of the code\n"
                 )
                 analyze_user = (
-                    "Evaluate this codebase. Follow the numbered-section FORMAT from the "
+                    "Evaluate this codebase. Follow the "
+                    "numbered-section FORMAT from the "
                     "system prompt exactly.\n\n"
                     f"## Codebase:\n{combined}"
                 )
@@ -1824,7 +1914,8 @@ class WorkflowCommand(Command):
                     agent, r, analysis_md, ws_path, v_checked, v_flagged, v_text, force
                 ):
                     print(
-                        "\n[analyze] Stopped at the verification gate — fix the spec or re-run with --force."
+                        "\n[analyze] Stopped at the verification "
+                        "gate — fix the spec or re-run with --force."
                     )
                     return True
                 await _extract_decisions_if_any(agent, analysis_md, ws_path)
@@ -1840,11 +1931,10 @@ class WorkflowCommand(Command):
                         {
                             "role": "system",
                             "content": (
-                                _PATH_VERIFICATION_RULE + "\n"
-                                "Create a prioritized implementation plan. "
-                                "Categorize: [FIX], [FEATURE], [ARCH], [OPS]. "
-                                "Priorities: MUST, SHOULD, COULD. Max 3 items per category. "
-                                "Be concise — one line per item."
+                                _PATH_VERIFICATION_RULE + "\nCreate a prioritized "
+                                "implementation plan. Categorize: [FIX], [FEATURE], "
+                                "[ARCH], [OPS]. Priorities: MUST, SHOULD, COULD. Max "
+                                "3 items per category. Be concise — one line per item."
                             ),
                         },
                         {"role": "user", "content": f"Create plan:\n\n{analysis}"},
@@ -1884,11 +1974,16 @@ class WorkflowCommand(Command):
                     [
                         {
                             "role": "system",
-                            "content": "Extract shared entities. Output ONLY Python code. Start with ```python. No intro text. Include only new/modified types — skip types that already exist unchanged. Avoid circular imports. Never use <tool_call> or XML tags.",
+                            "content": "Extract shared entities. Output ONLY Python "
+                            "code. Start with ```python. No intro text. "
+                            "Include only new/modified types — skip types "
+                            "that already exist unchanged. Avoid circular "
+                            "imports. Never use <tool_call> or XML tags.",
                         },
                         {
                             "role": "user",
-                            "content": f"Extract entities:\n\n## Analysis:\n{analysis}\n\n## Plan:\n{plan}",
+                            "content": f"Extract entities:\n\n## "
+                            f"Analysis:\n{analysis}\n\n## Plan:\n{plan}",
                         },
                     ]
                 )
@@ -1927,16 +2022,17 @@ class WorkflowCommand(Command):
                         {
                             "role": "system",
                             "content": (
-                                _PATH_VERIFICATION_RULE + "\n\n"
-                                "Create a numbered task plan. Output ONLY tasks — no reasoning, no planning notes, no self-talk.\n\n"
-                                "FORMAT — exactly one task per line:\n"
-                                "  N. `path/to/file.py` — short description\n\n"
-                                "RULES:\n"
-                                "- Every file path MUST be backtick-wrapped\n"
-                                "- One file per line, numbered sequentially (1. 2. 3.)\n"
-                                "- No bullet markers (-, *), no [TAGS], no brackets around filenames\n"
-                                "- If modifying an existing file, use its EXACT current path\n"
-                                "- List in dependency order (configs first, then utilities, then consumers)\n"
+                                _PATH_VERIFICATION_RULE + "\n\nCreate a numbered task "
+                                "plan. Output ONLY tasks — no reasoning, no "
+                                "planning notes, no self-talk.\n\nFORMAT — exactly "
+                                "one task per line:\n  N. `path/to/file.py` — "
+                                "short description\n\nRULES:\n- Every file path "
+                                "MUST be backtick-wrapped\n- One file per line, "
+                                "numbered sequentially (1. 2. 3.)\n- No bullet "
+                                "markers (-, *), no [TAGS], no brackets around "
+                                "filenames\n- If modifying an existing file, use "
+                                "its EXACT current path\n- List in dependency order "
+                                "(configs first, then utilities, then consumers)\n"
                                 + prompt_context
                             ),
                         },

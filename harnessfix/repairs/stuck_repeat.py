@@ -41,7 +41,8 @@ _ANCHOR = '_PATH_MISS_PREFIXES = ("File not found:", "Error reading file:")'
 #: A distinctive line from the hint block, used as an apply/revert state
 #: sentinel so a half-applied tree fails loudly instead of silently.
 _HINT_SENTINEL = "_REPEAT_HINTS: dict[str, str] = {"
-_HINT_BLOCK = """#: Steering hints appended to the SECOND-consecutive-identical-call note
+_HINT_BLOCK = """#: \
+Steering hints appended to the SECOND-consecutive-identical-call note
 #: (repair stuck-repeat-tool-hints): the model still has budget at strike two,
 #: so a concrete alternative beats waiting for the third strike to stop the
 #: loop.  Keys are tool names; anything unmapped falls back to the default.

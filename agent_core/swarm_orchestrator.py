@@ -56,7 +56,8 @@ class Orchestrator:
         The caller is responsible for evaluating the results of these branches.
 
         Args:
-            reasoning_func: A function that takes (task_id, context) and returns a result.
+  \
+          reasoning_func: A function that takes (task_id, context) and returns a result.
             context: The shared data/state to provide to each branch.
             num_branches: Number of parallel paths to explore.
 
@@ -66,9 +67,12 @@ class Orchestrator:
         self._logger.info("Dispatching %d speculative reasoning branches", num_branches)
         task_ids = []
         for i in range(num_branches):
-            # We pass 'i' as part of context or just let reasoning_func handle it if needed
-            # For simplicity, we wrap the call to include a branch index in the context if possible
-            # or just pass the same context. Let's assume reasoning_func can handle branching logic.
+            # We pass 'i' as part of context or just let reasoning_func handle it if
+            # needed
+            # For simplicity, we wrap the call to include a branch index in the context
+            # if possible
+            # or just pass the same context. Let's assume reasoning_func can handle
+            # branching logic.
             tid = self.dispatch(reasoning_func, i, context)
             task_ids.append(tid)
         return task_ids

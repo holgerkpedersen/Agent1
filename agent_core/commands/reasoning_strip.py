@@ -356,19 +356,18 @@ def _clean_analysis_sections(text: str) -> str:
 
 
 _TASKPLAN_REASONING_RE = re.compile(
-    r"^\s*\d+\.\s*\*\*.*\*\*\s*$|"  # " N.  **Header**"
-    r"^\s*-\s+(?:CRITICAL|DO NOT|PATH RULES|SIZE RULES|STDLIB SHADOWING):|"  # prompt context leaks
-    r"^\s*(?:Let\'s|Need to|First,?|I\'ll|I will|The prompt|Wait,|Now,?|"
-    r"One minor|Check format|Also,?)\s|"  # self-talk starts
-    r"^\s*(?:Input Analysis|Map to Existing|Dependency Order|Output Generation|"
-    r"Self-Correction|Check constraints|Check,|CRITICAL:)",  # planning headers
+    r"^\s*\d+\.\s*\*\*.*\*\*\s*$|^\s*-\s+(?:CRITICAL|DO NOT|PATH RULES|SIZE "
+    r"RULES|STDLIB SHADOWING):|^\s*(?:Let\'s|Need to|First,?|I\'ll|I will|The "
+    r"prompt|Wait,|Now,?|One minor|Check format|Also,?)\s|^\s*(?:Input Analysis|Map "
+    r"to Existing|Dependency Order|Output Generation|Self-Correction|Check "
+    r"constraints|Check,|CRITICAL:)",  # planning headers
     re.MULTILINE | re.IGNORECASE,
 )
 
 _TASKPLAN_FRAGMENT_RE = re.compile(
-    r"^\s*(?:or XML tags|or function|All constraints met|One check:|"
-    r"This strictly adheres|Final check|Ready\.\s*\u2705?$|"
-    r"All good\.|Proceeds\.\s*$|Output matches)",  # sentence fragments / self-verification
+    r"^\s*(?:or XML tags|or function|All constraints met|One "
+    r"check:|This strictly adheres|Final check|Ready\.\s*\u2705?$|All "
+    r"good\.|Proceeds\.\s*$|Output matches)",  # sentence fragments / self-verification
     re.MULTILINE | re.IGNORECASE,
 )
 

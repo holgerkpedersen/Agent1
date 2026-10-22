@@ -73,7 +73,8 @@ class TestFullPytestDetection:
             # so it was killed at the 600s cap (the run tool) / lost its
             # watchdog + recording (conftest).
             "python -m pytest -q -p no:cacheprovider --no-cov",
-            'cd /d C:\\Dev\\Agent1 && python -m pytest -q -p no:cacheprovider --no-cov 2>&1 | findstr /r /c:"passed" /c:"failed"',
+            "cd /d C:\\Dev\\Agent1 && python -m pytest -q -p no:cacheprovider "
+            '--no-cov 2>&1 | findstr /r /c:"passed" /c:"failed"',
             'python -m pytest -m "not slow" tests/ -q',
             "python -m pytest -n 4 --no-cov",
             'python -m pytest -k "foo or bar" -q --no-cov',
@@ -97,7 +98,9 @@ class TestFullPytestDetection:
             # REPL incident: a QUOTED path::nodeid under tests/ plus value
             # flags, redirection and a pipe — the "tests/" substring used to
             # make this a "full run" and the budget gate refused it.
-            'python -m pytest "tests/test_pytest_full_run_gate.py::TestRunToolGate::test_targeted_runs_never_gated" -q --no-cov -p no:cacheprovider --tb=short -o addopts="" 2>&1 | more +0',
+            'python -m pytest "tests/test_pytest_full_run_gate.py::Test'
+            'RunToolGate::test_targeted_runs_never_gated" -q --no-cov -'
+            'p no:cacheprovider --tb=short -o addopts="" 2>&1 | more +0',
             "python -m pytest tests/test_x.py::test_y -q --no-cov",
         ],
     )

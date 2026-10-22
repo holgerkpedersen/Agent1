@@ -1,4 +1,7 @@
-"""Temporal utility functions for timezone normalization, duration computation, and display formatting."""
+(
+    """Temporal utility functions for timezone normalization, """
+    """duration computation, and display formatting."""
+)
 
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -24,7 +27,8 @@ def compute_duration_spans(start_time: float, end_time: Optional[float]) -> time
         end_time: The ending Unix timestamp in seconds, or None if still ongoing.
 
     Returns:
-        A timedelta representing the duration span. If end_time is None, returns zero duration.
+       \
+ A timedelta representing the duration span. If end_time is None, returns zero duration.
     """
     if end_time is None:
         return timedelta(0)
@@ -55,7 +59,8 @@ def align_to_bucket(timestamp: float, bucket_size_seconds: int = 60) -> float:
 
     Args:
         timestamp: A Unix epoch timestamp in seconds.
-        bucket_size_seconds: The size of each time bucket in seconds (default: 60 for minute-level).
+        bucket_size_seconds: \
+The size of each time bucket in seconds (default: 60 for minute-level).
 
     Returns:
         A Unix timestamp aligned to the start of its containing bucket.
@@ -101,11 +106,13 @@ def is_within_interval(
     Args:
         timestamp: The Unix epoch timestamp to check in seconds.
         interval_start: The start boundary of the interval in seconds.
-        interval_end: The end boundary of the interval in seconds, or None for open-ended intervals.
+        interval_end: \
+The end boundary of the interval in seconds, or None for open-ended intervals.
 
     Returns:
         True if the timestamp is within [interval_start, interval_end], False otherwise.
-        If interval_end is None, only checks against interval_start (timestamp >= start).
+ \
+       If interval_end is None, only checks against interval_start (timestamp >= start).
     """
     if timestamp < interval_start:
         return False

@@ -89,7 +89,8 @@ class TestTailoredImplementParts:
         tasks = self._taskplan(
             tmp_path,
             [
-                "1. `agent_core/security/shell_allowlist.py` — Shell command allow-list + hardened blocklist"
+                "1. `agent_core/security/shell_allowlist.py` — "
+                "Shell command allow-list + hardened blocklist"
             ],
         )
         parts, hint = _tailored_implement_parts(

@@ -76,7 +76,10 @@ class ModelCommand(Command):
 
     @property
     def help_text(self) -> str:
-        return "model [list|load|unload|reload|provider|profile|jev] - Manage LLM models and providers (jev = the dedicated Jev decision model)"
+        return (
+            "model [list|load|unload|reload|provider|profile|jev] - Manage "
+            "LLM models and providers (jev = the dedicated Jev decision model)"
+        )
 
     async def execute(self, args: list[str], agent: "Agent") -> bool:
         sub = args[0].strip().lower() if args else ""
@@ -400,11 +403,12 @@ class ModelCommand(Command):
         opencode_models, zen_models, oc_api_mode = self._opencode_catalog(agent)
 
         print(
-            f"\n  Providers: lmstudio (active: {'*' if active_provider == 'lmstudio' else ' '})"
-            f"  opencode (active: {'*' if active_provider == 'opencode' else ' '})"
-            f"  llama (active: {'*' if active_provider == 'llama' else ' '})"
-            f"  openrouter (active: {'*' if active_provider == 'openrouter' else ' '})"
-            f"  lemonade (active: {'*' if active_provider == 'lemonade' else ' '})"
+            f"\n  Providers: lmstudio (active: "
+            f"{'*' if active_provider == 'lmstudio' else ' '})  opencode (active: "
+            f"{'*' if active_provider == 'opencode' else ' '})  llama (active: "
+            f"{'*' if active_provider == 'llama' else ' '})  openrouter "
+            f"(active: {'*' if active_provider == 'openrouter' else ' '})  "
+            f"lemonade (active: {'*' if active_provider == 'lemonade' else ' '})"
         )
         if opencode_models:
             print(f"  [opencode] {len(opencode_models)} model(s) — needs API key:\n")
@@ -447,7 +451,8 @@ class ModelCommand(Command):
             except Exception:
                 _lurl = DEFAULT_LLAMA_BASE_URL
             print(
-                f"\n  [llama] llama.cpp server unreachable at {_lurl} - start llama-server"
+                f"\n  [llama] llama.cpp server unreachable "
+                f"at {_lurl} - start llama-server"
             )
 
         # ---- OpenRouter hosted gateway models (FREE tier by default) ----
@@ -460,7 +465,8 @@ class ModelCommand(Command):
         if openrouter_models:
             suffix = " (free tier)" if openrouter_free_only else " (free + paid)"
             print(
-                f"\n  [openrouter] {len(openrouter_models)} model(s){suffix} — needs API key:\n"
+                f"\n  [openrouter] {len(openrouter_models)} "
+                f"model(s){suffix} — needs API key:\n"
             )
             for key in openrouter_models:
                 is_current = key == current
@@ -468,7 +474,8 @@ class ModelCommand(Command):
                 print(f"{marker} {key}  (provider=openrouter)")
             if openrouter_free_only:
                 print(
-                    "            (show the full paid catalog with: model openrouter --all)"
+                    "            (show the full paid "
+                    "catalog with: model openrouter --all)"
                 )
         else:
             print(
@@ -479,7 +486,8 @@ class ModelCommand(Command):
         lemonade_models = self._lemonade_catalog(agent)
         if lemonade_models:
             print(
-                f"\n  [lemonade] {len(lemonade_models)} model(s) — AMD XDNA NPU via Lemonade:\n"
+                f"\n  [lemonade] {len(lemonade_models)} "
+                f"model(s) — AMD XDNA NPU via Lemonade:\n"
             )
             for key in lemonade_models:
                 is_current = key == current
@@ -493,7 +501,8 @@ class ModelCommand(Command):
             except Exception:
                 _leurl = DEFAULT_LEMONADE_API_BASE
             print(
-                f"\n  [lemonade] NPU server unreachable at {_leurl} - start it: 'lemonade run <model>'"
+                f"\n  [lemonade] NPU server unreachable at "
+                f"{_leurl} - start it: 'lemonade run <model>'"
             )
 
         # ---- LM Studio models ----
@@ -525,7 +534,8 @@ class ModelCommand(Command):
             marker_str = f"  [{', '.join(markers)}]" if markers else ""
             prefix = " *" if is_current else "  "
             print(
-                f" {prefix}{i:>3}. {name:<40} {params:<10} {size:<8}  [lmstudio]{marker_str}"
+                f" {prefix}{i:>3}. {name:<40} {params:<10} "
+                f"{size:<8}  [lmstudio]{marker_str}"
             )
 
         kinfo = KNOWN_MODELS.get(current, {})
@@ -598,7 +608,8 @@ class ModelCommand(Command):
             )
         print()
         print(
-            "  Local (LM Studio / llama) and opencode-zen FREE tiers are 0.0 by definition."
+            "  Local (LM Studio / llama) and opencode-zen "
+            "FREE tiers are 0.0 by definition."
         )
         if not force:
             print("  Cached (≤24h). Re-fetch from the web with: model prices --refresh")
@@ -621,7 +632,8 @@ class ModelCommand(Command):
         cheapest = pricing.cheapest_opencode_go_model()
         if not cheapest:
             print(
-                "\n  No priced opencode-go model available. Run `model cheapest --refresh`."
+                "\n  No priced opencode-go model "
+                "available. Run `model cheapest --refresh`."
             )
             return
 
@@ -637,7 +649,8 @@ class ModelCommand(Command):
         agent.llm.model_name = cheapest
         persist_model_choice(cheapest, provider="opencode")
         print(
-            f"  Switched to cheapest cloud model: {old} -> {cheapest}  (provider=opencode)"
+            f"  Switched to cheapest cloud model: "
+            f"{old} -> {cheapest}  (provider=opencode)"
         )
         e = pricing.load_prices().get(cheapest, {})
         p = e.get("prompt_per_1m")
@@ -993,13 +1006,15 @@ class ModelCommand(Command):
         query = " ".join(args).strip()
         if not query:
             print(
-                "  Specify a model name, e.g. `model <name> --provider <lmstudio|opencode>`."
+                "  Specify a model name, e.g. `model "
+                "<name> --provider <lmstudio|opencode>`."
             )
             return
 
         if provider not in ("lmstudio", "opencode", "llama", "openrouter", "lemonade"):
             print(
-                f"  Unknown provider '{provider}'. Options: lmstudio, opencode, llama, openrouter, lemonade."
+                f"  Unknown provider '{provider}'. Options: "
+                f"lmstudio, opencode, llama, openrouter, lemonade."
             )
             return
 
@@ -1439,7 +1454,8 @@ class ModelCommand(Command):
 
         if active_key == current:
             print(
-                f"  Agent matches LM Studio: {current}  ({_format_size(active['size_bytes'])})"
+                f"  Agent matches LM Studio: {current}  "
+                f"({_format_size(active['size_bytes'])})"
             )
         else:
             print(f"  Agent: {current}  |  LM Studio has: {active_key}")
@@ -1571,7 +1587,8 @@ class ModelCommand(Command):
             for p in sorted(profiles, key=lambda x: x.name):
                 marker = " *" if p.name == current_profile else "  "
                 print(
-                    f" {marker} {p.name:<20} temp={p.temperature}  max_tok={p.max_tokens}  {p.description}"
+                    f" {marker} {p.name:<20} temp={p.temperature} "
+                    f" max_tok={p.max_tokens}  {p.description}"
                 )
             print()
             return
@@ -1580,7 +1597,8 @@ class ModelCommand(Command):
             name = args[0].strip().lower() if args else ""
             if not name:
                 print(
-                    '  Usage: model profile save <name> [--temp 0.3] [--max-tokens 8000] [--desc "text"]'
+                    "  Usage: model profile save <name> [--temp "
+                    '0.3] [--max-tokens 8000] [--desc "text"]'
                 )
                 return
             model = agent.llm.model_name
@@ -1650,7 +1668,8 @@ class ModelCommand(Command):
             profile = _profiles.get_profile(sub)
             print(f"  {profile.name}: {profile.description}")
             print(
-                f"    model={profile.model or '(any)'}  temp={profile.temperature}  max_tok={profile.max_tokens}"
+                f"    model={profile.model or '(any)'}  "
+                f"temp={profile.temperature}  max_tok={profile.max_tokens}"
             )
         except KeyError:
             print(f"  No profile: {sub}")

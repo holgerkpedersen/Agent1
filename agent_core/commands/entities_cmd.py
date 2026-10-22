@@ -20,9 +20,9 @@ class EntitiesCommand(Command):
     @property
     def help_text(self) -> str:
         return (
-            "entities <analysis.md> <plan.md> [entities.md] - Generate shared entities\n"
-            "  Output is regression-checked (python blocks parse, names unique);\n"
-            "  flagged claims pause for confirmation unless --force."
+            "entities <analysis.md> <plan.md> [entities.md] - Generate shared "
+            "entities\n  Output is regression-checked (python blocks parse, names "
+            "unique);\n  flagged claims pause for confirmation unless --force."
         )
 
     async def execute(self, args: list[str], agent: "Agent") -> bool:
@@ -59,11 +59,17 @@ class EntitiesCommand(Command):
         messages = [
             {
                 "role": "system",
-                "content": "Create entities.md with ONLY Python code — no intro text. Start with ```python. All types must be valid — no unbound TypeVars, no forward-ref errors. Must pass mypy strict. Avoid circular imports.",
+                "content": "Create entities.md with ONLY Python code — no intro text. "
+                "Start with ```python. All types must be valid — no unbound TypeVars, "
+                "no forward-ref errors. Must pass mypy strict. Avoid circular imports.",
             },
             {
                 "role": "user",
-                "content": f"Extract and define all shared entities from this analysis and plan:\n\n## Analysis:\n{analysis_content}\n\n## Plan:\n{plan_content}\n\nCreate an entities.md file with Python-ready entity definitions that can be centralized in an entities.py file for import across the project.",
+                "content": f"Extract and define all shared entities from this analysis "
+                f"and plan:\n\n## Analysis:\n{analysis_content}\n\n## "
+                f"Plan:\n{plan_content}\n\nCreate an entities.md file with "
+                f"Python-ready entity definitions that can be centralized "
+                f"in an entities.py file for import across the project.",
             },
         ]
         entities = await agent.llm.chat(messages)
@@ -73,7 +79,8 @@ class EntitiesCommand(Command):
         summarize(result, "entities")
         if not result.clean and not force:
             answer = auto_choice(
-                "  Entities have unparsable/duplicated definitions — write anyway? (y/N): ",
+                "  Entities have unparsable/duplicated "
+                "definitions — write anyway? (y/N): ",
                 default="n",
                 auto_default="n",
             )

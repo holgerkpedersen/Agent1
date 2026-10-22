@@ -1,4 +1,7 @@
-"""Regression tests for prompt-cache hit/miss tracking in MetricsTracker and PromptCache."""
+(
+    """Regression tests for prompt-cache hit/miss """
+    """tracking in MetricsTracker and PromptCache."""
+)
 
 from __future__ import annotations
 

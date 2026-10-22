@@ -99,7 +99,8 @@ def format_stale_warning(paths: list[str], limit: int = 5) -> str:
     shown = paths[:limit]
     more = len(paths) - len(shown)
     lines = [
-        f"WARNING: {len(paths)} loaded module file(s) changed on disk since this REPL started —",
+        f"WARNING: {len(paths)} loaded module file(s) "
+        f"changed on disk since this REPL started —",
         "the running code is STALE. Restart the REPL to load the changes.",
     ]
     lines.extend(f"  - {p}" for p in shown)

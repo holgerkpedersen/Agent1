@@ -17,17 +17,20 @@ from agent_core.utils.module_similarity import (
 _TRUE_PAIRS = [
     (
         "agent_core/security/shell_allowlist.py",
-        "Shell command allow-list + hardened blocklist replacing incomplete _DANGEROUS_SHELL_PATTERNS",
+        "Shell command allow-list + hardened blocklist "
+        "replacing incomplete _DANGEROUS_SHELL_PATTERNS",
         "agent_core/security/allowlist.py",
     ),
     (
         "agent_core/security/sanitizer_fix.py",
-        "Corrected forbidden patterns + pipe rejection replacing malformed pattern in security/sanitizer.py:_FORBIDDEN_PATTERNS",
+        "Corrected forbidden patterns + pipe rejection replacing "
+        "malformed pattern in security/sanitizer.py:_FORBIDDEN_PATTERNS",
         "agent_core/security/sanitizer.py",
     ),
     (
         "agent_core/security/path_guard.py",
-        "Workspace containment enforcement replacing missing _safe_path/_resolve_nlp_path check",
+        "Workspace containment enforcement replacing "
+        "missing _safe_path/_resolve_nlp_path check",
         "agent_core/security/path_utils.py",
     ),
 ]
@@ -37,15 +40,24 @@ _TRUE_PAIRS = [
 def ws(tmp_path):
     """A small production corpus with real-style docstrings."""
     files = {
-        "agent_core/security/allowlist.py": '"""Safe shell command allow-list and validation logic."""\nSAFE = set()\n',
-        "agent_core/security/sanitizer.py": '"""Input sanitizer stripping shell-injection payloads."""\nX = 1\n',
-        "agent_core/security/path_utils.py": '"""Centralized path normalization and workspace containment."""\nY = 2\n',
-        "agent_core/path_utils.py": '"""Path normalization utilities for workspace containment."""\nZ = 3\n',
-        "agent_core/llm/tool_loop.py": '"""Tool calling loop orchestrator for LLM conversations."""\nW = 4\n',
-        "agent_core/tool_schemas.py": '"""Tool definitions and OpenAI-format schemas."""\nV = 5\n',
-        "agent_core/commands/reporting_cmd.py": '"""Command that produces performance reports."""\nU = 6\n',
-        "tests/test_sanitizer.py": '"""Tests for sanitizer — MUST NOT be in the corpus."""\nT = 7\n',
-        "benchmarks/security_benchmarks.py": '"""Benchmarks — MUST NOT be in the corpus."""\nB = 8\n',
+        "agent_core/security/allowlist.py"
+        "": '"""Safe shell command allow-list and validation logic."""\nSAFE = set()\n',
+        "agent_core/security/sanit"
+        "izer.py": '"""Input sanitizer stripping shell-injection payloads."""\nX = 1\n',
+        "agent_core/security/path_utils.p"
+        "y": '"""Centralized path normalization and workspace containment."""\nY = 2\n',
+        "agent_core/path_utils"
+        ".py": '"""Path normalization utilities for workspace containment."""\nZ = 3\n',
+        "agent_core/llm/tool_lo"
+        "op.py": '"""Tool calling loop orchestrator for LLM conversations."""\nW = 4\n',
+        "agent_core/to"
+        "ol_schemas.py": '"""Tool definitions and OpenAI-format schemas."""\nV = 5\n',
+        "agent_core/commands/"
+        "reporting_cmd.py": '"""Command that produces performance reports."""\nU = 6\n',
+        "tests/test_sa"
+        "nitizer.py": '"""Tests for sanitizer — MUST NOT be in the corpus."""\nT = 7\n',
+        "benchmarks/secur"
+        "ity_benchmarks.py": '"""Benchmarks — MUST NOT be in the corpus."""\nB = 8\n',
     }
     for rel, content in files.items():
         p = tmp_path / rel
@@ -69,7 +81,8 @@ class TestCorpus:
     def test_corpus_rebuilt_after_change(self, ws):
         sim1 = ModuleSimilarity(str(ws))
         (ws / "agent_core" / "security" / "allowlist.py").write_text(
-            '"""Safe shell command allow-list and validation logic (v2)."""\nSAFE = set()\n',
+            '"""Safe shell command allow-list and '
+            'validation logic (v2)."""\nSAFE = set()\n',
             encoding="utf-8",
         )
         sim2 = ModuleSimilarity(str(ws))

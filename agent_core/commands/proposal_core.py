@@ -182,7 +182,8 @@ def gate_file(
             if dup_reasons:
                 return (
                     "rejected",
-                    f"near-duplicate of existing module — {dup_reasons[0].split(' — ', 1)[-1]}",
+                    f"near-duplicate of existing module — "
+                    f"{dup_reasons[0].split(' — ', 1)[-1]}",
                     effective,
                 )
 

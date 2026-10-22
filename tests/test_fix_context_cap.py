@@ -38,7 +38,8 @@ class _FakeAgent:
 
 def _write_huge_file(path: Path, lines: int, keyword: str) -> None:
     body = "\n".join(
-        f"def func_{i}():  # {keyword}\n    raise {keyword.title()}() if False else None\n"
+        f"def func_{i}():  # {keyword}\n    raise "
+        f"{keyword.title()}() if False else None\n"
         for i in range(lines)
     )
     path.write_text(body, encoding="utf-8")
@@ -74,8 +75,8 @@ def test_ondemand_context_capped_for_large_files(tmp_path: Path) -> None:
 def test_ondemand_small_file_still_inlined(tmp_path: Path) -> None:
     small = tmp_path / "smallmod.py"
     small.write_text(
-        "def do_work():\n    print('start')\n    # best-effort\n    try:\n        risky()\n"
-        "    except Exception:\n        log()\n",
+        "def do_work():\n    print('start')\n    # best-effort\n    "
+        "try:\n        risky()\n    except Exception:\n        log()\n",
         encoding="utf-8",
     )
     agent = _FakeAgent()
@@ -251,7 +252,10 @@ def test_ondemand_rejects_shrinking_rewrite_of_large_file(tmp_path: Path) -> Non
     orig = big.read_text(encoding="utf-8")
 
     # Model returns only a tiny partial body (still passes the import/length gate).
-    tiny = "[FILE: bigmod.py]\n```python\nimport os\n\n\ndef f0():\n    return 0\n\n\ndef f1():\n    return 1\n```"
+    tiny = (
+        "[FILE: bigmod.py]\n```python\nimport os\n\n\ndef "
+        "f0():\n    return 0\n\n\ndef f1():\n    return 1\n```"
+    )
 
     class _TinyFixLLM:
         def __init__(self) -> None:

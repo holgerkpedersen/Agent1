@@ -204,7 +204,8 @@ def test_zen_exhaustion_triggers_failover_to_go() -> None:
                 return (
                     f"[Error: opencode-zen free model {_default_zen_free_model()} is "
                     "currently unavailable on the backend. Try another free model "
-                    f"with 'model opencode-zen/<id>-free' (e.g. {_default_zen_free_model()}). "
+                    f"with 'model opencode-zen/<id>-free' "
+                    f"(e.g. {_default_zen_free_model()}). "
                     f"Checked: {_default_zen_free_model()}.]"
                 )
             return f"ok:{self.name}"

@@ -129,7 +129,8 @@ class LintGuard:
                         kind="bare-except",
                         path=path,
                         line=node.lineno,
-                        message="Bare except clause; catch a concrete exception instead",
+                        message="Bare except clause; catch "
+                        "a concrete exception instead",
                     )
                 )
         return issues

@@ -33,7 +33,8 @@ class TaskCollector:
     def monitor_task_progress(
         self, task_id: str, milestone_name: str | None = None
     ) -> float:
-        """Record completion times and intermediate milestones for long-running processes.
+        """Record \
+completion times and intermediate milestones for long-running processes.
 
         Args:
             task_id: Unique identifier for the tracked task.
@@ -67,7 +68,8 @@ class TaskCollector:
             subtask_metric: A TaskMetric instance representing a component operation.
 
         Returns:
-            An aggregated TaskMetric combining all recorded subtasks, or None if validation fails.
+          \
+  An aggregated TaskMetric combining all recorded subtasks, or None if validation fails.
         """
         is_valid: bool = validate_task_metric(self._validator, subtask_metric)
         if not is_valid:
@@ -148,15 +150,18 @@ class TaskCollector:
         dependency_task_ids: list[str],
         bottleneck_threshold_ms: float = 500.0,
     ) -> dict[str, Union[TaskMetric, bool]]:
-        """Link executions identifying bottlenecks via Union type branch resolution using pattern matching constructs.
+        """Link executions identifying \
+bottlenecks via Union type branch resolution using pattern matching constructs.
 
         Args:
             task_id: Unique identifier for the primary task being analyzed.
             dependency_task_ids: List of task IDs that the primary task depends on.
-            bottleneck_threshold_ms: Threshold in milliseconds to flag a subtask as a bottleneck.
+         \
+   bottleneck_threshold_ms: Threshold in milliseconds to flag a subtask as a bottleneck.
 
         Returns:
-            A dictionary mapping each dependency task ID to either its aggregated TaskMetric or a boolean indicating bottleneck status.
+            A dictionary mapping each dependency \
+task ID to either its aggregated TaskMetric or a boolean indicating bottleneck status.
         """
         results: dict[str, Union[TaskMetric, bool]] = {}
         for dep_id in dependency_task_ids:

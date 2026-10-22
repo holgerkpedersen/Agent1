@@ -131,7 +131,8 @@ class VectorDatabase:
     def add_vector(self, vector: np.ndarray, metadata: Dict[str, Any]) -> int:
         if len(vector) != self._dimension:
             raise ValueError(
-                f"Vector dimension mismatch: expected {self._dimension}, got {len(vector)}"
+                f"Vector dimension mismatch: expected "
+                f"{self._dimension}, got {len(vector)}"
             )
         normalized_vector = vector / (np.linalg.norm(vector) + 1e-8)
         vector_id = self._next_id

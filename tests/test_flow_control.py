@@ -238,7 +238,8 @@ class TestShowPatchVerdict:
             "x: int = 5\n",
             "t.py",
             [
-                't.py:1: error: Incompatible types in assignment (expression has type "str", variable has type "int")  [assignment]'
+                "t.py:1: error: Incompatible types in assignment (expression "
+                'has type "str", variable has type "int")  [assignment]'
             ],
             str(tmp_path),
         )
@@ -259,7 +260,8 @@ class TestShowPatchVerdict:
             "_run_capped",
             self._make_fake_run(
                 [
-                    "__TMPFILE__:1: error: Incompatible types in assignment  [assignment]"
+                    "__TMPFILE__:1: error: Incompatible "
+                    "types in assignment  [assignment]"
                 ],
             ),
         )
@@ -271,7 +273,8 @@ class TestShowPatchVerdict:
             "x: int = 'bad'  # type: ignore[assignment]\n",
             "t.py",
             [
-                't.py:1: error: Incompatible types in assignment (expression has type "str", variable has type "int")  [assignment]'
+                "t.py:1: error: Incompatible types in assignment (expression "
+                'has type "str", variable has type "int")  [assignment]'
             ],
             str(tmp_path),
         )
@@ -291,11 +294,14 @@ class TestShowPatchVerdict:
             "_run_capped",
             self._make_fake_run(
                 [
-                    '__TMPFILE__:5: error: Name "nonexistent_attr" is not defined  [name-defined]'
+                    '__TMPFILE__:5: error: Name "nonexistent_attr" '
+                    "is not defined  [name-defined]"
                 ],
                 [
-                    '__TMPFILE__:2: error: Unsupported operand types for - ("None" and "int")  [operator]',
-                    '__TMPFILE__:5: error: Name "nonexistent_attr" is not defined  [name-defined]',
+                    "__TMPFILE__:2: error: Unsupported operand "
+                    'types for - ("None" and "int")  [operator]',
+                    '__TMPFILE__:5: error: Name "nonexistent_attr" '
+                    "is not defined  [name-defined]",
                 ],
             ),
         )
@@ -322,7 +328,8 @@ class TestShowPatchVerdict:
             patched,
             "t.py",
             [
-                't.py:2: error: Unsupported operand types for - ("None" and "int")  [operator]'
+                "t.py:2: error: Unsupported operand types "
+                'for - ("None" and "int")  [operator]'
             ],
             str(tmp_path),
         )

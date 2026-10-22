@@ -88,7 +88,9 @@ def get_metrics():
         return jsonify(
             {
                 "error": "invalid_parameter",
-                "message": f"Limit exceeds maximum allowed ({current_app.config['MAX_LIMIT']})",
+                (
+                    "message"
+                ): f"Limit exceeds maximum allowed ({current_app.config['MAX_LIMIT']})",
             }
         ), 400
 
@@ -590,7 +592,8 @@ def bulk_create_metrics():
         return jsonify(
             {
                 "error": "invalid_parameter",
-                "message": f"Bulk request exceeds maximum size ({current_app.config['MAX_BULK_SIZE']})",
+                "message": f"Bulk request exceeds maximum size "
+                f"({current_app.config['MAX_BULK_SIZE']})",
             }
         ), 400
 

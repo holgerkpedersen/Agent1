@@ -236,7 +236,8 @@ def detect_regex_in_loop(source: str) -> list[tuple[int, str, str]]:
                 (
                     i,
                     "regex_in_loop",
-                    "Move re.compile() to module level — compiling inside loop wastes cycles",
+                    "Move re.compile() to module level — "
+                    "compiling inside loop wastes cycles",
                 )
             )
     return findings
@@ -303,7 +304,8 @@ def detect_string_concat_in_loop(source: str) -> list[tuple[int, str, str]]:
                 (
                     i,
                     "string_concat_in_loop",
-                    "Use ''.join() or io.StringIO instead of += in loop — O(n²) becomes O(n)",
+                    "Use ''.join() or io.StringIO instead "
+                    "of += in loop — O(n²) becomes O(n)",
                 )
             )
     return findings
@@ -319,7 +321,8 @@ def detect_bare_except(source: str) -> list[tuple[int, str, str]]:
                 (
                     i,
                     "bare_except",
-                    "Specify exception type — bare except catches KeyboardInterrupt and hides bugs",
+                    "Specify exception type — bare except "
+                    "catches KeyboardInterrupt and hides bugs",
                 )
             )
     return findings
@@ -347,10 +350,11 @@ def detect_silent_except(source: str) -> list[tuple[int, str, str]]:
                         (
                             i,
                             "silent_except",
-                            "Replace 'pass' with a print/log warning — do NOT re-raise (silent "
-                            "handlers are often intentional fallbacks such as cache reads, "
-                            "optional features, or Ctrl-C handling); re-raising would crash "
-                            "normal operation — preserve the original control flow",
+                            "Replace 'pass' with a print/log warning — do NOT "
+                            "re-raise (silent handlers are often intentional "
+                            "fallbacks such as cache reads, optional features, "
+                            "or Ctrl-C handling); re-raising would crash normal "
+                            "operation — preserve the original control flow",
                         )
                     )
                     break
@@ -378,7 +382,8 @@ def detect_duplicate_imports(source: str) -> list[tuple[int, str, str]]:
                         (
                             i,
                             "duplicate_import",
-                            f"Duplicate import (first at line {fline}). Remove this copy.",
+                            f"Duplicate import (first at "
+                            f"line {fline}). Remove this copy.",
                         )
                     )
             else:
@@ -387,7 +392,10 @@ def detect_duplicate_imports(source: str) -> list[tuple[int, str, str]]:
 
 
 def detect_missing_context_manager(source: str) -> list[tuple[int, str, str]]:
-    """``open(...).read()`` without ``with`` statement — AST-based, no false positives."""
+    (
+        """``open(...).read()`` without ``with`` """
+        """statement — AST-based, no false positives."""
+    )
     import ast
 
     try:
@@ -510,7 +518,10 @@ def detect_missing_context_manager(source: str) -> list[tuple[int, str, str]]:
 
 
 def _module_shadows_open(tree: ast.Module) -> bool:
-    """True when top-level code binds the name ``'open'`` (assign, import, def, class)."""
+    (
+        """True when top-level code binds the name """
+        """``'open'`` (assign, import, def, class)."""
+    )
     import ast
 
     for node in ast.iter_child_nodes(tree):
@@ -956,7 +967,9 @@ def detect_dead_assignment(source: str) -> list[tuple[int, str, str]]:
                         (
                             i,
                             "dead_assignment",
-                            f"Variable '{var_name}' assigned at line {i} then immediately overwritten at line {j + 1}. Remove the dead assignment.",
+                            f"Variable '{var_name}' assigned at line "
+                            f"{i} then immediately overwritten at "
+                            f"line {j + 1}. Remove the dead assignment.",
                         )
                     )
             break
@@ -1033,7 +1046,8 @@ def detect_dead_assignment(source: str) -> list[tuple[int, str, str]]:
                 (
                     i,
                     "dead_assignment",
-                    f"Variable '{var_name}' assigned at line {i} but never used after. Remove the dead assignment.",
+                    f"Variable '{var_name}' assigned at line {i} but "
+                    f"never used after. Remove the dead assignment.",
                 )
             )
 
@@ -1139,7 +1153,8 @@ def detect_walrus_in_comprehension(source: str) -> list[tuple[int, str, str]]:
                 first.lineno,
                 "walrus_in_comprehension",
                 f"Walrus '{names}' inside comprehension leaks into enclosing scope. "
-                "Bind these as named locals on their own line before the comprehension.",
+                "Bind these as named locals on their "
+                "own line before the comprehension.",
             )
         )
     findings.sort(key=lambda f: f[0])
@@ -1171,12 +1186,18 @@ def _func_depth_by_line(lines: list[str]) -> list[int]:
 
 
 def _strip_strings(line: str) -> str:
-    """Remove string literals from *line* so bracket counting ignores parens inside strings."""
+    (
+        """Remove string literals from *line* so bracket """
+        """counting ignores parens inside strings."""
+    )
     return re.sub(r'("(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\')', "", line)
 
 
 def _balance_delta(line: str) -> int:
-    """Return net open-minus-close delimiter count for () [] {} on *line* (strings ignored)."""
+    (
+        """Return net open-minus-close delimiter count """
+        """for () [] {} on *line* (strings ignored)."""
+    )
     clean = _strip_strings(line)
     return (
         clean.count("(")
@@ -1333,7 +1354,8 @@ def detect_module_collisions(
                     "file": fname,
                     "line": 0,
                     "pattern": "module_collision",
-                    "suggestion": f"Module name similar to existing: {', '.join(collisions[:3])}. Consider a more distinct name.",
+                    "suggestion": f"Module name similar to existing: "
+                    f"{', '.join(collisions[:3])}. Consider a more distinct name.",
                 }
             )
     return findings
@@ -1528,7 +1550,9 @@ def detect_attribute_errors(
                                 "file": fname,
                                 "line": 0,
                                 "pattern": "attribute_error",
-                                "suggestion": f"{obj_name}.{attr} — '{attr}' not found in class '{cls_name}' from {mod_path}. Available: {', '.join(sorted(class_fields)[:12]) or 'none'}",
+                                "suggestion": f"{obj_name}.{attr} — '{attr}' not found "
+                                f"in class '{cls_name}' from {mod_path}. Available: "
+                                f"{', '.join(sorted(class_fields)[:12]) or 'none'}",
                             }
                         )
                     break
@@ -1583,7 +1607,9 @@ def detect_unwired_modules(
                     "file": fname,
                     "line": 0,
                     "pattern": "unwired_module",
-                    "suggestion": f"Module '{fname}' is not imported by any existing project code. It needs to be wired in (e.g., add 'from {mod_name} import X' in a consumer module).",
+                    "suggestion": f"Module '{fname}' is not imported by any existing "
+                    f"project code. It needs to be wired in (e.g., add "
+                    f"'from {mod_name} import X' in a consumer module).",
                 }
             )
 
@@ -1672,7 +1698,9 @@ def detect_class_conflicts(
                             "file": fname,
                             "line": node.lineno,
                             "pattern": "class_conflict",
-                            "suggestion": f"'{node.name}' already defined in {ex_rel} (same directory). Rename in {fname} to avoid import collision.",
+                            "suggestion": f"'{node.name}' already defined in "
+                            f"{ex_rel} (same directory). Rename "
+                            f"in {fname} to avoid import collision.",
                         }
                     )
 
@@ -1818,7 +1846,8 @@ def detect_type_comparison(source: str) -> list[tuple[int, str, str]]:
                 (
                     i,
                     "type_comparison",
-                    f"Use isinstance({m.group(1)}, {m.group(2)}) instead of type() == check",
+                    f"Use isinstance({m.group(1)}, "
+                    f"{m.group(2)}) instead of type() == check",
                 )
             )
             continue
@@ -1828,7 +1857,8 @@ def detect_type_comparison(source: str) -> list[tuple[int, str, str]]:
                 (
                     i,
                     "type_comparison",
-                    f"Use 'not isinstance({m.group(1)}, {m.group(2)})' instead of type() != check",
+                    f"Use 'not isinstance({m.group(1)}, "
+                    f"{m.group(2)})' instead of type() != check",
                 )
             )
             continue
@@ -1838,7 +1868,8 @@ def detect_type_comparison(source: str) -> list[tuple[int, str, str]]:
                 (
                     i,
                     "type_comparison",
-                    f"Use isinstance({m.group(1)}, ({m.group(2)})) instead of type() in (...) check",
+                    f"Use isinstance({m.group(1)}, ({m.group(2)})) "
+                    f"instead of type() in (...) check",
                 )
             )
     return findings
@@ -1884,7 +1915,8 @@ def detect_redundant_bool_expr(source: str) -> list[tuple[int, str, str]]:
                 (
                     i,
                     "redundant_bool_expr",
-                    f"Use 'return bool({m.group(1).strip()})' instead of True-if-else-False",
+                    f"Use 'return bool({m.group(1).strip()})' "
+                    f"instead of True-if-else-False",
                 )
             )
             continue

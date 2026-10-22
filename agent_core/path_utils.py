@@ -1,12 +1,16 @@
 """Secure path validation & workspace sandboxing utilities.
 
 This module provides deterministic boundary enforcement for agent filesystem operations,
-preventing directory traversal attacks and enforcing strict symlink policies within a defined workspace root.
+preventing directory \
+traversal attacks and enforcing strict symlink policies within a defined workspace root.
 
 Security Guarantees:
-- Absolute containment: All resolved paths are verified to remain strictly inside `workspace_root`.
-- Symlink isolation: Optional policy flag blocks symlink traversal that could escape the sandbox.
-- Input hardening: Rejects empty, non-string, or malformed inputs before filesystem resolution.
+- Absolute \
+containment: All resolved paths are verified to remain strictly inside `workspace_root`.
+- Symlink \
+isolation: Optional policy flag blocks symlink traversal that could escape the sandbox.
+- Input \
+hardening: Rejects empty, non-string, or malformed inputs before filesystem resolution.
 """
 
 from __future__ import annotations
@@ -152,7 +156,10 @@ class WorkspaceSandbox:
         self.follow_symlinks = follow_symlinks
 
     def resolve_path(self, raw: str) -> Path:
-        """Resolve a relative/absolute path string strictly within the sandbox boundary."""
+        (
+            """Resolve a relative/absolute path string """
+            """strictly within the sandbox boundary."""
+        )
         return normalize_path(raw, self.workspace_root, self.follow_symlinks)
 
     def __enter__(self) -> "WorkspaceSandbox":

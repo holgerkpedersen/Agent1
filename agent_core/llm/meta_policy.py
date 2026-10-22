@@ -16,7 +16,10 @@ class MetaPolicyEvolver:
         }
 
     def update_weights(self, tracker: MetricsTracker) -> dict[ProfileType, float]:
-        """Adjust weights from success rate and failure count; decay prevents overfitting."""
+        (
+            """Adjust weights from success rate and """
+            """failure count; decay prevents overfitting."""
+        )
         for profile_type in self._weights:
             success_rate = tracker.get_success_rate(profile_type)
             failure_count = tracker.get_failure_count(profile_type)

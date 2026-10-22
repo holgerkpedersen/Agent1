@@ -1,4 +1,7 @@
-"""Tests for agent_core.commands.optimize_cmd — batching, parsing, and static analysis."""
+(
+    """Tests for agent_core.commands.optimize_cmd """
+    """— batching, parsing, and static analysis."""
+)
 
 from __future__ import annotations
 
@@ -440,7 +443,8 @@ class TestListAppendJoinDetector:
 
             def _parse_imports(source):
                 result = []
-                for m in re.finditer(r"^(?:from|import)\\s+(\\S+)", source, re.MULTILINE):
+  \
+              for m in re.finditer(r"^(?:from|import)\\s+(\\S+)", source, re.MULTILINE):
                     module = m.group(1)
                     if module.startswith("."):
                         continue
@@ -1492,7 +1496,10 @@ class TestChangedImports:
         from agent_core.commands.optimize_cmd import _blocked_added_imports
 
         original = "import re\n\ndef f():\n    return re.compile('x')\n"
-        candidate = "import re\nimport json\n\ndef f():\n    return json.dumps(re.compile('x').pattern)\n"
+        candidate = (
+            "import re\nimport json\n\ndef f():\n    "
+            "return json.dumps(re.compile('x').pattern)\n"
+        )
         assert _blocked_added_imports(candidate, original) == set()
 
     def test_added_import_rejected_and_not_applied(
@@ -1727,7 +1734,8 @@ class TestPerFindingPatches:
             parts.append(
                 f"    def func_{i}(self, value):\n"
                 f"        result = value * {i}\n"
-                f"        fname = os.path.join('data', re.sub(r'\\d+', '', 'f{i}.txt'))\n"
+                f"        fname = os.path.join('data', "
+                f"re.sub(r'\\d+', '', 'f{i}.txt'))\n"
                 "        try:\n"
                 f"            return open(fname).read()\n"
                 "        except Exception:\n"
@@ -1762,7 +1770,10 @@ class TestPerFindingPatches:
         body = ""
         if ctx is not None:
             body += f" {ctx}\n"
-        body += f"-{numbered[idx][1]}\n+{numbered[idx][1].replace('Exception', 'OSError')}\n"
+        body += (
+            f"-{numbered[idx][1]}\n+"
+            f"{numbered[idx][1].replace('Exception', 'OSError')}\n"
+        )
         pass_next = idx + 1 < len(numbered) and numbered[idx + 1][1].strip() == "pass"
         if idx + 1 < len(numbered) and not pass_next:
             body += f" {numbered[idx + 1][1]}\n"
@@ -2121,7 +2132,10 @@ class TestSurgicalRevertRegressions:
         original = (
             "def pick(nums):\n    vals = [n for n in nums if n > 0]\n    return vals\n"
         )
-        candidate = "def pick(nums):\n    vals = [n for n in nums if (p := n) > 0]\n    return vals\n"
+        candidate = (
+            "def pick(nums):\n    vals = [n for n in "
+            "nums if (p := n) > 0]\n    return vals\n"
+        )
         assert "walrus_in_comprehension" in {
             f["pattern"] for f in static_analyze(candidate)
         }
@@ -2746,7 +2760,10 @@ class TestMechanicalRegexHoist:
         assert "+    _RE_1 = re.compile(r'\\s+')" in hunk
 
     def test_nested_loop_hoists_above_outermost(self) -> None:
-        """When a re call is inside a nested loop, hoist above the OUTERMOST enclosing loop."""
+        (
+            """When a re call is inside a nested loop, """
+            """hoist above the OUTERMOST enclosing loop."""
+        )
         from agent_core.commands.optimize_cmd import _fix_regex_in_loop
         from agent_core.patch_utils import apply_patch
 
@@ -2756,7 +2773,8 @@ class TestMechanicalRegexHoist:
             def run():
                 for attempt in range(3):
                     for fname in files:
-                        class_names = re.findall(r'^class\\s+(\\w+)', source, re.MULTILINE)
+   \
+                     class_names = re.findall(r'^class\\s+(\\w+)', source, re.MULTILINE)
                         print(class_names)
         """)
         wl = code.split("\n")
@@ -3020,14 +3038,23 @@ class TestMissingImportRefs:
     def test_external_globals_not_flagged(self) -> None:
         from agent_core.commands.optimize_cmd import _regressed_imports
 
-        orig = "def build():\n    lines = []\n    for item in items:\n        lines.append(item)\n    return ''.join(lines)\n"
-        patched = "def build():\n    lines = [item for item in items]\n    return ''.join(lines)\n"
+        orig = (
+            "def build():\n    lines = []\n    for item in items:\n "
+            "       lines.append(item)\n    return ''.join(lines)\n"
+        )
+        patched = (
+            "def build():\n    lines = [item for item "
+            "in items]\n    return ''.join(lines)\n"
+        )
         assert _regressed_imports(orig, patched) == []
 
     def test_builtins_and_module_imports_ok(self) -> None:
         from agent_core.commands.optimize_cmd import _regressed_imports
 
-        code = "import os\nimport pathlib\n\ndef f():\n    return os.path.join('a', 'b', pathlib.Path('c'))\n"
+        code = (
+            "import os\nimport pathlib\n\ndef f():\n    "
+            "return os.path.join('a', 'b', pathlib.Path('c'))\n"
+        )
         assert _regressed_imports(code, code) == []
 
     def test_alias_imports_ok(self) -> None:
