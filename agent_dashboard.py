@@ -229,3 +229,18 @@ __all__ = [
     "_dashboard_port",
     "_default_alert_rules",
 ]
+
+
+def main(argv: "Optional[list[str]]" = None) -> None:
+    """Standalone dashboard CLI: ``python agent_dashboard.py [--port N]``."""
+    argv = list(sys.argv[1:] if argv is None else argv)
+    for arg in argv:
+        if arg in ("-h", "--help"):
+            print("usage: agent_dashboard.py [--port N]  (default 8081)")
+            print("Serve the TTTHEME metrics dashboard on localhost.")
+            return
+    run_dashboard_server()
+
+
+if __name__ == "__main__":
+    main()
