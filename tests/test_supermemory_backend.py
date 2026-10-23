@@ -5,6 +5,12 @@ malformed response must NEVER propagate out of store/retrieve/delete.  The
 turn path must keep running on the local fallback, exactly like the provider
 pattern in openrouter_provider.py (readable string, no raise) and
 opencode_provider.py (no key => feature switches itself off).
+
+TestContract additionally pins the ROUTES to the provider's published v5
+OpenAPI contract.  These assertions are what the fail-open tests cannot
+provide: they mock the transport, so a route that no longer exists on the
+vendor side still passes them.  tests/test_supermemory_live.py is the check
+against the real service.
 """
 
 from typing import Any, Dict, List, Optional
@@ -195,3 +201,120 @@ class TestContract:
         mem.save_memory("k1", {"a": 1})
         assert mem.load_memory("k1") == {"a": 1}
         assert mem.forget_memory("k1") is True
+
+
+class TestV5Routes:
+    """The routes, verbs and bodies must match the published v5 OpenAPI spec.
+
+    The v5 spec has NO /v3 and NO /v4 paths.  ``GET /v3/documents`` is gone
+    (it answers ``404 No route matches``), so a read-by-key must use
+    ``GET /ns/{namespace}/document/{id}``.  These tests exist because the
+    fail-open suite passed against routes the provider no longer serves.
+    """
+
+    def _calls(self, http: FakeHttp) -> List[Dict[str, Any]]:
+        return http.calls
+
+    def test_store_writes_to_namespaced_document_route(self):
+        http = FakeHttp(responses={"*": {"id": "remote-1", "status": "ok"}})
+        store = make(http)
+        store.store("k1", {"a": 1})
+        posts = [c for c in self._calls(http) if c["method"] == "POST"]
+        assert len(posts) == 1
+        assert posts[0]["path"] == "/ns/default/document"
+        body = posts[0]["json"]
+        # v5 requires "content" (string); "id" is the caller-defined document
+        # id that makes the key recoverable on read.
+        assert "content" in body and isinstance(body["content"], str)
+        assert body["id"] == "k1"
+        assert "containerTag" not in body, "containerTag is v3/v4, not v5"
+
+    def test_retrieve_reads_by_id_not_by_query_filter(self):
+        http = FakeHttp(responses={"*": {"id": "k1", "content": '{"a": 1}'}})
+        store = make(http)
+        assert store.retrieve("k1") == {"a": 1}
+        gets = [c for c in self._calls(http) if c["method"] == "GET"]
+        assert len(gets) == 1
+        assert gets[0]["path"] == "/ns/default/document/k1"
+        assert "params" not in gets[0], "v5 has no read-by-filter verb"
+
+    def test_delete_sends_ids_array(self):
+        http = FakeHttp(responses={"*": {}})
+        store = make(http)
+        store.delete("k1")
+        dels = [c for c in self._calls(http) if c["method"] == "DELETE"]
+        assert len(dels) == 1
+        assert dels[0]["path"] == "/ns/default/document"
+        assert dels[0]["json"] == {"ids": ["k1"]}
+
+    def test_search_uses_query_field(self):
+        http = FakeHttp(responses={"*": {"results": [], "searchTime": 1}})
+        store = make(http)
+        store.search("hello", limit=3)
+        posts = [c for c in self._calls(http) if c["path"].endswith("/search")]
+        assert len(posts) == 1
+        assert posts[0]["method"] == "POST"
+        assert posts[0]["json"]["query"] == "hello"
+        assert posts[0]["json"]["limit"] == 3
+
+    def test_profile_uses_namespaced_post(self):
+        http = FakeHttp(
+            responses={"*": {"profile": {"static": [], "dynamic": [], "buckets": {}}}}
+        )
+        store = make(http)
+        out = store.profile()
+        posts = [c for c in self._calls(http) if c["path"].endswith("/profile")]
+        assert posts[0]["method"] == "POST"
+        assert posts[0]["path"] == "/ns/default/profile"
+        assert out == {"profile": {"static": [], "dynamic": [], "buckets": {}}}
+
+    def test_no_route_in_the_module_is_a_v3_or_v4_path(self):
+        """Guard against re-introducing a legacy alias."""
+        import inspect
+        import re
+
+        src = inspect.getsource(
+            __import__("agent_core.memory.supermemory", fromlist=["x"])
+        )
+        offenders = re.findall(r'["\']/v[34]/', src)
+        assert offenders == [], f"legacy routes in module source: {offenders}"
+
+    def test_namespace_replaces_path_unsafe_characters(self):
+        """A caller-supplied namespace cannot inject the request path."""
+        http = FakeHttp(responses={"*": {"id": "x", "status": "ok"}})
+        store = SupermemoryStorage(
+            api_key="k", http=http, namespace="../../admin", fallback=FakeFallback()
+        )
+        store.store("k1", {"a": 1})
+        path = self._calls(http)[0]["path"]
+        assert ".." not in path
+        assert "/" not in path.removeprefix("/ns/").split("/document")[0]
+        assert path == f"/ns/{store.namespace}/document"
+
+    def test_namespace_is_capped_at_the_spec_maximum(self):
+        store = SupermemoryStorage(api_key="k", namespace="x" * 500)
+        assert len(store.namespace) <= 100
+
+    def test_legacy_container_tag_keyword_still_maps(self):
+        """Callers written against the old keyword keep working."""
+        store = SupermemoryStorage(api_key="k", container_tag="tenant-7")
+        assert store.namespace == "tenant-7"
+
+
+class TestDecodeRoundTrip:
+    def test_non_dict_remote_response_is_a_miss(self):
+        fb = FakeFallback()
+        fb.store("k1", {"a": 1})
+        http = FakeHttp(responses={"*": None})
+        store = make(http, fallback=fb)
+        assert store.retrieve("k1") == {"a": 1}
+
+    def test_non_json_content_is_returned_as_content(self):
+        http = FakeHttp(responses={"*": {"id": "k1", "content": "plain text"}})
+        store = make(http)
+        assert store.retrieve("k1") == {"content": "plain text"}
+
+    def test_json_scalar_content_is_wrapped(self):
+        http = FakeHttp(responses={"*": {"id": "k1", "content": "42"}})
+        store = make(http)
+        assert store.retrieve("k1") == {"content": 42}

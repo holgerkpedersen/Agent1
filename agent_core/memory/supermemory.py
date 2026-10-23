@@ -6,6 +6,23 @@ so no new abstraction is needed::
 
     MemoryStore(backend=SupermemoryStorage(fallback=SQLiteStorage(...)))
 
+API VERSION — READ THIS BEFORE CHANGING ANY ROUTE
+-------------------------------------------------
+Every route here is the **v5 (namespaced) contract**, verified against the
+provider's published OpenAPI document (``GET /openapi.json``, ``version
+5.0.0``, 22 paths).  The v5 spec contains **no ``/v3`` and no ``/v4``
+routes**; the ``/v3`` paths that used to live in this module are legacy
+aliases, and at least one of them is gone: ``GET /v3/documents`` answers
+``404 No route matches``.  A key alone is not sufficient on those legacy
+routes either — they demand ``userId``/``orgId`` binding
+(``"Either userId or orgId not found"``), whereas in v5 the namespace in the
+path *is* the identity.
+
+Because the unit suite mocks the transport, it asserts our assumed contract
+and can never see a vendor-side change.  ``tests/test_supermemory_live.py``
+is the check that talks to the real service; it is skipped unless
+``SUPERMEMORY_API_KEY`` is set.
+
 THE ONE RULE THIS MODULE OBEYS
 ------------------------------
 It NEVER raises.  A memory write/read is a support action on the turn path,
@@ -47,6 +64,14 @@ API_KEY_ENV = "SUPERMEMORY_API_KEY"
 #: Base URL of the REST API; overridable for self-hosting and tests.
 DEFAULT_BASE_URL = "https://api.supermemory.ai"
 
+#: Namespace pattern the v5 spec enforces on the path parameter:
+#: ``^[a-zA-Z0-9_:-]+$``, at most 100 characters.  Enforced locally so a bad
+#: namespace fails into the fallback instead of costing a round trip.
+_NAMESPACE_MAX = 100
+_NAMESPACE_ALLOWED = set(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_:-"
+)
+
 #: Bounded, per SECURITY.md's configurable-timeout rule.  Memory calls sit on
 #: the per-turn path, so this stays well under a human-patience threshold.
 DEFAULT_TIMEOUT_SECONDS = 5.0
@@ -65,6 +90,7 @@ class SupermemoryStorage:
         api_key: Optional[str] = None,
         *,
         base_url: str = DEFAULT_BASE_URL,
+        namespace: str = "default",
         container_tag: str = "default",
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
         http: Optional[Callable[..., Any]] = None,
@@ -74,7 +100,14 @@ class SupermemoryStorage:
             api_key = os.environ.get(API_KEY_ENV, "")
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
-        self._container_tag = container_tag
+        # v5 puts the identity in the path (/ns/{namespace}/...), which is
+        # what replaced the v3/v4 ``containerTag`` request field.  The old
+        # keyword is accepted and mapped so existing callers keep working.
+        # ``namespace`` is the v5 name and wins; the default is not a value,
+        # so an explicit ``container_tag`` is never shadowed by it.
+        use_namespace = namespace and namespace != "default"
+        chosen = namespace if use_namespace else (container_tag or "default")
+        self._namespace = _safe_namespace(chosen)
         self._timeout = timeout
         self._http = http
         self._fallback = fallback
@@ -82,6 +115,11 @@ class SupermemoryStorage:
         #: an error — the caller gets local-only storage and the run proceeds.
         self.enabled = bool(self._api_key)
         self._remote_failures = 0
+
+    @property
+    def namespace(self) -> str:
+        """The v5 namespace every route is scoped to."""
+        return self._namespace
 
     # ------------------------------------------------------------------ plumbing
 
@@ -144,64 +182,105 @@ class SupermemoryStorage:
     # ---------------------------------------------------- StorageBackend seam
 
     def store(self, key: str, data: Dict[str, Any]) -> None:
-        """Write to the remote store, then locally.  Raises nothing, ever."""
+        """Write to the remote store, then locally.  Raises nothing, ever.
+
+        v5 requires ``content`` (string); ``id`` is the caller-defined
+        document id, which is how a :class:`MemoryStore` key is recoverable
+        with ``GET /ns/{namespace}/document/{id}``.
+        """
         payload: Dict[str, Any] = {
-            "key": key,
             "content": json.dumps(data, default=str),
-            "containerTag": self._container_tag,
+            "id": key,
+            "metadata": {"key": key},
+            "taskType": "memory",
         }
-        self._call("POST", "/v3/documents", json=payload)
+        self._call("POST", f"/ns/{self._namespace}/document", json=payload)
         # The local write is unconditional: a failed remote call must not
         # leave the local copy behind the remote.
         self._fallback_call("store", key, data)
 
     def retrieve(self, key: str) -> Optional[Dict[str, Any]]:
-        """Read from the remote store; on miss/failure use the local copy."""
-        found = self._call(
-            "GET",
-            "/v3/documents",
-            params={"key": key, "containerTag": self._container_tag},
-        )
-        record = _first_record(found)
-        if record is not None:
-            data = _decode(record)
-            if data is not None:
-                return data
+        """Read from the remote store; on miss/failure use the local copy.
+
+        Uses ``GET /ns/{namespace}/document/{id}`` — the only read-by-key
+        verb v5 offers.  The legacy ``GET /v3/documents`` filter form is
+        gone (it answers 404), so a query-string read cannot be used.  A
+        list-shaped body is tolerated so a server that wraps its record in
+        an array still round-trips.
+        """
+        found = self._call("GET", f"/ns/{self._namespace}/document/{key}")
+        if isinstance(found, list):
+            found = found[0] if found and isinstance(found[0], dict) else None
+        data = _decode(found)
+        if data is not None:
+            return data
         local = self._fallback_call("retrieve", key)
         return local if isinstance(local, dict) else None
 
     def delete(self, key: str) -> bool:
-        """Delete remotely (best effort) and locally.  Returns the local result."""
+        """Delete remotely (best effort) and locally.  Returns the local result.
+
+        v5 deletes by id list, not by path segment.
+        """
         self._call(
             "DELETE",
-            f"/v3/documents/{key}",
-            params={"containerTag": self._container_tag},
+            f"/ns/{self._namespace}/document",
+            json={"ids": [key]},
         )
         result = self._fallback_call("delete", key)
         return bool(result)
 
+    # ------------------------------------------------------- v5 read surfaces
 
-def _first_record(found: Any) -> Optional[Dict[str, Any]]:
-    """Pull the first document out of a response of unknown shape."""
-    if isinstance(found, dict):
-        items = found.get("documents") or found.get("results") or found.get("data")
-        if isinstance(items, list) and items:
-            first = items[0]
-            return first if isinstance(first, dict) else None
-        return found if found else None
-    if isinstance(found, list) and found:
-        first = found[0]
-        return first if isinstance(first, dict) else None
-    return None
+    def search(self, query: str, *, limit: int = 5) -> Optional[Dict[str, Any]]:
+        """Semantic search over this namespace.  ``query`` is the v5 field.
+
+        Returns the parsed body (``{"results": [...], "searchTime": ...}``)
+        or ``None`` when the remote had nothing to say.
+        """
+        return self._call(
+            "POST",
+            f"/ns/{self._namespace}/search",
+            json={"query": query, "limit": limit, "searchMode": "hybrid"},
+        )
+
+    def profile(self) -> Optional[Dict[str, Any]]:
+        """The namespace profile (``{"profile": {static, dynamic, buckets}}``)."""
+        return self._call("POST", f"/ns/{self._namespace}/profile", json={})
+
+    def list_documents(self, *, limit: int = 100) -> Optional[Dict[str, Any]]:
+        """List documents in this namespace (``POST /ns/{ns}/list/documents``)."""
+        return self._call(
+            "POST",
+            f"/ns/{self._namespace}/list/documents",
+            json={"include": {"content": True}},
+            params={"limit": limit},
+        )
 
 
-def _decode(record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def _safe_namespace(value: str) -> str:
+    """Coerce ``value`` into the v5 namespace pattern.
+
+    The spec enforces ``^[a-zA-Z0-9_:-]+$`` with a 100-character cap.  A key
+    is caller-supplied and can contain anything, so characters outside the
+    pattern are replaced rather than sent; this keeps a namespace from
+    becoming an injection point in the request path.
+    """
+    cleaned = "".join(
+        ch if ch in _NAMESPACE_ALLOWED else "-" for ch in (value or "")
+    )
+    return (cleaned or "default")[:_NAMESPACE_MAX]
+
+
+def _decode(record: Any) -> Optional[Dict[str, Any]]:
     """Turn a remote record into the dict the caller expects.
 
     The remote stores what :meth:`store` wrote (a JSON string under
     ``content``), so a round-trip must recover it; a record that is not
     decodable is reported as a miss so the fallback gets the chance.
     """
+    if not isinstance(record, dict):
+        return None
     content = record.get("content")
     if isinstance(content, str):
         try:
@@ -209,9 +288,7 @@ def _decode(record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         except (ValueError, TypeError):
             return {"content": content}
         return parsed if isinstance(parsed, dict) else {"content": parsed}
-    if isinstance(record, dict):
-        return record
-    return None
+    return record
 
 
 __all__: List[str] = [
