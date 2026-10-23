@@ -1,0 +1,77 @@
+name: Release
+
+# Publish agent-framework to PyPI on a v* tag push.  Publishing uses
+# OIDC trusted publishing (no API token to store): the workflow must be
+# registered as a trusted publisher for "agent-framework" on PyPI.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  id-token: write   # required for PyPI trusted publishing
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
+        run: python -m pip install --upgrade pip build twine
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      - name: Validate distribution metadata
+        run: python -m twine check dist/*
+
+      - name: Assert every first-party package is inside the wheel
+        # Mirrors the CI package job; fails loudly if packages.find
+        # config regresses between CI and release.
+        run: |
+          python - <<'EOF'
+          import glob, zipfile, pathlib, sys
+          wheel = glob.glob("dist/*.whl")[0]
+          names = set(zipfile.ZipFile(wheel).namelist())
+          expected = set()
+          for pkg in pathlib.Path(".").iterdir():
+              if pkg.is_dir() and (pkg / "__init__.py").exists():
+                  expected.add(pkg.name)
+                  for init in pkg.rglob("__init__.py"):
+                      expected.add(".".join(init.parent.parts))
+          present = {"/".join(p.split(".")) for p in expected}
+          missing = sorted(p for p in expected if "/".join(p.split(".")) not in present)
+          leaks = [n for n in names if "mypy_cache" in n or "pytest_cache" in n]
+          if missing:
+              sys.exit(f"packages missing from wheel: {missing}")
+          if leaks:
+              sys.exit(f"build caches leaked into wheel: {leaks[:5]}")
+          print(f"wheel OK: {len(expected)} packages, no cache leaks")
+          EOF
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/*
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi   # gate: add this environment + trusted publisher on PyPI
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
