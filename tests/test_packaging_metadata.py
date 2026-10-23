@@ -16,9 +16,12 @@ hard import fails the suite instead of the user's install.
 from __future__ import annotations
 
 import ast
+from fnmatch import fnmatch
 import re
+import subprocess
 import sys
 import tomllib
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -27,6 +30,9 @@ ROOT = Path(__file__).resolve().parents[1]
 PYPROJECT = ROOT / "pyproject.toml"
 REQUIREMENTS = ROOT / "requirements.txt"
 README = ROOT / "README.md"
+
+# Top-level packages that are deliberately not shipped in the wheel.
+_NON_DISTRIBUTION_PACKAGES: set[str] = set()
 
 # Distribution name -> import name, for the pairs that are not identical.
 _DIST_TO_IMPORT = {
@@ -210,3 +216,93 @@ def test_every_hard_import_is_declared(pyproject: dict) -> None:
         and not name.startswith("_")
     )
     assert undeclared == [], f"imported but undeclared in pyproject: {undeclared}"
+
+
+def _fnmatch(name: str, pattern: str) -> bool:
+    """setuptools' own matching rule for packages.find include/exclude."""
+    return fnmatch(name, pattern)
+
+
+def test_packages_find_covers_every_importable_package(pyproject: dict) -> None:
+    """Every first-party top-level package must be in the wheel.
+
+    Regression: ``[tool.setuptools.packages.find]`` listed only
+    ``agent_core*``, so ``pip install agent-framework`` built a wheel that
+    silently dropped ``harnessfix``, ``fixcommand``, ``performance_dashboard``
+    and ``benchmarks`` - all importable packages (they have ``__init__.py``)
+    that CI itself lints.  A consumer installing the wheel got
+    ``ModuleNotFoundError`` for every non-agent_core entry point.
+    """
+    find = pyproject["tool"]["setuptools"]["packages"]["find"]
+    include = list(find["include"])
+    exclude = list(find.get("exclude", []))
+
+    local_packages = {
+        p.name
+        for p in ROOT.iterdir()
+        if p.is_dir()
+        and (p / "__init__.py").exists()
+        and p.name not in _NON_DISTRIBUTION_PACKAGES
+    }
+    assert local_packages, "no top-level packages found - fixture is broken"
+
+    shipped = {
+        name
+        for name in local_packages
+        if any(_fnmatch(name, pat) for pat in include)
+        and not any(_fnmatch(name, pat) for pat in exclude)
+    }
+    dropped = local_packages - shipped
+    assert dropped == set(), (
+        f"packages importable from the repo but excluded from the wheel: "
+        f"{sorted(dropped)}; include={include}"
+    )
+
+
+def test_wheel_contains_every_subpackage(tmp_path: Path) -> None:
+    """The built wheel must contain every subpackage, not just top levels.
+
+    ``packages.find`` include patterns are prefix globs: ``harnessfix*``
+    matches ``harnessfix.repairs`` only if the find config is honoured. This
+    builds a real wheel and inspects it, so a config regression (a dropped
+    include entry, an over-broad exclude) fails here, not for the consumer.
+    """
+    wheel_dir = tmp_path / "wheel"
+    result = subprocess.run(
+        [sys.executable, "-m", "pip", "wheel", str(ROOT), "--no-deps",
+         "--no-build-isolation", "-w", str(wheel_dir)],
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert result.returncode == 0, f"pip wheel failed:\n{result.stderr[-2000:]}"
+
+    wheels = list(wheel_dir.glob("*.whl"))
+    assert wheels, "no wheel produced"
+    with zipfile.ZipFile(wheels[0]) as archive:
+        names = archive.namelist()
+
+    def top_and_sub_packages() -> set[str]:
+        found: set[str] = set()
+        for pkg in ROOT.iterdir():
+            if not (pkg.is_dir() and (pkg / "__init__.py").exists()):
+                continue
+            if pkg.name in _NON_DISTRIBUTION_PACKAGES:
+                continue
+            found.add(pkg.name)
+            for sub in pkg.rglob("__init__.py"):
+                rel = sub.parent.relative_to(ROOT)
+                found.add(".".join(rel.parts))
+        return found
+
+    expected = top_and_sub_packages()
+    present = {
+        ".".join(n.split("/")[:-1])
+        for n in names
+        if n.endswith("__init__.py") and not n.startswith("..")
+    }
+    missing = {p for p in expected if p not in present}
+    assert missing == set(), f"packages missing from the wheel: {sorted(missing)}"
+
+    leaks = [n for n in names if ".mypy_cache" in n or ".pytest_cache" in n]
+    assert leaks == [], f"build caches leaked into the wheel: {leaks[:5]}"

@@ -91,8 +91,18 @@ Homepage = "https://github.com/holgerkpedersen/Agent1"
 Repository = "https://github.com/holgerkpedersen/Agent1"
 
 [tool.setuptools.packages.find]
-include = ["agent_core*"]
-exclude = ["tests*"]
+# Regression: this listed only "agent_core*", so `pip install agent-framework`
+# shipped a wheel that silently dropped harnessfix, fixcommand and
+# performance_dashboard (all of them are importable packages and CI lints them).
+# Every directory with an __init__.py is included; caches are excluded.
+include = [
+    "agent_core*",
+    "harnessfix*",
+    "fixcommand*",
+    "performance_dashboard*",
+    "benchmarks*",
+]
+exclude = ["tests*", "docs*", "scripts*", "*.mypy_cache*", "*.pytest_cache*", "*.ruff_cache*"]
 
 [tool.mypy]
 strict = true
