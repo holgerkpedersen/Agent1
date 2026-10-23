@@ -38,18 +38,14 @@ jobs:
           wheel = glob.glob("dist/*.whl")[0]
           names = set(zipfile.ZipFile(wheel).namelist())
           expected = set()
-          for pkg in pathlib.Path(".").iterdir():
-              if pkg.is_dir() and (pkg / "__init__.py").exists():
-                  expected.add(pkg.name)
-                  for init in pkg.rglob("__init__.py"):
-                      expected.add(".".join(init.parent.parts))
-          # Wheel paths use "/" separators; normalise dotted names to match.
-          present = {
-              "/".join(p.split("."))
-              for p in expected
-          }
-          missing = sorted(p for p in expected if "/".join(p.split(".")) not in present)
-          leaks = [n for n in names if "mypy_cache" in n or "pytest_cache" in n]
+          for init in pathlib.Path(".").rglob("__init__.py"):
+              parts = init.parent.parts
+              if parts and parts[0] not in (".git", "build", "dist") and parts[0] != "tests":
+                  expected.add(".".join(parts))
+          missing = sorted(p for p in expected
+                           if f"{p.replace('.', '/')}/__init__.py" not in names)
+          leaks = [n for n in names
+                   if "mypy_cache" in n or "pytest_cache" in n or "ruff_cache" in n]
           if missing:
               sys.exit(f"packages missing from wheel: {missing}")
           if leaks:
