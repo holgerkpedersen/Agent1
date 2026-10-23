@@ -94,11 +94,13 @@ jobs:
           ruff check agent_core harnessfix fixcommand tests
           performance_dashboard --select F821
 
-      - name: Ruff (full lint, advisory)
+      - name: Ruff (full lint — blocking)
+        # Verified clean locally: `ruff check agent_core harnessfix fixcommand
+        # tests performance_dashboard` -> All checks passed! CI must enforce
+        # the same rules the pre-commit hook enforces locally.
         run: >
           ruff check agent_core harnessfix fixcommand tests
           performance_dashboard
-        continue-on-error: true
 
       - name: mypy (strict, advisory — tighten once errors are cleaned up)
         run: mypy agent_core --strict
