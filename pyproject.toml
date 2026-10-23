@@ -7,14 +7,12 @@ name = "agent-framework"
 version = "0.1.0"
 description = "Consolidated agent framework with unified command system, LLM client, and vector memory."
 readme = { content-type = "text/markdown", text = "Agent Framework - a modular agent orchestration library." }
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 license = { text = "MIT" }
 authors = [{ name = "Agent Framework Team" }]
 keywords = ["agent", "llm", "framework", "automation"]
 classifiers = [
     "Development Status :: 3 - Alpha",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
@@ -41,6 +39,25 @@ secrets = [
     "cryptography>=41.0",
     "keyring>=24.0",
 ]
+# HTTP metrics API.  performance_dashboard/api/endpoints.py imports flask and
+# marshmallow at module top level, so importing that module without this extra
+# raises ModuleNotFoundError.
+dashboard-api = [
+    "flask>=2.0",
+    "marshmallow>=3.0",
+]
+# Metrics storage backends.  performance_dashboard/storage/metrics_store.py
+# imports `redis.asyncio` at module top level (the RedisBackend and the
+# MetricsStore facade), so the store is unusable without this extra.
+dashboard-storage = [
+    "redis>=4.2",
+]
+# Optional semantic-embedding backend for HarnessFix
+# (AGENT_RAG_EMBEDDER=st).  harnessfix/embed.py imports it lazily and raises a
+# clear install instruction when missing, so it stays optional.
+rag-embeddings = [
+    "sentence-transformers>=2.2",
+]
 dev = [
     "mypy>=1.0",
     "pytest>=7.0",
@@ -61,11 +78,17 @@ dev = [
     # Optional at runtime (agent_core/subprocess_utils.py); the llama-server
     # integration tests use it for PID bookkeeping.
     "psutil>=5.9",
+    # The performance_dashboard API + metrics store are exercised by the test
+    # suite and are hard imports in their own modules (see the
+    # dashboard-api / dashboard-storage extras).
+    "flask>=2.0",
+    "marshmallow>=3.0",
+    "redis>=4.2",
 ]
 
 [project.urls]
-Homepage = "https://github.com/agent-framework/agent-framework"
-Repository = "https://github.com/agent-framework/agent-framework"
+Homepage = "https://github.com/holgerkpedersen/Agent1"
+Repository = "https://github.com/holgerkpedersen/Agent1"
 
 [tool.setuptools.packages.find]
 include = ["agent_core*"]
