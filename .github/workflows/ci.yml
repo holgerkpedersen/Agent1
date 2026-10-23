@@ -107,9 +107,11 @@ jobs:
         continue-on-error: true
 
       - name: Run test suite
+        # -p no:cacheprovider: keep .pytest_cache out of the workspace (the
+        # packaging tests inspect the wheel built from it).
         env:
           AGENT_NO_TRACE: "1"
-        run: pytest -q --no-cov
+        run: pytest -q --no-cov -p no:cacheprovider
 
       - name: Integration tests (skips if no llama-server)
         # Real-server integration tests need a llama-server binary. On GitHub
