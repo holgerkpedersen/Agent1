@@ -223,6 +223,63 @@ def reset_live_poll_cache() -> None:
     _LIVE_POLL_CACHE = None
 
 
+def _lmstudio_live_models() -> list[dict[str, Any]]:
+    """Poll LM Studio for its model list (deliberately NOT the process cache).
+
+    The persisted-model gate uses the LIVE list: a model installed after
+    process start must still be recognised, and a stale cache from a
+    previous session must never veto the persisted choice.  One poll per
+    gate evaluation, which only runs when the static catalog misses.
+    Raises when LM Studio is unreachable.
+    """
+    from agent_core.llm.lmstudio import get_models_status
+
+    return list(get_models_status())
+
+
+def _lmstudio_installation_known() -> bool:
+    """True when this process has evidence of LM Studio's installed models.
+
+    Evidence = a successful live poll, or the process-cached list from an
+    earlier successful poll.  False means LM Studio is unreachable AND no
+    list was ever polled (first run with LM Studio down): the caller then
+    falls back to the static catalog gate, because the bare persisted name
+    (the ONLY evidence of a model in that state) is exactly what the
+    ``model list`` auto-sync bug used to poison, and the live-poll fallback
+    / catalog default are the safe outcomes.
+    """
+    try:
+        return bool(_lmstudio_live_models())
+    except Exception:
+        return bool(_LIVE_POLL_CACHE)
+
+
+def _lmstudio_reports_model(name: str) -> bool:
+    """True when LM Studio has *name* installed (live, uncached poll).
+
+    Used by :func:`resolve_model` to honour a persisted LM Studio selection
+    that the static ``model_catalog.json`` does not know: the live model
+    list, not the catalog, is the authority on what the provider can serve.
+    When LM Studio is unreachable, the process-cached poll IS the
+    last-known installation list and is consulted instead — a persisted
+    model that was in that list must not be vetoed by a transient outage.
+    """
+    low = (name or "").strip().lower()
+    if not low:
+        return False
+    try:
+        models = _lmstudio_live_models()
+    except Exception as exc:
+        logger.warning("Live model poll failed for persisted-model check: %s", exc)
+        models = list(_LIVE_POLL_CACHE) if _LIVE_POLL_CACHE else []
+    for m in models:
+        key = str(m.get("key") or "").strip().lower()
+        disp = str(m.get("display_name") or "").strip().lower()
+        if key == low or disp == low:
+            return True
+    return False
+
+
 def resolve_model(explicit: str | None = None) -> str:
     """Return the best model name to use, checking sources in priority order.
 
@@ -238,7 +295,10 @@ def resolve_model(explicit: str | None = None) -> str:
     not silently re-target this session at startup — the session keeps its
     own chosen model and LMStudioProvider reloads it on demand when a
     request finds it missing from VRAM.  The live poll remains as a
-    first-run fallback when nothing is persisted yet.
+    first-run fallback when nothing is persisted yet.  For a persisted
+    lmstudio model the "keep it" test is: the model is in the static
+    catalog, OR LM Studio reports it installed (live poll) — so a
+    user-installed model that the catalog never listed is not forgotten.
     """
     if explicit:
         return explicit
@@ -280,9 +340,29 @@ def resolve_model(explicit: str | None = None) -> str:
     if persisted_model and provider != "lmstudio":
         return persisted_model
 
-    # Persisted choice wins over what another shell may have loaded since.
-    if persisted_model in KNOWN_MODELS:
-        return persisted_model
+    # A persisted LM Studio choice wins over what another shell may have
+    # loaded since — IF this installation can serve it: the live poll (or
+    # this process's last-known model list when LM Studio is unreachable)
+    # reports it installed, OR the static catalog lists it.  The gate is NOT
+    # ``KNOWN_MODELS`` alone: a model the operator has installed in LM Studio
+    # but never listed in ``model_catalog.json`` (e.g.
+    # ``qwen2.5-coder-1.5b-instruct``) used to fail the catalog-only gate,
+    # the live-poll fallback below then adopted whatever sat in VRAM, and
+    # the session forgot the last selection at every restart.  The gate
+    # exists to stop ``model list`` auto-sync leftovers and names that can
+    # no longer be served from persisting forever, so LM Studio's own model
+    # list is the authority when it answers; the static catalog decides only
+    # when LM Studio is unreachable and no list was ever polled.
+    lmstudio_gate_failed = False
+    if persisted_model and provider == "lmstudio":
+        _evidence = _lmstudio_installation_known()
+        keep = (
+            _evidence and _lmstudio_reports_model(persisted_model)
+            or persisted_model in KNOWN_MODELS
+        )
+        if keep:
+            return persisted_model
+        lmstudio_gate_failed = True
 
     # First-run fallback: nothing usable persisted — adopt whatever LM
     # Studio currently has loaded (if anything).
@@ -317,7 +397,14 @@ def resolve_model(explicit: str | None = None) -> str:
     except Exception as exc:
         logger.warning("Could not determine the active LM Studio model: %s", exc)
 
-    if persisted_model:
+    if persisted_model and not lmstudio_gate_failed:
+        # Last-resort adoption of the persisted name: only when the live
+        # poll found nothing loadable AND the lmstudio gate above never
+        # ran (nothing persisted as lmstudio, e.g. a provider-less model.json
+        # with no routable prefix).  A name the lmstudio gate explicitly
+        # REJECTED (LM Studio unreachable, no evidence, catalog miss) must
+        # NOT be adopted — it may be a ``model list`` auto-sync leftover the
+        # provider cannot serve; fall through to the catalog default.
         return persisted_model
 
     return DEFAULT_MODEL

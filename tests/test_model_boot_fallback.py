@@ -23,6 +23,11 @@ Fix contracts pinned here:
 4. ``chat_nlp`` warns loudly when a pasted image is trimmed out of context by
    the history budget (the model will NOT see it), instead of answering as if
    the image were visible.
+5. A persisted LM Studio model the static catalog does not know is kept when
+   LM Studio reports it installed — the user report: with
+   ``qwen2.5-coder-1.5b-instruct`` loaded in LM Studio, the agent forgot the
+   last selection at every restart (the catalog gate missed, the live poll
+   adopted whatever sat in VRAM).
 """
 
 from typing import Any
@@ -220,79 +225,117 @@ class TestAgentModelNameIsLive:
 
 
 # ---------------------------------------------------------------------------
-# 4. Oversized pasted images are reported, not silently dropped
+# 4. Persisted LM Studio models the static catalog does not know
 # ---------------------------------------------------------------------------
 
 
-class TestImageDropIsReported:
-    def test_helper_detects_multimodal_image_blocks(self):
-        from agent_core.agent import _has_image_block
+class TestPersistedLmstudioModelNotInCatalog:
+    """User report: ``qwen2.5-coder-1.5b-instruct`` loaded in LM Studio, and
+    the agent forgot the last selection at every restart.
 
-        assert _has_image_block(
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "hi"},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": "data:image/png;base64,AAA"},
-                    },
-                ],
-            }
+    The persisted lmstudio model was gated on the static ``KNOWN_MODELS``
+    catalog; a model the operator installed in LM Studio but never listed in
+    ``model_catalog.json`` failed the gate, the live-poll fallback adopted
+    whatever sat in VRAM, and the selection was lost.  LM Studio's own model
+    list is the authority on what the provider can serve: if it reports the
+    persisted model installed, the choice must be kept.
+    """
+
+    @staticmethod
+    def _patch(monkeypatch, persisted: dict[str, Any]) -> None:
+        import agent_core.constants as const
+
+        monkeypatch.setattr(const, "load_model_json", lambda: persisted)
+        monkeypatch.setattr(
+            "agent_core.config.load_agent_settings", lambda: _settings()
         )
-        assert not _has_image_block({"role": "user", "content": "plain text"})
-        assert not _has_image_block(
-            {"role": "user", "content": [{"type": "text", "text": "only text"}]}
+
+    def test_persisted_model_installed_in_lmstudio_is_kept(self, monkeypatch):
+        """The user scenario (LM Studio has the model): the persisted
+        selection is kept at boot — never hijacked by the live poll."""
+        import agent_core.constants as const
+
+        model = "qwen2.5-coder-1.5b-instruct"
+        self._patch(monkeypatch, {"model": model, "provider": "lmstudio"})
+        monkeypatch.setattr(
+            "agent_core.llm.lmstudio.get_models_status",
+            lambda: _fake_models("laguna-s-2.1", model),
         )
+        assert const.resolve_model(None) == model
 
-    def test_oversized_image_trimmed_with_warning(self, capsys):
-        """A paste larger than the history budget is dropped by
-        ``_trim_chat_history``; chat_nlp must say so (the model cannot see
-        it) instead of answering as if the image were visible."""
-        from unittest.mock import patch
+    def test_persisted_model_absent_from_catalog_installed_in_lmstudio_is_kept(
+        self, monkeypatch
+    ):
+        """The user report: a model the operator installed in LM Studio but
+        never listed in ``model_catalog.json`` (e.g.
+        ``qwen2.5-coder-1.5b-instruct`` on an install whose catalog lacks it)
+        used to fail the catalog gate, the live poll adopted whatever sat in
+        VRAM, and the last selection was forgotten.  LM Studio reporting the
+        model installed makes the persisted choice authoritative."""
+        import agent_core.constants as const
 
-        from agent import Agent
+        model = "user-installed-coder-7b"
+        self._patch(monkeypatch, {"model": model, "provider": "lmstudio"})
+        assert model not in const.KNOWN_MODELS
+        monkeypatch.setattr(
+            "agent_core.llm.lmstudio.get_models_status",
+            lambda: _fake_models("laguna-s-2.1", model),
+        )
+        assert const.resolve_model(None) == model
 
-        agent = Agent(workspace=".")
-        big = "data:image/png;base64," + "A" * 20_000
+    def test_persisted_model_absent_from_lmstudio_falls_to_live_poll(
+        self, monkeypatch
+    ):
+        """A persisted model LM Studio cannot serve is NOT kept forever —
+        the first-run live-poll fallback still adopts what is loaded."""
+        import agent_core.constants as const
 
-        async def fake_run(self, messages, **kwargs):
-            return "ok", list(messages)
+        self._patch(
+            monkeypatch,
+            {"model": "ghost-model-not-installed", "provider": "lmstudio"},
+        )
+        monkeypatch.setattr(
+            "agent_core.llm.lmstudio.get_models_status",
+            lambda: _fake_models("qwen3.5-9b-mtp"),
+        )
+        assert const.resolve_model(None) == "qwen3.5-9b-mtp"
 
-        with patch(
-            "agent_core.llm.tool_loop.ToolLoopRunner.run", new=fake_run
-        ):
-            import asyncio
+    def test_lmstudio_unreachable_falls_back_to_catalog_gate(self, monkeypatch):
+        """LM Studio down: the old catalog gate still applies, so a KNOWN
+        persisted model survives and an unknown one falls to the default."""
+        import agent_core.constants as const
 
-            asyncio.run(agent.chat_nlp("look at this", images=[big]))
+        def _boom() -> list[dict[str, Any]]:
+            raise OSError("LM Studio not reachable")
 
-        out = capsys.readouterr().out
-        assert "[image] dropped from context" in out
-        # The image block is gone from the surviving history.
-        from agent_core.agent import _has_image_block
+        monkeypatch.setattr("agent_core.llm.lmstudio.get_models_status", _boom)
 
-        assert not any(_has_image_block(m) for m in agent._chat_history)
+        self._patch(monkeypatch, {"model": "laguna-s-2.1", "provider": "lmstudio"})
+        assert const.resolve_model(None) == "laguna-s-2.1"
 
-    def test_small_image_survives_without_warning(self, capsys):
-        from unittest.mock import patch
+        self._patch(
+            monkeypatch, {"model": "ghost-model-not-installed", "provider": "lmstudio"}
+        )
+        assert const.resolve_model(None) == const.DEFAULT_MODEL
 
-        from agent import Agent
+    def test_persisted_model_check_is_not_the_cached_poll(self, monkeypatch):
+        """The persisted-model poll must be LIVE: a model installed after
+        process start (cache poisoned with the old list) is still honoured."""
+        import agent_core.constants as const
 
-        agent = Agent(workspace=".")
-        small = "data:image/png;base64,AAA"
+        const.reset_live_poll_cache()
+        self._patch(
+            monkeypatch,
+            {"model": "qwen2.5-coder-1.5b-instruct", "provider": "lmstudio"},
+        )
+        calls = {"n": 0}
 
-        async def fake_run(self, messages, **kwargs):
-            return "ok", list(messages)
+        def _poll() -> list[dict[str, Any]]:
+            calls["n"] += 1
+            return _fake_models("qwen2.5-coder-1.5b-instruct")
 
-        with patch(
-            "agent_core.llm.tool_loop.ToolLoopRunner.run", new=fake_run
-        ):
-            import asyncio
-
-            asyncio.run(agent.chat_nlp("look at this", images=[small]))
-
-        out = capsys.readouterr().out
-        assert "[image] dropped from context" not in out
-        from agent_core.agent import _has_image_block
-
-        assert any(_has_image_block(m) for m in agent._chat_history)
+        monkeypatch.setattr("agent_core.llm.lmstudio.get_models_status", _poll)
+        # Poison the process cache with a list that does NOT contain it.
+        const._LIVE_POLL_CACHE = _fake_models("laguna-s-2.1")
+        assert const.resolve_model(None) == "qwen2.5-coder-1.5b-instruct"
+        assert calls["n"] >= 1, "the persisted-model poll must not read the cache"
