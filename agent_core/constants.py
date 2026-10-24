@@ -254,10 +254,14 @@ def resolve_model(explicit: str | None = None) -> str:
         settings = load_agent_settings()
         provider_setting = settings.llm_provider
         opencode_model = settings.opencode_model
+        # getattr: partial settings stubs (older tests) may lack jev_model;
+        # an AttributeError here would wrongly reset provider_setting too.
+        jev_setting = str(getattr(settings, "jev_model", "") or "")
     except Exception as exc:
         logger.warning("Failed to load agent settings, using defaults: %s", exc)
         provider_setting = "lmstudio"
         opencode_model = DEFAULT_OPENCODE_MODEL
+        jev_setting = ""
 
     provider = provider_for(persisted_model, provider_setting, persisted_provider)
     if provider == "opencode":
@@ -266,9 +270,14 @@ def resolve_model(explicit: str | None = None) -> str:
             if persisted_model.startswith("opencode")
             else opencode_model
         )
-    if provider == "lemonade" and persisted_model.startswith("lemonade/"):
-        # Lemonade/NPU ids are agent-namespaced; the persisted choice is
-        # authoritative (there is no LM Studio-style live poll for it).
+
+    # Persisted choice for a NON-lmstudio provider (llama/, lemonade/,
+    # openrouter/, opencode-zen/ ...) is authoritative.  ``KNOWN_MODELS`` is
+    # an LM-Studio-era shortlist and must not silently discard it: on
+    # 2026-10-24 a persisted ``llama/swift-1.5-iq3_s`` failed this gate, the
+    # live poll then adopted the loaded JEV decision model (a 1.5B non-agent
+    # model) as the chat model, and the session lost tool calling entirely.
+    if persisted_model and provider != "lmstudio":
         return persisted_model
 
     # Persisted choice wins over what another shell may have loaded since.
@@ -287,11 +296,22 @@ def resolve_model(explicit: str | None = None) -> str:
     # and the poll is only a *first-run* fallback anyway.  ``model`` (the
     # REPL switch) and LMStudioProvider's own reload path do not go through
     # here, so an explicit switch still takes effect immediately.
+    #
+    # The dedicated Jev decision model is NEVER eligible: it is a tiny
+    # non-agent model (terse yesno/choice answers) that cannot drive the
+    # tool loop.  Because the Jev engine loads it into LM Studio on demand,
+    # the live poll would otherwise keep adopting it after every restart.
+    jev_key = (jev_setting or DEFAULT_JEV_MODEL).split("/")[-1].strip().lower()
     try:
         from agent_core.llm.lmstudio import get_models_status
 
         models = _live_loaded_models(get_models_status)
-        loaded = [m["key"] for m in models if m["loaded"]]
+        loaded = [
+            str(m["key"])
+            for m in models
+            if m["loaded"]
+            and str(m["key"]).split("/")[-1].strip().lower() != jev_key
+        ]
         if loaded:
             return str(loaded[0])
     except Exception as exc:

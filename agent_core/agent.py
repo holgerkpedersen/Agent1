@@ -405,10 +405,38 @@ def _repair_tool_arguments(args_str: str) -> dict[str, Any]:
 NlpToolHandler = Callable[..., Awaitable[str]]
 
 
+def _has_image_block(message: dict[str, Any]) -> bool:
+    """True when *message* carries a multimodal ``image_url`` content block."""
+    content = message.get("content")
+    if not isinstance(content, list):
+        return False
+    return any(isinstance(b, dict) and b.get("type") == "image_url" for b in content)
+
+
 class AgentCore:
     """Main agent class with workspace management and tool execution."""
 
     DEFAULT_WORKSPACE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    @property
+    def model_name(self) -> str:
+        """Live chat model name.
+
+        Delegates to ``self.llm.model_name`` whenever the client exists, so a
+        mid-session ``model`` switch is visible to traces and callers.  The
+        boot-time value alone made traces blame the wrong model on 2026-10-24
+        (the session ran on a switched provider while every trace still named
+        the model adopted at startup).
+        """
+        llm = getattr(self, "llm", None)
+        live = getattr(llm, "model_name", None) if llm is not None else None
+        if live:
+            return str(live)
+        return str(getattr(self, "_model_name_boot", ""))
+
+    @model_name.setter
+    def model_name(self, value: str) -> None:
+        self._model_name_boot = value
 
     def __init__(self, workspace: str | None = None, model_name: str | None = None):
         self.workspace = os.path.abspath(
@@ -1098,6 +1126,15 @@ class AgentCore:
             logger.debug("Profile suggestion failed (no-op)", exc_info=True)
         self._append_user_turn(user_input, images)
         self._chat_history = _trim_chat_history(self._chat_history, self._original_goal)
+        if images and not any(_has_image_block(m) for m in self._chat_history):
+            print(
+                yellow(
+                    "  [image] dropped from context: the paste is larger than"
+                    " the history budget, so the model will NOT see it. Use a"
+                    " smaller crop, or 'analyze <image-file>' on the saved"
+                    " file instead."
+                )
+            )
         history_snapshot = list(self._chat_history)
         final_text, final_messages, llm_error, loop = (
             "",
