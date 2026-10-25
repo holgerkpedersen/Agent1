@@ -860,5 +860,15 @@ def run_agentic_gate(
     return round(sum(r.score for r in results) / len(results), 2)
 
 
+def cli() -> None:
+    """Synchronous console-script entry point (``[project.scripts] agent-bench``).
+
+    ``setuptools`` console scripts call a plain callable; :func:`main` is a
+    coroutine taking parsed args, so this wrapper owns the event loop exactly
+    like the ``__main__`` guard below does.
+    """
+    asyncio.run(main(parse_args(sys.argv[1:])))
+
+
 if __name__ == "__main__":
     asyncio.run(main(parse_args(sys.argv[1:])))

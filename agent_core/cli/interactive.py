@@ -430,3 +430,18 @@ async def main() -> None:
     if "--dashboard" in sys.argv:
         mod.start_dashboard_thread(mod._dashboard_port())
     await mod.run_interactive()
+
+
+def cli() -> None:
+    """Synchronous console-script entry point (``[project.scripts] agent``).
+
+    ``setuptools`` console scripts call a plain callable; :func:`main` is a
+    coroutine, so this wrapper owns the event loop exactly like the
+    ``python agent.py`` shim does (KeyboardInterrupt -> clean exit).
+    """
+    import asyncio
+
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nInterrupted.")

@@ -1917,6 +1917,33 @@ def _evidence_from_proof(prev_result: str) -> str:
     return summary
 
 
+def _run_purpose(command: str) -> str:
+    """Natural-language purpose of a shell command, or ``''`` when unrecognized.
+
+    INTENT mode's ``why:`` line should say *what* the agent is trying to
+    accomplish, not merely re-print the raw command.  Detect common command
+    families and describe them in plain language; fall back to ``''`` so the
+    generic ``to execute/verify <command>`` form is used for the rest.
+    """
+    c = command.strip()
+    low = c.lower()
+    if "pytest" in low:
+        if "--lf" in low or "last-failure" in low:
+            return "to re-run the failing tests and verify the fix"
+        return "to run the test suite and verify behavior"
+    if "ruff check" in low:
+        return "to lint the changed files"
+    if low.startswith("git status"):
+        return "to inspect the working tree status"
+    if low.startswith("git diff"):
+        return "to review pending changes"
+    if low.startswith("git log"):
+        return "to review recent commit history"
+    if low.startswith("python -m pytest"):
+        return "to run pytest and verify behavior"
+    return ""
+
+
 def _why_base(tool_name: str, args: dict[str, Any]) -> str:
     """The bare tool-name/argument verb phrase, with no evidence appended."""
     arg_summary = _fmt_args(args) or ""
@@ -1936,7 +1963,11 @@ def _why_base(tool_name: str, args: dict[str, Any]) -> str:
         path = str(args.get("path", ""))[:60]
         return f"to patch {path}"
     if tool_name in ("run", "git", "tests"):
-        target = arg_summary or "(command)"
+        cmd = str(args.get("command", "") or args.get("cmd", "") or "")
+        purpose = _run_purpose(cmd)
+        if purpose:
+            return purpose
+        target = cmd or arg_summary or "(command)"
         return f"to execute/verify {target}"
     if tool_name == "diff":
         file1 = str(args.get("file1", ""))[:60]

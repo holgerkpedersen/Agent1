@@ -6,7 +6,9 @@ build-backend = "setuptools.build_meta"
 name = "agent-framework"
 version = "0.1.0"
 description = "Consolidated agent framework with unified command system, LLM client, and vector memory."
-readme = { content-type = "text/markdown", text = "Agent Framework - a modular agent orchestration library." }
+# Point at the real README.md; the previous inline one-line stub shipped as
+# the package description, so the root README never reached distribution metadata.
+readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
 authors = [{ name = "Agent Framework Team" }]
@@ -90,6 +92,15 @@ dev = [
 Homepage = "https://github.com/holgerkpedersen/Agent1"
 Repository = "https://github.com/holgerkpedersen/Agent1"
 
+[project.scripts]
+# The package was installable but shipped no console commands; these map the
+# repo-root entry scripts to import callables so `pip install` yields real
+# CLIs.  The kanban one-off scripts are intentionally NOT entry points: they
+# hard-code a machine-local queue path (C:\Dev\Kanban\...).
+agent = "agent_core.cli.interactive:cli"
+agent-dashboard = "agent_dashboard:main"
+agent-bench = "agentic_bench:cli"
+
 [tool.setuptools.packages.find]
 # Regression: this listed only "agent_core*", so `pip install agent-framework`
 # shipped a wheel that silently dropped harnessfix, fixcommand and
@@ -156,7 +167,21 @@ ignore = ["E741"]
 "**/__init__.py" = ["F401"]
 
 [tool.coverage.run]
-source = ["agent_core"]
+# All packaged code must report coverage, not just agent_core: the wheel
+# ships harnessfix, fixcommand, performance_dashboard and benchmarks too,
+# and the root entry scripts are exercised by tests/test_root_entry_scripts.py.
+source = [
+    "agent_core",
+    "harnessfix",
+    "fixcommand",
+    "performance_dashboard",
+    "benchmarks",
+    "agent_dashboard",
+    "agentic_bench",
+]
+# interactive.py starts the REPL at import time (module-level side effects
+# via the agent shim), so it cannot be measured by import-time coverage.
+omit = ["*/tests/*", "*/__main__.py", "agent_core/cli/interactive.py"]
 # Branch coverage is off: pytest-testmon refuses to run with pytest-cov when
 # it is on (testmon_core.setup_coverage raises TestmonException).
 branch = false
