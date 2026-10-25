@@ -636,9 +636,12 @@ class TestDeadLettering:
 
         dead = list((tmp_path / "dead-letter").glob("seq_*.jsonl"))
         assert len(dead) == 1, f"expected one dead-letter file, got {dead}"
-        assert (
-            json.loads(dead[0].read_text(encoding="utf-8").splitlines()[0])["seq"] == 1
-        )
+        # Each retry re-queues the message as a NEW line with a fresh seq, so
+        # the dead-lettered record is the last copy: its seq names its own
+        # position (the file is named after it) and retry_count hit the limit.
+        record = json.loads(dead[0].read_text(encoding="utf-8").splitlines()[0])
+        assert record["seq"] == int(dead[0].stem.split("_")[1])
+        assert record["retry_count"] == kb.MAX_RETRIES
 
     def test_poison_message_does_not_block_following_good_message(
         self, tmp_path, monkeypatch

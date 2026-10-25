@@ -140,29 +140,57 @@ def active_board_allows_agent1(working_dir: str | Path | None = None) -> bool:
     return bool(sync_map.get("agent1"))
 
 
+#: Default queue root: the sibling Kanban checkout's ``data/`` directory (the
+#: two repos live side by side under a common parent).
+DEFAULT_WORKING_DIR = str(REPO_ROOT.parent / "Kanban" / "data")
+
+
+def resolve_working_dir() -> str:
+    """Queue root: process env, else the repo ``.env``, else the sibling checkout.
+
+    ``.env.example`` documents ``KANBAN_WORKING_DIR`` as an ``.env`` setting,
+    and nothing in this repo bridges ``.env`` into ``os.environ`` — so an
+    ``os.environ``-only read made the documented setting silently dead.  The
+    master switch already resolved it this way (see :func:`sync_enabled`); the
+    queue root must too, because the operator who sets it in ``.env`` and
+    turns sync on gets a bridge pointed at a directory the Kanban app never
+    writes to: messages pile up in two disjoint trees and nothing syncs.
+    """
+    value = os.environ.get("KANBAN_WORKING_DIR")
+    if value is None:
+        value = _read_env_file_value("KANBAN_WORKING_DIR")
+    return (value or "").strip() or DEFAULT_WORKING_DIR
+
+
+def _data_dir() -> Path:
+    """The queue root as a Path, from the ``.env``-aware resolver."""
+    return Path(resolve_working_dir())
+
+
+def reload_queue_paths() -> None:
+    """Recompute the queue-root globals from :func:`resolve_working_dir`.
+
+    The paths are module constants because the Kanban app and this repo must
+    agree on one physical directory, and callers reference them as globals at
+    call time.  Recomputing them keeps those constants (tests patch them)
+    while making their VALUE respect the ``.env`` setting.
+    """
+    global DATA_DIR, CARD_ID_MAP_PATH, QUEUE_AGENT1_TO_KANBAN, QUEUE_KANBAN_TO_AGENT1
+
+    DATA_DIR = _data_dir()
+    CARD_ID_MAP_PATH = DATA_DIR / ".card_id_map.json"
+    # Names describe the DIRECTION of travel, not the side that owns the file.
+    # The original "in"/"out" naming was a defect in itself: "queue-kanban-out"
+    # meant Agent1→Kanban on this side but Kanban→Agent1 on the other, so even
+    # with a shared root the two sides read and wrote different queues.
+    QUEUE_AGENT1_TO_KANBAN = DATA_DIR / "queue-agent1-to-kanban"  # Agent1 writes
+    QUEUE_KANBAN_TO_AGENT1 = DATA_DIR / "queue-kanban-to-agent1"  # Agent1 reads
+
+
 # The queue root is SHARED with the Kanban app.  Both sides must resolve the
 # same physical directory or messages pile up in two disjoint trees that never
-# meet.  ``KANBAN_WORKING_DIR`` is the single source of truth; the default is
-# the sibling Kanban checkout's data/ directory (the two repos live side by
-# side under a common parent).
-KANBAN_WORKING_DIR = os.environ.get(
-    "KANBAN_WORKING_DIR", str(REPO_ROOT.parent / "Kanban" / "data")
-)
-DATA_DIR = Path(KANBAN_WORKING_DIR)
-CARD_ID_MAP_PATH = DATA_DIR / ".card_id_map.json"
-
-# --- Queue paths ---------------------------------------------------------------
-# Names describe the DIRECTION of travel, not the side that owns the file.
-# The original "in"/"out" naming was a defect in itself: "queue-kanban-out"
-# meant Agent1→Kanban on this side but Kanban→Agent1 on the other, so even with
-# a shared root the two sides read and wrote different queues.
-
-QUEUE_AGENT1_TO_KANBAN = (
-    DATA_DIR / "queue-agent1-to-kanban"
-)  # Agent1 writes, Kanban reads
-QUEUE_KANBAN_TO_AGENT1 = (
-    DATA_DIR / "queue-kanban-to-agent1"
-)  # Kanban writes, Agent1 reads
+# meet.  ``KANBAN_WORKING_DIR`` is the single source of truth.
+reload_queue_paths()
 
 # A message that fails this many times is moved to <queue_dir>/dead_letters/.
 # Patchable at module level so tests can redirect the dead-letter directory.
@@ -188,6 +216,22 @@ def _read_int(path: Path) -> int:
         return int(path.read_text(encoding="utf-8").strip())
     except (ValueError, OSError):
         return 0
+
+
+def _next_seq(queue_dir: Path) -> int:
+    """Next sequence number for a line appended to ``messages.jsonl``.
+
+    ``seq`` is the line's 1-based position.  ``seq.txt`` is only a cache: when
+    it is missing or stale (e.g. a queue written by an older build or a
+    hand-edit) the line count is the truth, so take the larger of the two.
+    Must be called under the per-queue lock.
+    """
+    msg_file = queue_dir / "messages.jsonl"
+    lines = 0
+    if msg_file.exists():
+        with open(msg_file, "r", encoding="utf-8", errors="replace") as f:
+            lines = sum(1 for line in f if line.strip())
+    return max(_read_int(queue_dir / "seq.txt"), lines) + 1
 
 
 def _lock_for(queue_dir: Path) -> threading.Lock:
@@ -226,7 +270,7 @@ def enqueue(message: dict[str, Any], queue_dir: Path | None = None) -> int:
         # cursor past the line it had just written, so no message was ever
         # delivered.  Read and update both happen under the per-queue lock, so
         # concurrent enqueue() calls stay serialized without deadlock.
-        seq = _read_int(queue_dir / "seq.txt") + 1
+        seq = _next_seq(queue_dir)
         message["seq"] = seq
         message.setdefault("retry_count", 0)
         message.setdefault("processed", False)
@@ -320,7 +364,18 @@ def issue_to_card_data(issue: dict[str, Any]) -> dict[str, Any]:
 
 
 def card_to_issue_data(card: dict[str, Any]) -> dict[str, Any]:
-    """Convert a Kanban card dict into Agent1 issue payload data."""
+    """Convert a Kanban card dict into Agent1 issue payload data.
+
+    ``status`` is ``None`` when the card carries no ``[status:...]`` tag.  The
+    Kanban side builds these payloads from ``Card.to_dict()``
+    (``Kanban/src/agent1/models.py``), which has NO status field, so a
+    status-less card is the NORMAL case, not an edge case.  Defaulting it to
+    ``"open"`` (the old behaviour) made every card edit rewrite the issue
+    status to open — a resolved issue reopened the moment someone retitled
+    its card.  Callers that want a status for a NEW record use
+    ``data.get("status") or "open"``; callers updating an existing record must
+    treat ``None`` as "no status supplied" and leave the field alone.
+    """
     # Split card text back into evidence and suggested_approach
     text = card.get("text", "")
     evidence = ""
@@ -329,10 +384,10 @@ def card_to_issue_data(card: dict[str, Any]) -> dict[str, Any]:
         evidence, _, suggested_approach = text.partition("\n\n---\n")
         suggested_approach = suggested_approach.lstrip()
 
-    # Parse tags for category and severity
+    # Parse tags for category, severity and (optionally) status
     category = "general"
     severity = "low"
-    status = "open"
+    status: str | None = None
     for tag in card.get("tags", []):
         if tag.startswith("[severity:"):
             severity = tag[len("[severity:") : -1]
@@ -436,10 +491,22 @@ def _apply_card_update(payload: dict[str, Any]) -> bool:
         existing["suggested_approach"] = data["suggested_approach"]
         updated = True
 
-    # Update tags as status indicator
-    new_status = data.get("status", "")
-    if new_status:
+    # Status travels as a `[status:...]` tag.  A card WITHOUT that tag supplies
+    # no status at all (Kanban's Card.to_dict() has no status field), so it
+    # must leave the issue status alone: applying the old "open" default on
+    # every edit reopened resolved issues.  Column moves are the Kanban
+    # side's status signal, and they arrive as card_move.
+    new_status = data.get("status")
+    if new_status and new_status != existing.get("status"):
+        old_status = existing.get("status", "")
         existing["status"] = new_status
+        # Mirror _apply_card_move: resolving must stamp resolved_at exactly
+        # once, so a re-resolve never moves the original stamp.
+        if (
+            new_status in ("resolved", "wontfix")
+            and old_status not in ("resolved", "wontfix")
+        ):
+            existing["resolved_at"] = issue_store._now()
         updated = True
 
     if updated:
@@ -581,14 +648,34 @@ def _quarantine_malformed(queue_dir: Path, idx: int, line: str, exc: Exception) 
         )
 
 
+def _read_queue_lines(msg_file: Path) -> list[str] | None:
+    """Read the queue file as text lines, tolerating non-UTF-8 content.
+
+    Returns ``None`` when the file cannot be read at all.  A queue shared with
+    another process can be written with a partial line, a stray BOM, or bytes
+    from a crashed writer; one undecodable byte must not make the whole inbound
+    queue unreadable.  ``errors="replace"`` turns such bytes into U+FFFD, which
+    fails JSON parsing and is quarantined by the caller — the byte-level
+    salvage is lossy, so the quarantine record says the line was undecodable.
+    """
+    try:
+        return msg_file.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError as exc:
+        logger.error("Failed to read queue file %s: %s", msg_file, exc)
+        return None
+
+
 def read_queue(queue_dir: Path) -> tuple[list[dict[str, Any]], int]:
     """Read new lines from the queue's messages.jsonl starting at offset.txt.
 
-    Returns (new_messages, next_offset).  A line with invalid JSON can never
-    be retried into success, so it is quarantined to the dead-letter
-    directory and the offset advances past it.  Re-reading it forever was
-    the old behaviour: one bad byte re-logged an error on every poll for
-    the life of the queue, and the bytes were lost to nothing but the log.
+    Returns (new_messages, next_offset).  A line that is not valid JSON, or
+    that cannot be decoded as UTF-8, can never be retried into success, so it
+    is quarantined to the dead-letter directory and the offset advances past
+    it.  Re-reading such a line forever was the old behaviour: one bad byte
+    re-logged an error on every poll for the life of the queue.  A
+    ``UnicodeDecodeError`` was worse than a ``JSONDecodeError`` — it is raised
+    by ``read_text()`` for the WHOLE file, so it escaped the loop, out of
+    ``process_inbound``, and pinned the cursor: the queue stalled completely.
     """
     queue_dir = queue_dir.resolve()
     msg_file = queue_dir / "messages.jsonl"
@@ -602,12 +689,8 @@ def read_queue(queue_dir: Path) -> tuple[list[dict[str, Any]], int]:
     except (ValueError, OSError):
         current_offset = 0
 
-    lines = []
-    try:
-        content = msg_file.read_text(encoding="utf-8")
-        lines = content.splitlines()
-    except OSError as exc:
-        logger.error("Failed to read queue file %s: %s", msg_file, exc)
+    lines = _read_queue_lines(msg_file)
+    if lines is None:
         return [], current_offset
 
     new_messages: list[dict[str, Any]] = []
@@ -624,9 +707,20 @@ def read_queue(queue_dir: Path) -> tuple[list[dict[str, Any]], int]:
 
         try:
             msg = json.loads(line)
-            new_messages.append(msg)
         except json.JSONDecodeError as exc:
             _quarantine_malformed(queue_dir, idx, line, exc)
+            continue
+        if not isinstance(msg, dict):
+            # A JSON scalar/array is well-formed but is not a message, and it
+            # can never become one on retry — same class as unparseable.
+            _quarantine_malformed(
+                queue_dir,
+                idx,
+                line,
+                TypeError(f"expected a JSON object, got {type(msg).__name__}"),
+            )
+            continue
+        new_messages.append(msg)
 
     return new_messages, next_offset
 
@@ -653,6 +747,13 @@ def _record_failure(queue_dir: Path, msg: dict[str, Any]) -> None:
     process restarts, which is what makes dead-lettering reachable at all.
     (Indexing ``messages.jsonl`` by line number instead would be wrong: ``seq``
     is ``offset + 1``, so ``idx == seq`` never matches the right line.)
+
+    The re-queued line is a NEW line at a new position, so it gets a NEW
+    ``seq`` from the queue's writer counter: the message format documents
+    ``seq`` as the line's position, and reusing the old value left the tail
+    line disagreeing with it (e.g. line 2 carrying ``seq: 1``).  Appending
+    under the per-queue lock — as ``enqueue()`` does — keeps that counter
+    monotonic when a poller and a writer run concurrently.
     """
     retry_count = int(msg.get("retry_count", 0)) + 1
     msg["retry_count"] = retry_count
@@ -671,8 +772,15 @@ def _record_failure(queue_dir: Path, msg: dict[str, Any]) -> None:
         return
 
     msg["processed"] = False
-    with open(queue_dir / "messages.jsonl", "a", encoding="utf-8") as f:
-        f.write(json.dumps(msg, ensure_ascii=False) + "\n")
+    queue_dir = queue_dir.resolve()
+    with _lock_for(queue_dir):
+        seq = _next_seq(queue_dir)
+        msg["seq"] = seq
+        with open(queue_dir / "messages.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps(msg, ensure_ascii=False) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        (queue_dir / "seq.txt").write_text(str(seq), encoding="utf-8")
 
 
 def process_inbound(queue_dir: Path | None = None) -> int:

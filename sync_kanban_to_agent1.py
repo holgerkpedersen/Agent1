@@ -7,9 +7,14 @@ from harnessfix.kanban_bridge import (
     _apply_card_update,
     _apply_card_move,
     _apply_card_delete,
+    resolve_working_dir,
 )
 
-KANBAN_QUEUE_FILE = Path(r"C:\Dev\Kanban\data\queue-kanban-to-agent1\messages.jsonl")
+# Resolve the queue root the same way the bridge does (env, then .env, then the
+# sibling Kanban checkout), so this script reads the directory the bridge uses.
+KANBAN_QUEUE_FILE = (
+    Path(resolve_working_dir()) / "queue-kanban-to-agent1" / "messages.jsonl"
+)
 
 
 def sync():
