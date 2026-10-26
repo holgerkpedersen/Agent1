@@ -87,6 +87,8 @@ celerybeat-schedule
 
 # Environments
 .env
+.env.*
+!.env.example
 .venv
 env/
 venv/
@@ -97,6 +99,14 @@ venv.bak/
 # Generated files
 *.png
 *.db
+
+# Keys and certificates - never commit private material
+*.pem
+*.key
+*.pfx
+*.p12
+id_rsa*
+id_ed25519*
 
 # Spyder
 .spyproject
