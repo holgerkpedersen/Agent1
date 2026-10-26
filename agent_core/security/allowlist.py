@@ -123,6 +123,22 @@ RUN_SHELL_INVOKE_PATTERNS: Final[tuple[tuple[re.Pattern[str], str], ...]] = (
         "dynamic code execution (Invoke-Expression / iex)",
     ),
     (
+        # .NET interop types — the constructors behind the classic
+        # download-and-run (`New-Object Net.WebClient` + `DownloadString`),
+        # reflection-loaded assemblies, and direct P/Invoke.  Legit agent
+        # work never needs them; the allow-list never reaches cmdlets, so
+        # this closes the shape that survives the binary gate.
+        re.compile(
+            r"\bnew-object\b[\s\S]*\bnet\.(?:webclient|webrequest)"
+            r"|\bnew-object\b[\s\S]*\bsystem\.(?:diagnostics\.process|net\.webclient"
+            r"|reflection\.assembly|runtime\.interopservices\.marshal)"
+            r"|\b(?:net\.webclient|net\.webrequest|system\.diagnostics\.process"
+            r"|system\.reflection\.assembly|system\.runtime\.interopservices\.marshal)\b",
+            re.I,
+        ),
+        ".NET interop type (download-and-run / process spawn / P/Invoke)",
+    ),
+    (
         re.compile(
             r"\bpwsh(?=[\s'\"-])[\s\S]*\s-(?:c|e|command|encodedcommand)\b", re.I
         ),
