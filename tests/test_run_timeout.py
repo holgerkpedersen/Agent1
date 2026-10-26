@@ -26,6 +26,14 @@ class _FakeProc:
 
 class TestRunTimeout:
     def test_timeout_kills_process_tree(self, tmp_path, monkeypatch):
+        # This test is about the TIMEOUT transport (Popen + tree kill), not
+        # about the sandbox gate.  It previously used "python -m x", whose
+        # arbitrary module the STRICT sandbox refuses before Popen is called
+        # ("module 'x' via -m is not in the run module allow-list"), so the
+        # test failed on every clean environment.  Use an allow-listed module
+        # instead: the security gate stays ENABLED (strict mode, no env
+        # override) while the command still reaches the code under test.
+        # Popen is faked, so this command never actually executes.
         agent = Agent(workspace=str(tmp_path))
         captured = {}
 
@@ -42,8 +50,13 @@ class TestRunTimeout:
         monkeypatch.setattr(subprocess, "Popen", fake_popen)
         monkeypatch.setattr(subprocess, "run", fake_taskkill)
 
+        # `py_compile` is in RUN_SHELL_MODULE_ALLOWLIST, so STRICT mode admits
+        # it, and it is not a test run, so the full-run budget gate does not
+        # engage.  Nothing is executed: Popen is faked below.
         out = asyncio.run(
-            agent._execute_tool_call("run", {"command": "python -m x", "timeout": 1})
+            agent._execute_tool_call(
+                "run", {"command": "python -m py_compile setup.py", "timeout": 1}
+            )
         )
         assert "timed out after 1s" in out
         assert "tree" in out

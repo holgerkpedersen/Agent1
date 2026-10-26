@@ -263,7 +263,36 @@ malicious — this is an autostart-*completeness* finding, not a persistence fin
   and `6bd306e` (OneDrive autostart removal). All of these are pushed to
   `origin/master`. The scheduled-task classifier rewrite and the UTF-8 encoding pin
   from earlier notes landed in `ead8012`, so this doc is the record.
-- Known environmental failure, unrelated to these files:
-  `tests/test_run_timeout.py::test_timeout_kills_process_tree` fails on this box
-  because the strict run sandbox rejects `python -m x` before the timeout path is
-  reached. It needs `AGENT_RUN_SANDBOX=dev` to exercise what it asserts.
+- **Fixed 2026-10-26 (was: known environmental failure).**
+  `tests/test_run_timeout.py::test_timeout_kills_process_tree` failed on a clean
+  environment because the strict run sandbox rejected `python -m x` before the
+  timeout/Popen path was ever reached — the test asserted the timeout transport
+  while being stopped at the policy gate. The test now invokes
+  `python -m py_compile setup.py`: `py_compile` is in
+  `RUN_SHELL_MODULE_ALLOWLIST`, so the security gate stays **enabled in strict
+  mode** (no env override, no wider sandbox) while the command still reaches the
+  code under test, and because it is not a test run the full-run budget gate does
+  not engage. `Popen` is faked, so nothing is executed. An earlier attempt set
+  `AGENT_RUN_SANDBOX=dev` to force the command through; that was discarded
+  because disabling the sandbox to satisfy a test is the wrong direction — the
+  gate is real behaviour this repo wants tested, not something to switch off.
+  Both tests in that file pass; the assertion was not weakened.
+- **Fixed 2026-10-26.** `tests/test_packaging_metadata.py::test_wheel_contains_every_subpackage`
+  hard-coded `--no-build-isolation`, so on a runner without setuptools pip failed
+  with `BackendUnavailable: Cannot import 'setuptools.build_meta'` and the job went
+  red for an environment reason rather than a packaging regression. The flag is now
+  chosen by `_build_isolation_flags()`, which probes the backend named in
+  `pyproject.toml` via `importlib.util.find_spec` (spec resolution only — the
+  backend is never imported); when it is importable the fast `--no-build-isolation`
+  build is used, otherwise pip is left to provision the backend itself. The
+  no-setuptools branch is pinned by
+  `test_build_isolation_flags_follow_backend_availability`, which monkeypatches the
+  probe, plus `test_build_backend_is_read_from_pyproject` and
+  `test_module_importable_probes_without_importing`. Note: the setuptools-absent
+  branch is verified by that unit test, not by building a wheel in a stripped
+  interpreter.
+- **Root cause of the red CI run that prompted both fixes: neither change was
+  committed.** `git status` showed `tests/test_packaging_metadata.py`,
+  `tests/test_run_timeout.py` and this doc as modified-but-unstaged, so CI ran the
+  pre-fix code and failed on exactly those two tests, which is the correct result
+  for the old code. Local runs were green only because they used the working tree.

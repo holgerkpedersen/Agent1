@@ -64,6 +64,47 @@ def _split_spec(spec: str) -> tuple[str, str]:
     return name, (match.group("spec") or "").strip()
 
 
+def _build_isolation_flags() -> list[str]:
+    """Return the pip flags that build this repo in the CURRENT interpreter.
+
+    ``--no-build-isolation`` is an optimisation, not a requirement: it reuses
+    the environment's setuptools instead of downloading one.  It only works
+    when the build backend named in ``pyproject.toml`` is importable here.  On
+    a bare Python (a fresh CI runner, a stripped container) setuptools is not
+    installed, so pip died with ``BackendUnavailable: Cannot import
+    'setuptools.build_meta'`` and this test failed for an environment reason
+    rather than a packaging regression.  Probe the backend first: when it is
+    missing, ask pip for an isolated build and let it provision the backend.
+    """
+    backend = _build_backend()
+    if _module_importable(backend):
+        return ["--no-build-isolation"]
+    return []
+
+
+def _build_backend() -> str:
+    """The ``build-backend`` declared in ``pyproject.toml``."""
+    with PYPROJECT.open("rb") as handle:
+        data = tomllib.load(handle)
+    return data.get("build-system", {}).get(
+        "build-backend", "setuptools.build_meta"
+    )
+
+
+def _module_importable(dotted: str) -> bool:
+    """True when *dotted* (a module path of any depth) can be imported.
+
+    Only the module spec is resolved - nothing is imported - so probing the
+    build backend never runs code from it.
+    """
+    import importlib.util
+
+    try:
+        return importlib.util.find_spec(dotted) is not None
+    except (ImportError, ValueError, ModuleNotFoundError):
+        return False
+
+
 @pytest.fixture(scope="module")
 def pyproject() -> dict:
     with PYPROJECT.open("rb") as handle:
@@ -270,7 +311,7 @@ def test_wheel_contains_every_subpackage(tmp_path: Path) -> None:
     wheel_dir = tmp_path / "wheel"
     result = subprocess.run(
         [sys.executable, "-m", "pip", "wheel", str(ROOT), "--no-deps",
-         "--no-build-isolation", "-w", str(wheel_dir)],
+         *_build_isolation_flags(), "-w", str(wheel_dir)],
         capture_output=True,
         text=True,
         timeout=300,
@@ -306,3 +347,38 @@ def test_wheel_contains_every_subpackage(tmp_path: Path) -> None:
 
     leaks = [n for n in names if ".mypy_cache" in n or ".pytest_cache" in n]
     assert leaks == [], f"build caches leaked into the wheel: {leaks[:5]}"
+
+
+def test_build_isolation_flags_follow_backend_availability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``--no-build-isolation`` only when the backend is importable.
+
+    Regression: the wheel build above hard-coded ``--no-build-isolation``, so
+    on a runner without setuptools pip raised
+    ``BackendUnavailable: Cannot import 'setuptools.build_meta'`` and the job
+    went red for an environment reason, not a packaging one.  The flag must be
+    a function of what this interpreter can actually import.
+    """
+    monkeypatch.setattr(
+        sys.modules[__name__], "_module_importable", lambda dotted: True
+    )
+    assert _build_isolation_flags() == ["--no-build-isolation"]
+
+    monkeypatch.setattr(
+        sys.modules[__name__], "_module_importable", lambda dotted: False
+    )
+    assert _build_isolation_flags() == []
+
+
+def test_build_backend_is_read_from_pyproject() -> None:
+    """The probed backend is pyproject's, so a backend swap cannot go stale."""
+    assert _build_backend() == "setuptools.build_meta"
+
+
+def test_module_importable_probes_without_importing() -> None:
+    """Probing resolves a spec and must never execute the module."""
+    assert _module_importable("json") is True
+    assert _module_importable("definitely_not_a_real_module_xyz") is False
+    # A module-shaped path that does not exist must be False, not an error.
+    assert _module_importable("json.no_such_submodule_xyz") is False
