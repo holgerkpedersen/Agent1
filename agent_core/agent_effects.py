@@ -8,7 +8,9 @@ instance at call time so monkeypatching and subclass overrides keep working.
 
 from __future__ import annotations
 
+import importlib.util
 import os
+import shutil
 import subprocess
 import sys
 from typing import TYPE_CHECKING, Any
@@ -50,7 +52,13 @@ async def _save_verify_note(
 
 
 async def _verify_file(agent: "Agent", path: str) -> str:
-    """Run py_compile on *path* and return a short verification summary."""
+    """Run py_compile on *path* and return a short verification summary.
+
+    The ``[verify] py_compile`` marker is load-bearing: ``turn_loop``
+    scans for it to drive the post-mutation self-review note, so it must
+    stay the FIRST line of the returned summary.  The ruff result (see
+    :func:`_lint_file`) is appended after it for that reason.
+    """
     try:
         cwd = os.path.abspath(to_windows_path(agent._nlp_workspace or agent.workspace))
         if not os.path.isdir(cwd):
@@ -66,8 +74,101 @@ async def _verify_file(agent: "Agent", path: str) -> str:
     except OSError as e:
         return f"[verify] py_compile could not run: {e}"
     if r.returncode == 0:
-        return "[verify] py_compile ✓"
-    return f"[verify] py_compile ✗: {r.stderr.strip()[:300]}"
+        summary = "[verify] py_compile ✓"
+    else:
+        summary = f"[verify] py_compile ✗: {r.stderr.strip()[:300]}"
+    lint = _lint_file(path)
+    return f"{summary}\n{lint}".strip() if lint else summary
+
+
+#: Wall-clock cap for one ruff child.  The pre-commit hook and CI block on
+#: ruff, so a lint violation the agent writes is a red build later; running
+#: ruff beside py_compile catches it while the file is still in hand.  The
+#: child is capped for the same reason fix_cmd's children are (see
+#: tests/test_fix_subprocess_guard.py): an unbounded child can wedge a turn.
+RUFF_TIMEOUT_S = 30
+
+
+def _ruff_binary() -> str | None:
+    """Return the ruff executable path, or None when ruff is not installed.
+
+    Ruff is a ``[dev]`` extra, so an end-user install legitimately lacks
+    it: absent ruff means "cannot lint", never a failed verification.
+    """
+    found = shutil.which("ruff")
+    if found:
+        return found
+    return None
+
+
+def _ruff_command(path: str) -> list[str] | None:
+    """Return the argv to lint *path*, or None when ruff is unavailable."""
+    binary = _ruff_binary()
+    if binary:
+        base = [binary]
+    elif importlib.util.find_spec("ruff") is not None:
+        base = [sys.executable, "-m", "ruff"]
+    else:
+        return None
+    # Explicit rule set so the result does not depend on an ambient
+    # [tool.ruff] block, and so test fixtures lacking pyproject.toml still
+    # get the same E/F/W gate CI enforces.
+    return [
+        *base,
+        "check",
+        "--no-cache",
+        "--output-format=concise",
+        "--select",
+        "E,F,W",
+        path,
+    ]
+
+
+def _format_ruff_violations(stdout: str) -> list[str]:
+    """Turn ``--output-format=concise`` output into short ``file:line`` items."""
+    items: list[str] = []
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line or line.startswith(("Found ", "All checks")):
+            continue
+        # concise format: path:line:col: CODE message
+        parts = line.split(":", 3)
+        if len(parts) < 4:
+            continue
+        items.append(f"{os.path.basename(parts[0])}:{parts[1]}: {parts[3].strip()}")
+    return items
+
+
+def _lint_file(path: str) -> str:
+    """Return a ``[verify] ruff …`` summary line for *path*, or "".
+
+    Never raises.  An empty string means "nothing to report": ruff is not
+    installed, the file is not Python, or the lint run could not start.
+    """
+    if not str(path).endswith(".py"):
+        return ""
+    cmd = _ruff_command(path)
+    if cmd is None:
+        return ""
+    try:
+        r = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=RUFF_TIMEOUT_S,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        return f"[verify] ruff could not run: {e}"
+    if r.returncode == 0:
+        return "[verify] ruff ✓"
+    violations = _format_ruff_violations(r.stdout or r.stderr)
+    if not violations:
+        return f"[verify] ruff ✗: {(r.stderr or r.stdout).strip()[:200]}"
+    shown = "; ".join(violations[:5])
+    more = f" (+{len(violations) - 5} more)" if len(violations) > 5 else ""
+    return f"[verify] ruff ✗ {len(violations)}: {shown}{more}"
 
 
 def _note_effect(agent: "Agent", path: str) -> None:

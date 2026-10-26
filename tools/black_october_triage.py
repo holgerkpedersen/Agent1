@@ -9,6 +9,7 @@ Checks the IoCs disclosed for the Black October wave (Oct 19-22 2026):
 Run: python tools/black_october_triage.py   (exit code = number of findings)
 """
 
+import csv
 import pathlib
 import subprocess
 import sys
@@ -17,7 +18,22 @@ FINDINGS: list[tuple[str, str, str]] = []
 
 
 def sh(cmd: str) -> str:
-    r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=120)
+    """Run *cmd* and return stdout+stderr as text.
+
+    ``encoding`` is pinned deliberately: with ``text=True`` alone Windows decodes
+    child output using the locale codepage, which mojibakes or crashes on task
+    names and paths containing non-ASCII characters.  See
+    tests/test_subprocess_utf8_encoding.py, which enforces this repo-wide.
+    """
+    r = subprocess.run(
+        cmd,
+        shell=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=120,
+    )
     return (r.stdout or "") + (r.stderr or "")
 
 
@@ -81,16 +97,155 @@ def check_startup_folders() -> None:
                 print(f"[ok] startup folder empty: {d}")
 
 
+#: Directories a dropper can write to without elevation.  A scheduled task whose
+#: action lives here is the Black October persistence shape (payload drop + task).
+#: ``programdata\\microsoft`` is deliberately absent: Defender's own platform
+#: binaries live there and match every other heuristic in this file.
+USER_WRITABLE = (
+    "\\appdata\\",
+    "\\temp\\",
+    "\\users\\public\\",
+    "\\downloads\\",
+    "\\programdata\\",
+    # Tasks often carry the unexpanded variable instead of a literal path, e.g.
+    # "%localappdata%\Microsoft\OneDrive\...".  Matching only literal paths
+    # silently missed those.
+    "%appdata%",
+    "%localappdata%",
+    "%temp%",
+    "%tmp%",
+    "%public%",
+)
+#: Vendor sub-trees under ProgramData that belong to the OS, not to a dropper.
+OS_PROGRAMDATA = ("\\programdata\\microsoft\\",)
+
+#: LOLBins used by the wave's loader stages to hide the real payload.  Only an
+#: LOLBin used OUTSIDE the Windows directory is a finding - Windows ships dozens
+#: of rundll32-based maintenance tasks that would otherwise all flag.
+LOLBINS = (
+    "powershell",
+    "pwsh",
+    "cmd.exe /c",
+    "cmd /c",
+    "wscript",
+    "cscript",
+    "mshta",
+    "rundll32",
+    "regsvr32",
+    "certutil",
+    "bitsadmin",
+    "curl ",
+    "wget ",
+)
+
+#: Action prefixes (after variable expansion) that mean "this is an OS binary".
+OS_ACTION_PREFIXES = ("%windir%", "%systemroot%", "%systemdrive%\\windows",
+                      "c:\\windows\\")
+
+#: Task actions that fetch or decode a second stage.
+NETWORK_OR_ENCODE = ("http://", "https://", "-enc", "-encodedcommand", "frombase64",
+                     "invoke-expression", "iex", "downloadstring", "bitsadmin")
+
+
+def _parse_schtasks_verbose(text: str) -> list[dict[str, str]]:
+    """Parse ``schtasks /query /fo csv /nh /v`` rows into task dicts.
+
+    Columns (0-based) as emitted by Windows: 1 TaskName, 2 Next Run Time,
+    3 Status, 7 Author, 8 Task To Run.  Rows shorter than 9 fields are
+    skipped rather than indexed, so this cannot raise on localized output.
+    """
+    rows: list[dict[str, str]] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith('"'):
+            continue
+        fields = next(csv.reader([line]), [])
+        if len(fields) < 9:
+            continue
+        rows.append(
+            {
+                "name": fields[1].strip(),
+                "status": fields[3].strip(),
+                "author": fields[7].strip(),
+                "action": fields[8].strip(),
+            }
+        )
+    return rows
+
+
+def _task_risk(task: dict[str, str]) -> tuple[str, str] | None:
+    """Return (severity, reason) for a suspicious task, else None.
+
+    Two rounds of noise reduction are baked in here, both learned from real
+    output on this host:
+
+    * The first version substring-matched "helper"/"sync"/"updater" across the
+      whole CSV row and flagged 37 healthy vendor tasks.
+    * A naive "action mentions rundll32" rule then flagged ~20 of Windows' own
+      maintenance tasks (Defender, Appx, Sysmain), and treating ProgramData as
+      user-writable flagged Defender's platform binaries as CRITICAL.
+
+    So an action that starts in ``%WINDIR%``/``%SystemRoot%`` is treated as an OS
+    binary (its LOLBin use is baseline), and ProgramData\\Microsoft is not
+    "user-writable".
+    """
+    name = task.get("name", "")
+    author = task.get("author", "").lower()
+    action = task.get("action", "")
+    low_action = action.lower()
+
+    os_action = low_action.startswith(OS_ACTION_PREFIXES)
+    os_owned_dir = any(d in low_action for d in OS_PROGRAMDATA)
+
+    droppable = next((d for d in USER_WRITABLE if d in low_action), None)
+    if droppable and os_owned_dir:
+        droppable = None
+    fetch = next((n for n in NETWORK_OR_ENCODE if n in low_action), None)
+    lolbin = next((b for b in LOLBINS if b in low_action), None)
+    if lolbin and os_action:
+        # rundll32 from %windir% is how Windows itself runs maintenance tasks.
+        lolbin = None
+    known_vendor = any(
+        v in author
+        for v in ("microsoft", "google", "adobe", "mozilla", "amd", "intel",
+                  "nvidia", "apple", "dropbox", "spotify", "opera")
+    )
+
+    reasons = []
+    if droppable:
+        label = droppable.replace(chr(92), "")
+        reasons.append(f"action in user-writable dir ({label})")
+    if lolbin:
+        reasons.append(f"LOLBin in action ({lolbin.strip()})")
+    if fetch:
+        reasons.append(f"fetches/decodes second stage ({fetch.strip()})")
+    if not reasons:
+        return None
+
+    # The wave's persistence shape is a payload in user-writable space that is
+    # launched by a shell and/or pulls a second stage.  One weak signal from a
+    # known vendor stays MEDIUM so the CRITICALs keep meaning something.
+    strong = bool(droppable and (fetch or lolbin)) or bool(fetch and not os_action)
+    if strong:
+        severity = "CRITICAL" if (droppable or not known_vendor) else "HIGH"
+    elif known_vendor:
+        severity = "MEDIUM"
+    else:
+        severity = "HIGH"
+    return severity, f"{name}: " + ", ".join(reasons) + f" | {action[:160]}"
+
+
 def check_scheduled_tasks() -> None:
-    out = sh("schtasks /query /fo csv")
-    sus = [ln for ln in out.splitlines()
-           if any(k in ln.lower() for k in ("updater", "telemetry", "helper", "sync",
-                                            "host", "adobupdtmr", "winupdate",
-                                            "appdata", "temp"))]
-    if sus:
-        flag("MEDIUM", "scheduled-tasks-suspect",
-             f"{len(sus)} suspicious task(s): " + " | ".join(sus[:6]))
-    print(f"[ok] scheduled tasks scanned ({len(out.splitlines())} lines)")
+    """Find tasks matching the wave's persistence shape, without vendor noise."""
+    out = sh("schtasks /query /fo csv /nh /v")
+    tasks = _parse_schtasks_verbose(out)
+    for task in tasks:
+        verdict = _task_risk(task)
+        if verdict is None:
+            continue
+        severity, reason = verdict
+        flag(severity, "scheduled-task-persistence", reason)
+    print(f"[ok] scheduled tasks scanned ({len(tasks)} task(s) parsed)")
 
 
 FIXED_NODE = {"22": "22.23.4", "24": "24.22.1", "26": "26.12.1"}
@@ -106,7 +261,9 @@ def _node_is_patched(ver: str) -> tuple[bool, str]:
     fixed = FIXED_NODE.get(str(major))
     if fixed is None:
         return False, (
-            f"node {core}: major {major} has NO official fix (EOL) - isolate or remove"
+            f"node {core}: major {major} is not a fixed release line - the advisory "
+            f"patches only 22.23.4 / 24.22.1 / 26.12.1, so no fix exists on this "
+            f"line; isolate or remove"
         )
     fx = tuple(int(x) for x in fixed.split("."))
     if (major, minor, patch) >= fx:
