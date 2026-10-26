@@ -569,3 +569,58 @@ def test_check_scheduled_tasks_reports_blind_scan_instead_of_clean(monkeypatch):
     severity = bot.FINDINGS[0][0]
     assert severity == "MEDIUM"
     assert "BLIND" in bot.FINDINGS[0][2]
+
+
+# --- a disabled task must not look like live persistence ---------------------
+# After the OneDrive Startup Task was disabled, the scan still reported it at
+# MEDIUM, identical to the two enabled updaters.  An applied fix then reads as
+# an open finding.  Disabled stays visible but drops to LOW and says why.
+
+def _updater_task(state="Enabled"):
+    return bot._parse_schtasks_verbose(
+        _task_row(
+            "\\OneDrive Standalone Update Task",
+            "Microsoft Corporation",
+            "%localappdata%\\Microsoft\\OneDrive\\"
+            "OneDriveStandaloneUpdater.exe",
+            state=state,
+        )
+    )[0]
+
+
+def test_task_risk_demotes_disabled_task_to_low():
+    severity, reason = bot._task_risk(_updater_task(state="Disabled"))
+    assert severity == "LOW"
+    assert "Disabled" in reason
+    assert "not currently active" in reason
+
+
+def test_task_risk_keeps_enabled_vendor_task_at_medium():
+    """The demotion must not leak into the enabled case."""
+    severity, reason = bot._task_risk(_updater_task(state="Enabled"))
+    assert severity == "MEDIUM"
+    assert "Disabled" not in reason
+
+
+def test_task_risk_still_reports_critical_for_non_vendor_dropper():
+    """A dropper-shaped task with no vendor author stays CRITICAL when enabled."""
+    task = bot._parse_schtasks_verbose(
+        _task_row(
+            "\\SystemUpdate",
+            "Unknown",
+            "%appdata%\\Temp\\payload.exe -enc aGVsbG8=",
+        )
+    )[0]
+    assert bot._task_risk(task)[0] == "CRITICAL"
+
+
+def test_task_risk_disabled_dropper_is_low_not_critical():
+    task = bot._parse_schtasks_verbose(
+        _task_row(
+            "\\SystemUpdate",
+            "Unknown",
+            "%appdata%\\Temp\\payload.exe -enc aGVsbG8=",
+            state="Disabled",
+        )
+    )[0]
+    assert bot._task_risk(task)[0] == "LOW"

@@ -282,6 +282,15 @@ def _task_risk(task: dict[str, str]) -> tuple[str, str] | None:
         severity = "MEDIUM"
     else:
         severity = "HIGH"
+
+    # A disabled task is not a live persistence surface.  Reporting it at the same
+    # severity as an enabled one is how "I disabled that task" still shows up as an
+    # unfixed MEDIUM finding on the next scan - the reader cannot tell the applied
+    # fix from the original problem.  Keep it visible (the dropper-shaped launch
+    # directory is still real) but demote it so re-enabling it is what re-raises it.
+    if task.get("state", "").strip().lower() == "disabled":
+        severity = "LOW"
+        reasons.append("task is Disabled - not currently active")
     return severity, f"{name}: " + ", ".join(reasons) + f" | {action[:160]}"
 
 
