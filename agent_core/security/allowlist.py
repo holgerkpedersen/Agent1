@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Final, List, Set
+from typing import Dict, Final, List, Set
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -109,14 +109,86 @@ RUN_SHELL_COMMANDS: Final[Set[str]] = {
     "powershell",
 }
 
+#: Interpreter modules the agent may run with ``python -m <module>`` in
+#: **strict** mode.  A module name is not attacker-chosen code only when the
+#: module is one the agent is *supposed* to drive; ``python -m pip install``
+#: downloads a package and **executes the package's ``setup.py`` locally**,
+#: which is arbitrary code execution with a network fetch in front of it —
+#: the supply-chain leg of the Black October payload-drop chain.  The
+#: allow-list keeps the tooling the agent needs (pytest, mypy) and refuses
+#: every package-install channel: pip, uv, poetry, npm, npx, dotnet.
+#:
+#: The entry is a bare module name, or a name with a trailing ``*`` meaning
+#: "this name, and any ``name.submodule`` below it".
+RUN_SHELL_MODULE_ALLOWLIST: Final[Set[str]] = {
+    "pytest",
+    "mypy",
+    "coverage",
+    "unittest",
+    "pylint",
+    "black",
+    "ruff",
+    "isort",
+    "flake8",
+    "pyright",
+    "py_compile",
+    "venv",  # creates a local venv; installing INTO it is gated by pip
+    "pip.*",  # read-only pip is safe (see RUN_SHELL_MODULE_BLOCKED_SUBCOMMANDS)
+}
+
+#: Subcommands that are refused after an allow-listed module.  ``pip show``
+#: and ``pip list`` read metadata; ``pip install``/``download``/``wheel``
+#: fetch a package and run its build code on this machine.  Prefix-matched
+#: (:data:`_module_subcommand_blocked`), so a flag is never mistaken for a
+#: verb and ``install-something`` is caught by ``install``.
+RUN_SHELL_MODULE_BLOCKED_SUBCOMMANDS: Final[Dict[str, Set[str]]] = {
+    "pip": {
+        "install",
+        "uninstall",
+        "download",
+        "wheel",
+        "cache",
+        "config",
+        "index",
+        "mock",  # `python -m pip mock` is the classic typosquat lure name
+    },
+}
+
+#: Names that are **never** a legal ``-m`` target in strict mode, whatever
+#: the allow-list says (a package manager is a package manager).
+RUN_SHELL_PACKAGE_MANAGERS: Final[Set[str]] = {
+    "pip",
+    "pip3",
+    "easy_install",
+    "setuptools",
+    "distutils",
+    "ensurepip",
+    "uv",
+    "uvx",
+    "poetry",
+    "pdm",
+    "flit",
+    "tox",
+    "npm",
+    "npx",
+    "yarn",
+    "pnpm",
+    "dotnet",
+    "nuget",
+    "choco",
+    "winget",
+    "scoop",
+}
+
 #: Command shapes that are refused in **strict** mode even when the binary is
 #: in :data:`RUN_SHELL_COMMANDS`.  Each entry closes a specific escape hatch
 #: that turns an allowed name into arbitrary code execution.
 #:
-#: Deliberately NOT blocked: ``python -m <module>`` (the agent runs
-#: ``python -m pytest``/``python -m mypy`` — a module name is not attacker
-#: chosen code), and a leading absolute path (``/usr/bin/git``, which stays
-#: subject to the binary allow-list).
+#: Deliberately NOT blocked: ``python -m <module>`` for a module in
+#: :data:`RUN_SHELL_MODULE_ALLOWLIST` (the agent runs ``python -m pytest``),
+#: and a leading absolute path (``/usr/bin/git``, which stays subject to the
+#: binary allow-list).  ``-m`` targets outside that list — including every
+#: package manager — are refused by :func:`_run_shell_module_violation`.
 RUN_SHELL_INVOKE_PATTERNS: Final[tuple[tuple[re.Pattern[str], str], ...]] = (
     (
         re.compile(r"\b(?:invoke-expression|iex)\b", re.I),
@@ -392,6 +464,20 @@ def _blanked_quote_mask(command: str) -> str:
 _REDIRECTION_RE = re.compile(r"(?:\d*)\s*(?:>>|>|<|2>&1|<&|>&)")
 
 
+# `python -m <module> [<sub>]` — the interpreter, its flags, the -m flag
+# (short cluster allowed: -Bm, -qm), the module, and the module's first
+# positional verb.  The verb is only checked when it is a bare word, so
+# `python -m pip install -r requirements.txt` reports `install` while
+# `python -m pytest -q` reports nothing.
+_MODULE_INVOKE_RE = re.compile(
+    r"\b(?:python\d*|py)\b(?P<flags>(?:\s+-[A-Za-z0-9:]+)*)"
+    r"\s+(?:-[A-Za-z]*m[mc]?\b|--module\s)"
+    r"\s*(?P<module>[A-Za-z_][\w.]*)"
+    r"(?P<sub>\s+[A-Za-z][\w-]*)?",
+    re.I,
+)
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -427,7 +513,8 @@ def find_run_shell_pattern(cmd_str: str) -> str | None:
 
     1. :data:`RUN_SHELL_INVOKE_PATTERNS` — the escape hatches that turn an
        allowed name into arbitrary code (``Invoke-Expression``, a nested
-       shell ``-Command``, ``python -c``, dot-sourcing, ``./prog``).
+       shell ``-Command``, ``python -c``, dot-sourcing, ``./prog``) — plus
+       the ``python -m`` module gate (:func:`_run_shell_module_violation`).
     2. The binary name must be in :data:`RUN_SHELL_COMMANDS`.  Every shell
        segment is checked, so ``git status && curl ...`` is refused for
        ``curl`` even though the pipe itself is allowed.
@@ -448,6 +535,9 @@ def find_run_shell_pattern(cmd_str: str) -> str | None:
     for pattern, description in RUN_SHELL_INVOKE_PATTERNS:
         if pattern.search(stripped):
             return description
+    module_violation = _run_shell_module_violation(stripped)
+    if module_violation:
+        return module_violation
 
     # 2. Every shell segment must start with an allow-listed binary.
     #    Quoted spans are masked (not blanked) so a quoted argument is
@@ -471,6 +561,99 @@ def find_run_shell_pattern(cmd_str: str) -> str | None:
     if "`" in stripped:
         return "command substitution (`)"
     return None
+
+
+def _run_shell_module_violation(cmd_str: str) -> str | None:
+    """Refuse ``python -m <module>`` when *module* is not agent tooling.
+
+    The strict binary allow-list gates the interpreter, not what the
+    interpreter loads.  ``python -m pytest`` is tooling; ``python -m pip
+    install X`` is a network fetch that ends in **local execution of the
+    package's build code** (``setup.py``) — the supply-chain leg of the
+    Black October payload-drop chain, and reachable from the allow-list.
+
+    Quoted spans are blanked first (see :func:`_strip_quoted_segments`), so
+    the *arguments* of a command are never mistaken for the module name.
+    """
+    stripped = _strip_quoted_segments(cmd_str)
+    for match in _MODULE_INVOKE_RE.finditer(stripped):
+        module = match.group("module").lower()
+        sub = (match.group("sub") or "").strip().lower()
+        # Interpreter flags that change HOW code runs (-i runs an
+        # interactive prompt) defeat the point of the sandbox, so the gate
+        # applies to them too.
+        loosening = [
+            flag
+            for flag in (match.group("flags") or "").split()
+            if flag.lower() in ("-i", "-interactive")
+        ]
+        if loosening:
+            return (
+                f"interpreter flag '{loosening[0]}' with -m "
+                "(changes how code runs; strict sandbox refuses it)"
+            )
+        allowed = _module_is_allowed(module)
+        if sub in RUN_SHELL_PACKAGE_MANAGERS:
+            return _package_manager_reason(module)
+        if allowed:
+            if sub and _module_subcommand_blocked(module, sub):
+                return (
+                    f"'{module} {sub}' fetches a package and runs its build "
+                    "code (strict sandbox allows read-only metadata only)"
+                )
+            continue
+        # A package manager outside the allow-list (pipx, poetry, …) gets
+        # the supply-chain reason, not the generic one.
+        if module in RUN_SHELL_PACKAGE_MANAGERS:
+            return _package_manager_reason(module)
+        return f"module '{module}' via -m is not in the run module allow-list"
+    return None
+
+
+def _package_manager_reason(module: str) -> str:
+    """Why a package manager is refused as an ``-m`` target."""
+    return (
+        f"package manager via -m ({module}) "
+        "(supply chain: runs the package's build code)"
+    )
+
+
+def _module_is_allowed(module: str) -> bool:
+    """True when *module* matches :data:`RUN_SHELL_MODULE_ALLOWLIST`.
+
+    An entry ending in ``*`` matches that name and everything below it
+    (``pip.*`` covers ``pip`` and ``pip._internal``); a plain entry matches
+    exactly.  The check is on the module ROOT, so ``venv`` being allowed does
+    not silently open ``venv.something``.
+    """
+    root = module.split(".", 1)[0]
+    for entry in RUN_SHELL_MODULE_ALLOWLIST:
+        if entry.endswith(".*"):
+            base = entry[:-2]
+            if root == base:
+                return True
+        elif root == entry:
+            return True
+    return False
+
+
+def _module_subcommand_blocked(module: str, sub: str) -> bool:
+    """True when *sub* is a dangerous verb under an allow-listed *module*.
+
+    Matched by prefix: ``config`` catches ``--config``-style spellings,
+    ``install`` catches ``install-something``, and a plain flag (``-q``) can
+    never match a verb.
+    """
+    root = module.split(".", 1)[0]
+    blocked = RUN_SHELL_MODULE_BLOCKED_SUBCOMMANDS.get(root)
+    if not blocked:
+        return False
+    # Exact match, or `--verb` / `--verb=…` (pip accepts `--install`,
+    # `--index-url`, …); a bare `-q` can never match a verb.
+    return any(
+        sub == verb or sub == "--" + verb or sub.startswith("--" + verb + "=")
+        for verb in blocked
+    )
 
 
 def is_run_shell_allowed(binary_name: str) -> bool:

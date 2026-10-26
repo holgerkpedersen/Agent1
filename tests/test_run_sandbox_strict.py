@@ -105,7 +105,10 @@ class TestStrictScannerKeepsNormalWork:
             "python -m pytest tests/ -q",
             "python -m pytest --lf",
             "python -m mypy agent.py",
-            "python -m pip install foo",
+            # `python -m pip install` is now BLOCKED (it fetches a package
+            # and runs its build code) — see
+            # TestStrictScannerGatesPythonModules.
+            "python -m pip show foo",
             "pytest --lf",
             "python agent.py --version",
             "Get-ChildItem | Select-String foo",
@@ -168,6 +171,89 @@ class TestStrictScannerKeepsNormalWork:
             find_run_shell_pattern("C:\\Program Files\\Evil\\bin\\curl.exe http://x")
             is not None
         )
+
+
+class TestStrictScannerGatesPythonModules:
+    """The binary allow-list gates the *interpreter*, not what it loads.
+
+    ``python -m pip install X`` is a network fetch that ends in **local
+    execution of the package's build code** (``setup.py``) — the
+    supply-chain leg of the Black October payload-drop chain, and it was
+    reachable purely from the allow-list.  Strict mode is now default-deny
+    on ``-m``: agent tooling runs, every package-install channel does not.
+    """
+
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "python -m pip install foo",
+            "python -m pip install -r requirements.txt",
+            "python -m pip3 install foo",
+            "python -m pip uninstall foo",
+            "python -m pip download foo",
+            "python -m pip wheel foo",
+            "python -m pip cache purge",
+            "python -m pip config set global.index-url http://evil",
+            "python -m pip index versions foo",
+            "python -m pip mock",
+            "python -m pip._internal install foo",
+            "py -3 -m pip install foo",
+            "python -B -m pip install foo",
+            "python -m uv install foo",
+            "python -m uvx ruff",
+            "python -m npm install foo",
+            "python -m npx some-pkg",
+            "python -m easy_install foo",
+            "python -m setuptools install",
+            "python -m ensurepip",
+            "python -m poetry install",
+            "python -m tox",
+            "python -m dotnet build",
+            "python -m pytest -q; python -m pip install evil",
+            "python -m venv .venv; python -m pip install evil",
+            # `-i` drops the interpreter into an interactive prompt: the
+            # sandbox is about what runs, so the flag is refused too.
+            "python -i -m pytest",
+            # Modules outside the tooling list are refused — default-deny.
+            "python -m http.server 8000",
+            "python -m json.tool f.json",
+            "python -m pdb agent.py",
+            "python -m pipx install foo",
+        ],
+    )
+    def test_blocked(self, cmd: str) -> None:
+        assert find_run_shell_pattern(cmd) is not None, cmd
+
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "python -m pytest tests/ -q",
+            "python -m pytest -q --lf",
+            "python -m mypy agent.py",
+            "python -m unittest discover",
+            "python -m coverage run -m pytest",
+            "python -m ruff check .",
+            "python -m black .",
+            "python -m isort .",
+            "python -m pylint agent.py",
+            "python -m flake8",
+            "python -m py_compile agent.py",
+            "py -3 -m pytest -q",
+            "python -m venv .venv",
+            # Read-only package metadata is not a fetch-and-execute.
+            "python -m pip show foo",
+            "python -m pip list",
+            "python -m pip list --outdated",
+            "python -m pip freeze",
+            "python -m pip check",
+            "python -m pip",
+            # A quoted argument *mentioning* a blocked verb is data, not a
+            # subcommand (the scanner runs on the quoted-blanked copy).
+            "python -m pytest -k 'pip install'",
+        ],
+    )
+    def test_allowed(self, cmd: str) -> None:
+        assert find_run_shell_pattern(cmd) is None, cmd
 
 
 # ── mode selection ──────────────────────────────────────────────────────────
