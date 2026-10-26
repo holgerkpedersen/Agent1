@@ -15,17 +15,41 @@ in git.
 
 Two different evidence classes appear below and they are not equally strong.
 
-- **VERIFIED (statute/authority).** Confirmed this session against lovguiden.dk,
-  danskelove.dk and datacvr.virk.dk. Quoted text in "The statute" section.
-- **CARRIED OVER (unverified this session).** The specific facts of the owner's own
-  filing — the 1993–2005 date range, which address appeared, the CVR number — were
-  established in an earlier session whose transcript was compacted away, and were
-  **never written to a file**. They are not re-derivable from this workspace. Treat the
-  date range as a lead to re-confirm on `datacvr.virk.dk`, not as established fact.
+- **VERIFIED (statute/authority).** Confirmed against lovguiden.dk, danskelove.dk and
+  datacvr.virk.dk. Quoted text in "The statute" section.
+- **VERIFIED (live register query).** The facts of the owner's own filing were
+  re-confirmed by querying the public CVR API with the owner's CVR number and reading
+  the returned record (HTTP 200). This replaces an earlier "carried over, unverified"
+  status — those facts came from a compacted transcript and had never been persisted.
+
+### Live query result
+
+Field **presence** and flags only; literal values are deliberately not reproduced here.
+
+| Field | Observed | Implication |
+|---|---|---|
+| `protected` | **`False`** | **No address protection is currently active.** The fix below is NOT in place. |
+| `startdate` | `01/01 - 1993` | Confirms the 1993 start — previously unverified. |
+| `enddate` | `11/11 - 2005` | Confirms the 2005 end — previously unverified. |
+| `address` | **present** (17 chars) | A residential address is published *right now*. |
+| `zipcode`, `city` | **present** | Enough to locate the address geographically. |
+| `phone` | **present** | Exposed; not previously accounted for. |
+| `email` | **present** | Exposed; a ready-made phishing target. |
+| `owners`, `productionunits` | present | Additional linked records to check. |
+| `creditbankrupt` | `False` | No insolvency flag to correct. |
+
+Two corrections to the earlier analysis:
+
+1. The dates and the exposure are now **fact, not a lead**. The record is live and the
+   address is currently retrievable by anyone who knows the CVR number.
+2. **`phone` and `email` are also published.** The earlier finding covered the address
+   only. Published contact details turn an address leak into a directly contactable
+   attack surface — this raises the finding's severity, it does not lower it.
 
 The `web_search` tool was intermittently returning zero results during this session
 (short Danish queries succeeded; several longer ones and every English query returned
-empty). Absence of a search hit below is therefore *not* evidence of absence.
+empty). Absence of a search hit below is therefore *not* evidence of absence. The live
+API query above was used precisely because search was unreliable.
 
 ## Why this is the top finding
 
@@ -85,6 +109,19 @@ and check whether `<STREET-ADDRESS>` still appears. Also verify the CPR record i
 This is the check that proves the fix landed — the equivalent of re-reading
 `process.versions.brotli` rather than trusting a version label.
 
+### Step 2b — Remove the published phone and email (new this pass)
+
+The live query showed `phone` and `email` are published alongside the address. § 28 /
+CVR suppression covers the **address**; it is not established that it clears contact
+fields. Handle them explicitly:
+
+1. In the CVR self-service flow (Virk / Erhvervsstyrelsen), blank the business phone and
+   email, or replace them with role addresses (`kontakt@…`) that are not personal.
+2. Replace the personal email with an alias you do not use for banking or MitID. CVR
+   email is a ready-made, *verified* phishing target — the attacker gets a real address
+   attached to a real company name.
+3. If a phone number must stay for the business, use a separate number, not your mobile.
+
 ### Step 3 — Set a renewal reminder
 
 Because § 28 protection lapses after a year, put a calendar reminder at ~11 months.
@@ -113,13 +150,24 @@ Anyone asserting they can erase the original filing should be treated with suspi
 
 ## Honest gaps
 
-- The 1993–2005 date range and the specific address were not re-verified; they come
-  from a compacted transcript and were never persisted.
-- Danish broker opt-out procedures were not confirmed — § 28/CPR mechanism was, but the
-  broker landscape changes constantly and needs a fresh check.
+- Danish broker opt-out procedures were not confirmed — the § 28/CPR mechanism was, but
+  the broker landscape changes constantly and needs a fresh check.
 - The earlier "no Black October link" conclusion rested on dark-web and paste sources
   that were unreachable at the time. That remains **absence of evidence**, not a clean
   result.
+- The live query came from a third-party mirror (`cvrapi.dk`), not the authoritative
+  register: `datacvr.virk.dk` returned HTTP 403 to an automated request and
+  `distribution.virk.dk` timed out. The mirror's data matched expectations exactly, but
+  treat `protected = False` as *strongly indicated* and confirm it in the official UI at
+  `datacvr.virk.dk` before acting — do not treat a single third-party mirror as final.
+- `phone` and `email` being published was observed on this pass and has not been
+  separately cross-checked against the official register.
+- Not verified: whether an *active* CPR § 28 protection retroactively suppresses the
+  historical (`enddate` 2005) address record, or only the current one. The law says the
+  private address "ikke bliver offentliggjort … så længe beskyttelsen er gældende",
+  which reads as *current-state*, so the historical row may remain visible even after
+  protection is granted. **Assume it stays visible** and plan broker removal on that
+  basis. This is the single most important unknown in this document.
 
 ## Related
 
