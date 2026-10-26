@@ -15,6 +15,13 @@ from typing import Final, List, Set
 # ---------------------------------------------------------------------------
 
 #: Allow-list of safe shell commands (binary names only).
+#:
+#: This is the TIER-2 sandbox list: a command must appear here to run under
+#: :func:`agent_core.tools.shell_ops.run_command` (structural scan +
+#: ``shell=False``).  It is deliberately small — every entry is a capability.
+#: ``python`` is the widest entry by far (it can read and write any file the
+#: process can reach), so this list is NOT the boundary for the interactive
+#: ``run`` tool; see ``RUN_SHELL_COMMANDS`` for that.
 SAFE_COMMANDS: Final[Set[str]] = {
     "python",
     "python3",
@@ -28,6 +35,129 @@ SAFE_COMMANDS: Final[Set[str]] = {
     "echo",
     "pwd",
 }
+
+#: Commands the interactive ``run`` tool may execute in **strict** mode
+#: (``AGENT_RUN_SANDBOX=strict``).  These run through the TIER-1 destructive
+#: block-list plus a structural scan that ignores quoted text, and are still
+#: launched in the advertised shell so pipelines keep working.
+#:
+#: The list is an *interpreter/cmdlet* list, not a program list: a PowerShell
+#: cmdlet is only reachable through ``pwsh``/``powershell``, so blocking a
+#: cmdlet name here buys nothing — what matters is that no **arbitrary**
+#: executable is reachable, and that ``pwsh``/``powershell`` themselves are
+#: gated by :data:`RUN_SHELL_INVOKE_PATTERNS`.
+RUN_SHELL_COMMANDS: Final[Set[str]] = {
+    # Interpreters the agent legitimately drives.
+    "python",
+    "python3",
+    "py",
+    "pytest",
+    # Version control.
+    "git",
+    # POSIX file/text tools (PowerShell aliases these to cmdlets).
+    "ls",
+    "dir",
+    "cat",
+    "type",
+    "head",
+    "tail",
+    "echo",
+    "pwd",
+    "find",
+    "grep",
+    "wc",
+    "sort",
+    "uniq",
+    "tr",
+    "cut",
+    "sed",
+    "tree",
+    "which",
+    "where",
+    "basename",
+    "dirname",
+    "file",
+    "stat",
+    "du",
+    "df",
+    "touch",
+    "mkdir",
+    "mv",
+    "cp",
+    "rm",
+    "md5sum",
+    "sha256sum",
+    # Windows console text tools.
+    "findstr",
+    "more",
+    "set",
+    # PowerShell builtins used for output shaping (see the Invoke- patterns).
+    "write-output",
+    "write-host",
+    "select-string",
+    "select-object",
+    "foreach-object",
+    "foreach",
+    "get-childitem",
+    "get-content",
+    "get-location",
+    "get-command",
+    "measure-object",
+    "format-table",
+    # The shell itself, reachable only under the Invoke- gate below.
+    "pwsh",
+    "powershell",
+}
+
+#: Command shapes that are refused in **strict** mode even when the binary is
+#: in :data:`RUN_SHELL_COMMANDS`.  Each entry closes a specific escape hatch
+#: that turns an allowed name into arbitrary code execution.
+#:
+#: Deliberately NOT blocked: ``python -m <module>`` (the agent runs
+#: ``python -m pytest``/``python -m mypy`` — a module name is not attacker
+#: chosen code), and a leading absolute path (``/usr/bin/git``, which stays
+#: subject to the binary allow-list).
+RUN_SHELL_INVOKE_PATTERNS: Final[tuple[tuple[re.Pattern[str], str], ...]] = (
+    (
+        re.compile(r"\b(?:invoke-expression|iex)\b", re.I),
+        "dynamic code execution (Invoke-Expression / iex)",
+    ),
+    (
+        re.compile(
+            r"\bpwsh(?=[\s'\"-])[\s\S]*\s-(?:c|e|command|encodedcommand)\b", re.I
+        ),
+        "nested shell -c / -Command (arbitrary code via the shell)",
+    ),
+    (
+        re.compile(
+            r"\bpowershell(?=[\s'\"-])[\s\S]*\s-(?:c|e|command|encodedcommand)\b",
+            re.I,
+        ),
+        "nested shell -c / -Command (arbitrary code via the shell)",
+    ),
+    (
+        # `./prog`, `.\prog.ps1`, `& prog` — the call forms for local files.
+        re.compile(r"^[\s'\"&]*(?:\.[/\\]|&\s)", re.I),
+        "path-prefixed execution (./program, & program)",
+    ),
+    (
+        re.compile(r"(?:^|[;&|]\s*)\.(?=\s|$)", re.I),
+        "dot-source (`. file` loads and runs a script)",
+    ),
+    (
+        # python/py -c, and combined short flags like -uc.  `python -3`
+        # (the versioned launcher name) is accepted, so an optional numeric
+        # flag may sit between the binary and -c.
+        re.compile(r"\b(?:python\d*|py)(?:\s+-\d[a-z0-9]*)?\s+-[a-z]*c(?=\s|$)", re.I),
+        "python -c (arbitrary code via the interpreter)",
+    ),
+    (
+        # `py -3 -c` — the launcher takes a version flag before -c, so the
+        # binary and the flag are not adjacent.
+        re.compile(r"\bpy\s+-\d[a-z0-9]*\s+-[a-z]*c(?=\s|$)", re.I),
+        "py -<ver> -c (arbitrary code via the interpreter)",
+    ),
+)
 
 #: Structural shell patterns that must never appear in a command string —
 #: pipes, redirection, chaining, command substitution.  Even with
@@ -91,6 +221,161 @@ def _normalize(binary_name: str) -> str:
     return normalized
 
 
+def _basename(invocation: str) -> str:
+    """Reduce a command invocation to its bare binary name.
+
+    ``/usr/bin/git``, ``C:\\Program Files\\Git\\bin\\git.exe`` and ``git``
+    all name the same binary, so the allow-list must compare basenames after
+    normalizing separators.  Quote characters are stripped so a quoted
+    invocation (``"git"`` on Windows) resolves to the same name.
+    """
+    text = invocation.strip().strip("'\"")
+    return text.replace("\\", "/").rsplit("/", 1)[-1]
+
+
+def _resolve_invocation(masked: str, start: int, original: str) -> str:
+    """The invocation text, with a masked quoted span resolved from *original*.
+
+    *masked* is the :func:`_blanked_quote_mask` copy (quoted spans are runs
+    of ``@``) and *start* is the offset where the invocation begins.  A
+    quoted invocation (``"C:\\Program Files\\Git\\bin\\git.exe"``) survives
+    the mask as a run of ``@``; the real name is taken from the same slice
+    of the ORIGINAL text so the allow-list sees the binary, not the mask.
+    """
+    if not masked.startswith("@"):
+        return masked
+    quoted = original[start : start + len(masked)]
+    # The mask blanks the quote characters too, so the original slice is the
+    # full quoted token (`"path with spaces"`); strip the quotes.
+    return quoted.strip().strip("'\"")
+
+
+# A command invocation (the first token of a shell segment): a bare name, a
+# masked quoted span, or an unquoted path.  A path keeps running across
+# spaces as long as the *next* path component is followed by another
+# separator, so `C:\Program Files\Git\bin\git.exe` is ONE invocation while
+# the trailing ` status` argument is not swallowed.  Splitting on
+# whitespace broke the path apart and invented a segment starting with
+# `Program` — a false positive that blocked normal work.
+_SEGMENT_INVOKE_RE = re.compile(
+    r"""
+    (?:
+        @+                                        # quoted invocation (mask)
+      | [\w.:\-]+(?:[/\\][\w.:\- ]*[/\\][\w.:\-]+)+  # path (spaces inside ok)
+      | [\w.\-]+                                  # bare binary name
+    )
+    """,
+    re.VERBOSE,
+)
+
+
+
+# A command invocation (the first token of a shell segment): a bare name, a
+# quoted path, or an unquoted path.  A path keeps running across spaces as
+# long as the *next* path component is followed by another separator, so
+# `C:\Program Files\Git\bin\git.exe` is ONE invocation while the trailing
+# ` status` argument is not swallowed.  Splitting on whitespace broke the
+# path apart and invented a segment starting with `Program` — a false
+# positive that blocked normal work.
+_SEGMENT_INVOKE_RE = re.compile(
+    r"""
+    (?:
+        @+                                   # quoted invocation (masked span)
+      | (?:[\w.:\-]+[/\\][\w.:\- ]*[/\\])+[\w.:\-]+  # path (spaces inside ok)
+      | [\w.\-]+                             # bare binary name
+    )
+    """,
+    re.VERBOSE,
+)
+
+
+def _segment_invocations(command: str, original: str) -> List[str]:
+    """The binary invocation (first token) of every shell segment.
+
+    *command* must have its quoted spans masked (see
+    :func:`_blanked_quote_mask`) so a quoted argument is never mistaken for
+    a command, and its redirection operators dropped (see
+    :data:`_REDIRECTION_RE`) so ``2>&1`` does not create a segment starting
+    with ``1``.  *original* is the un-masked command text, used to recover
+    the real name of a quoted invocation (see :func:`_resolve_invocation`).
+    A segment that starts with an operator (``&&``, ``|``, ``;``) is a
+    continuation of the previous segment, not a new command, and is skipped.
+
+    The invocation is taken with :data:`_SEGMENT_INVOKE_RE` (not whitespace
+    splitting) so a path with spaces — quoted
+    (``"C:\\Program Files\\Git\\bin\\git.exe"``) or unquoted
+    (``C:\\Program Files\\Git\\bin\\git.exe``) — is ONE invocation.
+    """
+    invocations: List[str] = []
+    for segment in re.split(r"&&|\|\||[;|&\r\n]", command):
+        seg = segment.strip()
+        if not seg:
+            continue
+        # An operator-led segment (`&& git status`, `| head -20`) continues
+        # the previous command; its first token is an argument, not a binary.
+        if seg[0] in ("&", "|", ";", ">"):
+            continue
+        match = _SEGMENT_INVOKE_RE.match(seg)
+        if match:
+            # A masked quoted invocation (`@...`) is resolved against the
+            # ORIGINAL text so the allow-list sees the real binary name.
+            invocations.append(
+                _resolve_invocation(match.group(0), match.start(), original)
+            )
+        else:
+            parts = seg.split()
+            if parts:
+                invocations.append(parts[0])
+    return invocations
+
+
+def _blanked_quote_mask(command: str) -> str:
+    """Equal-length copy of *command* with quoted spans replaced by ``@``.
+
+    ``@`` is not a shell operator and not a quote, so a quoted span is inert
+    for the structural scan: ``git commit -m "fix: a && b"`` stays ONE
+    segment starting with ``git`` instead of being split at the ``&&``
+    inside the quoted argument.  Replacing each quoted character with a
+    single ``@`` keeps the length identical, so reported offsets stay valid.
+
+    The invocation matcher (:data:`_SEGMENT_INVOKE_RE`) treats a leading
+    run of ``@`` as a quoted invocation and recovers the real binary name
+    from the ORIGINAL text, so masking never loses the name itself.
+    """
+    out: List[str] = []
+    quote: str | None = None
+    escaped = False
+    for ch in command:
+        if escaped:
+            out.append("@" if quote else ch)
+            escaped = False
+            continue
+        if ch == "\\" and quote:
+            out.append("@")
+            escaped = True
+            continue
+        if quote:
+            out.append("@")
+            if ch == quote:
+                quote = None
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            out.append("@")
+            continue
+        out.append(ch)
+    return "".join(out)
+
+
+
+# Redirection operators, matched before the segment split.  `2>&1` contains
+# `&`; splitting on it would invent a segment starting with `1` and refuse a
+# command (``cat a.txt 2>&1 | head -20``) that is entirely allow-listed.
+# Redirection targets are files, not commands, so dropping the operator
+# leaves nothing that needs allow-listing.
+_REDIRECTION_RE = re.compile(r"(?:\d*)\s*(?:>>|>|<|2>&1|<&|>&)")
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -103,6 +388,12 @@ def find_unsafe_shell_pattern(cmd_str: str) -> str | None:
     chaining (``&&`` / ``||`` / ``;``), and command substitution.  Returns
     ``None`` when the command string is structurally safe — the binary
     allow-list then decides whether the command may run.
+
+    This scanner looks at the **raw** string, so it also rejects
+    metacharacters that merely appear inside a quoted argument.  The
+    interactive ``run`` tool cannot use it for that reason (``python -c
+    "import sys; ..."`` is legitimate); :func:`find_run_shell_pattern`
+    quotes-aware scanner is the one for that path.
     """
     if not cmd_str:
         return None
@@ -110,6 +401,65 @@ def find_unsafe_shell_pattern(cmd_str: str) -> str | None:
         if token in cmd_str:
             return description
     return None
+
+
+def find_run_shell_pattern(cmd_str: str) -> str | None:
+    """Return the first **strict-mode** violation in *cmd_str*, or ``None``.
+
+    This is the TIER-2 policy for the interactive ``run`` tool
+    (``AGENT_RUN_SANDBOX=strict``).  Three checks, in order:
+
+    1. :data:`RUN_SHELL_INVOKE_PATTERNS` — the escape hatches that turn an
+       allowed name into arbitrary code (``Invoke-Expression``, a nested
+       shell ``-Command``, ``python -c``, dot-sourcing, ``./prog``).
+    2. The binary name must be in :data:`RUN_SHELL_COMMANDS`.  Every shell
+       segment is checked, so ``git status && curl ...`` is refused for
+       ``curl`` even though the pipe itself is allowed.
+    3. Unquoted command substitution (``$(`` / backtick) — pipes and
+       redirection stay legal because every segment is allow-listed.
+
+    Quoted spans are blanked before the structural check
+    (:func:`_strip_quoted_segments`), so
+    ``python -c "import sys; sys.exit(3)"`` is not rejected for its ``;``
+    while ``git status && rm -rf /`` is refused for ``rm``.
+    """
+    if not cmd_str:
+        return None
+
+    # 1. Escape-hatch shapes, scanned on the quoted-blanked copy so a
+    #    quoted argument containing the word "iex" is not a violation.
+    stripped = _strip_quoted_segments(cmd_str)
+    for pattern, description in RUN_SHELL_INVOKE_PATTERNS:
+        if pattern.search(stripped):
+            return description
+
+    # 2. Every shell segment must start with an allow-listed binary.
+    #    Quoted spans are masked (not blanked) so a quoted argument is
+    #    never mistaken for a command: `git commit -m "fix: a && b"` is
+    #    ONE segment starting with `git`, not two segments starting with
+    #    `b`.  Redirection is dropped before splitting: `2>&1` contains
+    #    `&`, and splitting it would invent a segment starting with `1`.
+    #    The target of a redirection is a file, not a command, so there is
+    #    nothing to allow-list there.
+    tokenizable = _REDIRECTION_RE.sub(" ", _blanked_quote_mask(cmd_str))
+    for invocation in _segment_invocations(tokenizable, cmd_str):
+        # `git` invoked as a path (`/usr/bin/git status`) is the same
+        # binary; `./prog` was already refused by the Invoke- patterns.
+        binary = _basename(invocation)
+        if not is_run_shell_allowed(binary):
+            return f"command '{binary}' is not in the run allow-list"
+
+    # 3. Command substitution (same quoted-blanked copy as check 2).
+    if "$(" in stripped:
+        return "command substitution ($()"
+    if "`" in stripped:
+        return "command substitution (`)"
+    return None
+
+
+def is_run_shell_allowed(binary_name: str) -> bool:
+    """Check *binary_name* against :data:`RUN_SHELL_COMMANDS` (normalized)."""
+    return _normalize(binary_name) in RUN_SHELL_COMMANDS
 
 
 def _strip_quoted_segments(cmd_str: str) -> str:
@@ -177,11 +527,13 @@ def scan_command(cmd_str: str) -> str | None:
     whether to apply the binary allow-list or its own fallback.
 
     Note the two-tier split: the NLP ``run`` tool intentionally does NOT use
-    this function.  It keeps ``shell=True`` and must still execute pipes
+    this function.  It keeps a real shell and must still execute pipes
     (``... 2>&1 | ...``), which on cmd.exe fail silently and are surfaced to
     the model as a wrong-shell Hint — a documented feature pinned by
     ``tests/test_tool_loop_nlp.py::TestRunToolShellAwareness``.  Rejecting
-    metacharacters there would delete that diagnostic.
+    metacharacters there would delete that diagnostic.  The ``run`` tool's
+    strict-mode policy is :func:`find_run_shell_pattern`, which allow-lists
+    every shell segment instead of banning the pipe itself.
     """
     destructive = find_destructive_shell_pattern(cmd_str)
     if destructive is not None:

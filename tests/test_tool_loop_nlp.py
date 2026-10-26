@@ -1202,10 +1202,14 @@ class TestRunToolShellAwareness:
 
         assert f"SHELL_NAME={_SHELL_NAME}" in _SYSTEM_PROMPT
 
-    def test_unknown_command_gets_shell_hint(self):
+    def test_unknown_command_gets_shell_hint(self, monkeypatch):
         import asyncio
         from agent import Agent
 
+        # The subject is the post-execution "command not found" -> Hint path.
+        # The strict run sandbox (the default) blocks an unknown binary
+        # before it reaches the shell, so this test runs in dev mode.
+        monkeypatch.setenv("AGENT_RUN_SANDBOX", "dev")
         agent = Agent(workspace=".")
 
         async def run():
@@ -1223,7 +1227,7 @@ class TestRunToolShellAwareness:
         # POSIX: "ls/cat/grep/find") — `tail` only appears on Windows.
         assert "grep" in result
 
-    def test_silent_pipeline_failure_gets_shell_hint(self):
+    def test_silent_pipeline_failure_gets_shell_hint(self, monkeypatch):
         """cmd.exe fails whole Unix-style pipelines silently (rc 255, no
         output) when a pipe element does not exist.  Both sides use names
         guaranteed to be absent everywhere — real tools (mypy/tail) exist on
@@ -1232,6 +1236,9 @@ class TestRunToolShellAwareness:
         import asyncio
         from agent import Agent
 
+        # Post-execution shell-awareness path: the strict sandbox (default)
+        # would block the unknown binaries before they reach the shell.
+        monkeypatch.setenv("AGENT_RUN_SANDBOX", "dev")
         agent = Agent(workspace=".")
 
         async def run():

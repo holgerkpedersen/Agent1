@@ -205,7 +205,13 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "one per session — run it ONCE at the END of the work. Use "
                 "`--lf` (only what failed), `--testmon` (only what changed) or "
                 "an explicit test path while iterating; scratch files like "
-                "_tmp_*.py never justify a full run."
+                "_tmp_*.py never justify a full run. "
+                "SANDBOX: by default (AGENT_RUN_SANDBOX=strict) every shell "
+                "segment must start with an allow-listed binary, and nested "
+                "shell -Command, Invoke-Expression, python -c, dot-sourcing "
+                "and ./script execution are refused; blocked commands tell you "
+                "so — do not retry them. The operator sets "
+                "AGENT_RUN_SANDBOX=dev for unsandboxed runs."
             ),
             "parameters": {
                 "type": "object",

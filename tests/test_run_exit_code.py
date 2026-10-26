@@ -81,16 +81,21 @@ class TestExitCodeEndToEnd:
         assert "[EXIT CODE" not in out
         assert "12345" in out
 
-    def test_nlp_run_unknown_command_exit_code_and_hint(self, tmp_path) -> None:
+    def test_nlp_run_unknown_command_exit_code_and_hint(
+        self, tmp_path, monkeypatch
+    ) -> None:
         # CommandNotFoundException is a CMDLET-level failure: $LASTEXITCODE
         # stays $null, so the marker snippet must fall back to $? — otherwise
         # the code was 0 (the trailing Write-Host's) and the Hint never fired.
+        # The strict run sandbox (the default) blocks an unknown binary
+        # before it reaches the shell, so this test runs in dev mode.
         import os
         import pytest
         from agent_core.shell_utils import detect_shell
 
         if os.name != "nt" or detect_shell() != "powershell":
             pytest.skip("PowerShell session only")
+        monkeypatch.setenv("AGENT_RUN_SANDBOX", "dev")
         bot = Agent(workspace=str(tmp_path))
         out = asyncio.run(
             bot._nlp_run({"command": "definitely_not_a_real_command_9k2f"})

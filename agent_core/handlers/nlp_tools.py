@@ -141,6 +141,51 @@ def _blocked_shell_command(cmd: str) -> Any:
     return _agent_module_attr("_blocked_shell_command")(cmd)
 
 
+#: Env var selecting the ``run`` tool's execution policy; read per call so a
+#: test (or a user) can flip it without re-importing.
+RUN_SANDBOX_MODE_ENV = "AGENT_RUN_SANDBOX"
+
+#: Refusal returned when strict mode blocks a command, telling the model (and
+#: the human) how to get an unsandboxed run without silently weakening the
+#: default.
+RUN_SANDBOX_REFUSAL = (
+    "Error: run blocked in strict sandbox mode ({reason}).\n"
+    "The command binary must be in the run allow-list and must not use a "
+    "nested shell -Command, Invoke-Expression, python -c, dot-sourcing or "
+    "./script execution. Set AGENT_RUN_SANDBOX=dev in the environment to run "
+    "any command (only with the destructive block-list), and expect it to be "
+    "logged loudly."
+)
+
+
+def _run_sandbox_mode() -> str:
+    """Return the ``run`` tool's sandbox mode: ``"strict"`` (default) or ``"dev"``.
+
+    Fail-closed: an unset, empty or unrecognised value means ``"strict"``.
+    ``dev`` is the explicit escape hatch for the human operator's shell
+    (pipelines with arbitrary tools such as ``findstr``/``more``); it keeps
+    the TIER-1 destructive block-list and is logged on every command.
+    """
+    raw = (os.environ.get(RUN_SANDBOX_MODE_ENV) or "").strip().lower()
+    return raw if raw in ("strict", "dev") else "strict"
+
+
+def _run_policy_logger() -> logging.Logger:
+    """Logger for run-tool execution-policy decisions (audit trail)."""
+    return logging.getLogger("agent_core.security.run_policy")
+
+
+def _run_shell_policy_violation(cmd: str) -> str | None:
+    """Return the strict-mode policy violation for *cmd*, or ``None``.
+
+    Delegates to :func:`agent_core.security.allowlist.find_run_shell_pattern`
+    so the shell policy keeps ONE owner.
+    """
+    from agent_core.security.allowlist import find_run_shell_pattern
+
+    return find_run_shell_pattern(cmd)
+
+
 def _run_shell_command(cmd: str) -> list[str]:
     # The run tool's shell selector: argv that executes *cmd* in the shell the
     # system prompt advertises (see agent_core/shell_utils.run_shell_command).
@@ -999,6 +1044,28 @@ async def _nlp_run(agent: "Agent", args: dict[str, Any]) -> str:
     blocked = _blocked_shell_command(cmd_to_run)
     if blocked:
         return f"Error: Dangerous command blocked ({blocked}): {cmd_to_run}"
+    # TIER-2 execution boundary.  The destructive block-list above is a
+    # regex list, not a sandbox: it blocks `Remove-Item -Recurse` but not
+    # `iex`, `Set-Content`, `Invoke-WebRequest` or `Start-Process`, so on
+    # its own it lets text that reaches the model (web search results,
+    # tool output, a poisoned repo file) run arbitrary code as the operator.
+    # Strict mode therefore requires that every shell segment start with an
+    # allow-listed binary, and rejects the shapes that turn an allowed name
+    # into arbitrary code.  AGENT_RUN_SANDBOX=dev is the operator's
+    # explicit escape hatch; the choice is logged per command.
+    mode = _run_sandbox_mode()
+    if mode == "strict":
+        violation = _run_shell_policy_violation(cmd_to_run)
+        if violation:
+            _run_policy_logger().warning(
+                "run blocked (strict): %s | %s", violation, cmd_to_run
+            )
+            return RUN_SANDBOX_REFUSAL.format(reason=violation)
+    else:
+        _run_policy_logger().warning(
+            "run executing OUTSIDE the sandbox (AGENT_RUN_SANDBOX=dev): %s",
+            cmd_to_run,
+        )
     # Known-bad pytest flag combos crash pytest itself (INTERNALERROR) rather
     # than producing a usage error the model could self-correct from.  Refuse
     # with an actionable message instead of burning a turn on a stack trace.
