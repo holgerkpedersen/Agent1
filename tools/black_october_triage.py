@@ -4,13 +4,15 @@ Checks the IoCs disclosed for the Black October wave (Oct 19-22 2026):
  - LiteLLM 1.107.0 supply chain: sitecustomize/usercustomize startup hooks,
    litellm presence, hourly RCE loader persistence.
  - Generic payload-drop persistence (Run keys, Startup folders, scheduled tasks).
- - Runtime exposure: PHP/Node presence for PHP2Shell / Node2Shell.
+ - Runtime exposure: PHP (CVE-2026-109618/19) and the bundled Brotli decoder
+   (CVE-2026-111497) inside Node and other native runtimes.
 
 Run: python tools/black_october_triage.py   (exit code = number of findings)
 """
 
 import csv
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -271,6 +273,60 @@ def _node_is_patched(ver: str) -> tuple[bool, str]:
     return False, f"node {core} < fixed {fixed} - VULNERABLE to CVE-2026-111497"
 
 
+#: CVE-2026-111497 is a Brotli *decoder* out-of-bounds write, not a Node-specific
+#: flaw: Node inherits it by bundling Brotli 1.2.0.  Affected range is Brotli
+#: 1.0.3 through 1.2.0; the fix landed in 1.0.10, 1.1.1 and 1.2.1.  Classifying
+#: the Brotli version is therefore the real test - the Node version is only a proxy
+#: and can disagree with reality (a backport may or may not have landed).
+FIXED_BROTLI = {(1, 0, 10), (1, 1, 1), (1, 2, 1)}
+
+
+def _brotli_is_patched(ver: str) -> tuple[bool, str]:
+    """Return (patched, note) for a bundled Brotli version string like '1.2.0'."""
+    core = (ver or "").strip().lstrip("v")
+    parts = core.split(".")[:3]
+    try:
+        t = tuple(int(x) for x in parts)
+    except ValueError:
+        return False, f"unparseable brotli version {ver!r}"
+    t = t + (0,) * (3 - len(t))
+    if t in FIXED_BROTLI:
+        return True, f"brotli {core} is a fixed release"
+    if t < (1, 0, 3):
+        return True, f"brotli {core} predates the affected range 1.0.3-1.2.0"
+    if t <= (1, 2, 0):
+        return False, (
+            f"brotli {core} is in the affected range 1.0.3-1.2.0 "
+            "(CVE-2026-111497, fixed in 1.2.1)"
+        )
+    return True, f"brotli {core} is newer than the affected range"
+
+
+def _brotli_evidence(exe: str) -> str:
+    """Return '; bundled <verdict>' read from a node binary, or '' if unreadable.
+
+    Node exposes the exact packaged decoder version as process.versions.brotli,
+    which is the fact that decides CVE-2026-111497 - not the Node version.
+
+    The output is only trusted when it actually looks like a Brotli version.
+    A Brotli release is major 0 or 1 (current fixed line is 1.2.1); anything else
+    means we read a Node version or an error message, and inventing a verdict
+    from that would be worse than saying nothing.
+    """
+    raw = sh(f'"{exe}" -p process.versions.brotli 2>&1').strip()
+    if not raw:
+        return ""
+    val = raw.splitlines()[0].strip()
+    if not re.fullmatch(r"\d+\.\d+(?:\.\d+)?", val):
+        return ""
+    if int(val.split(".")[0]) > 1:
+        return ""
+    _ok, verdict = _brotli_is_patched(val)
+    if "unparseable" in verdict:
+        return ""
+    return f"; bundled {verdict}"
+
+
 def _bundled_node() -> list[str]:
     roots = (
         pathlib.Path.home() / "AppData/Local/Programs",
@@ -290,40 +346,46 @@ def _bundled_node() -> list[str]:
 def check_runtimes() -> None:
     out = sh("php --version 2>&1")
     if "not found" in out.lower() or "not recognized" in out.lower() or not out.strip():
-        print("[ok] php not present -> PHP2Shell CVE-2026-109618/19 not applicable")
+        print("[ok] php not present -> PHP CVE-2026-109618/109619 not applicable")
     else:
         flag("HIGH", "php-runtime-present",
-             f"php --version -> {out.strip()[:80]} (PHP2Shell CVE-2026-109618/19: "
-             "upgrade to 8.5.12/8.4.27/8.3.36/8.2.35)")
+             f"php --version -> {out.strip()[:80]} (PHP CVE-2026-109618/109619 "
+             "9.2 criticals: upgrade to 8.5.12/8.4.27/8.3.36/8.2.35)")
 
     out = sh("node --version 2>&1")
     if "not found" in out.lower() or "not recognized" in out.lower() or not out.strip():
-        print("[ok] node not on PATH -> Node2Shell not applicable via PATH")
+        print("[ok] node not on PATH -> Brotli CVE-2026-111497 not reachable via PATH")
     else:
         patched, note = _node_is_patched(out.strip())
         if patched:
             print(f"[ok] {note}")
         else:
-            flag("CRITICAL", "node2shell", f"PATH node: {note}")
+            flag("CRITICAL", "node-brotli",
+                 f"PATH node: {note}{_brotli_evidence('node')}")
 
     for exe in _bundled_node():
         out = sh(f'"{exe}" --version 2>&1')
         if not out.strip() or "not recognized" in out.lower():
             flag("MEDIUM", "bundled-node-unreadable",
                  f"{exe} present but version unreadable in sandbox - check manually "
-                 "against Node2Shell fixed versions 22.23.4/24.22.1/26.12.1")
+                 "against Brotli decoder CVE-2026-111497 fixed versions "
+                 "1.0.10/1.1.1/1.2.1 (Node patched lines: 22.23.4/24.22.1/26.12.1)")
             continue
         patched, note = _node_is_patched(out.strip())
         if patched:
             print(f"[ok] {exe}: {note}")
         else:
-            flag("HIGH", "bundled-node2shell", f"{exe}: {note}")
+            flag("HIGH", "bundled-node-brotli",
+                 f"{exe}: {note}{_brotli_evidence(exe)}")
 
 
 def check_python_brotli() -> None:
-    """HTTP2Shell/Python2Shell: requests/urllib3/aiohttp auto-use brotli if installed.
+    """Brotli CVE-2026-111497, Python leg.
 
-    Fixed: Python Brotli 1.2.1, brotlicffi 1.2.1.0 (per Black October advisories).
+    requests/urllib3/aiohttp decode Brotli automatically when a brotli module is
+    importable, so a vulnerable Python Brotli is reachable from ordinary HTTP.
+
+    Fixed: Python Brotli 1.2.1, brotlicffi 1.2.1.0.
     """
     out = sh("python -m pip list 2>&1")
     lines = [
@@ -334,15 +396,83 @@ def check_python_brotli() -> None:
     if not lines:
         print(
             "[ok] no python brotli/brotlicffi installed "
-            "-> HTTP2Shell Python leg not applicable"
+            "-> Brotli CVE-2026-111497 Python leg not applicable"
         )
         return
     for ln in lines:
         parts = ln.split()
         name, ver = parts[0], parts[1] if len(parts) > 1 else "?"
         flag("HIGH", "python-brotli-present",
-             f"{name} {ver} - HTTP2Shell CVE-2026-111497: upgrade to "
+             f"{name} {ver} - Brotli CVE-2026-111497: upgrade to "
              "Brotli>=1.2.1 / brotlicffi>=1.2.1.0, then restart all Python services")
+
+
+def _brotli_cli_paths() -> list[pathlib.Path]:
+    """Return standalone ``brotli.exe`` copies bundled by other apps.
+
+    Node's bundled decoder is covered by ``check_runtimes`` via
+    ``process.versions.brotli``.  Other apps (Git for Windows, OCR/AI bundles)
+    ship a separate CLI whose decoder version is the decisive fact - and the
+    mingw ``libbrotlidec.dll`` copies carry no version resource, so the CLI is
+    the only reliable probe.
+
+    The globs are bounded to one directory level on purpose: a recursive walk of
+    ``Program Files`` is slow and would trip over permission-denied trees.
+    """
+    found: list[pathlib.Path] = []
+    for root, pattern in (
+        ("C:/Program Files", "*/mingw64/bin/brotli.exe"),
+        ("C:/Program Files", "*/bin/brotli.exe"),
+        ("C:/Program Files (x86)", "*/mingw64/bin/brotli.exe"),
+    ):
+        base = pathlib.Path(root)
+        if not base.is_dir():
+            continue
+        try:
+            found.extend(sorted(base.glob(pattern)))
+        except OSError:
+            continue  # unreadable tree - not a finding, just skip it
+    extra = [
+        pathlib.Path.home()
+        / "AppData/Local/AMD/AI_Bundle/ComfyUI/Git/mingw64/bin/brotli.exe",
+    ]
+    found.extend(p for p in extra if p.exists())
+    seen: set[str] = set()
+    uniq: list[pathlib.Path] = []
+    for p in found:
+        key = str(p).lower()
+        if key not in seen and p.exists():
+            seen.add(key)
+            uniq.append(p)
+    return uniq
+
+
+def check_native_brotli() -> None:
+    """Brotli CVE-2026-111497 in native apps that ship their own brotli.exe.
+
+    Affected range is Brotli 1.0.3-1.2.0; a 1.1.x copy needs 1.1.1, a 1.2.x copy
+    needs 1.2.1.  Ranked below the Node finding because nothing here decodes
+    attacker-supplied Brotli on its own - it takes someone running ``brotli -d``
+    on hostile input.
+    """
+    paths = _brotli_cli_paths()
+    if not paths:
+        print("[ok] no standalone brotli.exe found -> native Brotli leg not applicable")
+        return
+    for exe in paths:
+        out = sh(f'"{exe}" --version 2>&1')
+        m = re.search(r"brotli\s+v?(\d+\.\d+(?:\.\d+)?)", out or "", re.I)
+        if not m:
+            flag("MEDIUM", "brotli-cli-unreadable",
+                 f"{exe} present but version unreadable in sandbox - check manually "
+                 "against the affected range 1.0.3-1.2.0 (CVE-2026-111497)")
+            continue
+        _patched, note = _brotli_is_patched(m.group(1))
+        if _patched:
+            print(f"[ok] {exe}: {note}")
+        else:
+            flag("MEDIUM", "brotli-cli-vulnerable",
+                 f"{exe}: {note} - update the owning app so it stops shipping it")
 
 
 def check_wallets() -> None:
@@ -391,9 +521,14 @@ def check_ai_runtimes() -> None:
              f"{oll} present - verify version, bind 127.0.0.1 only")
     java = sh('java -version 2>&1')
     if "not recognized" not in java.lower() and java.strip():
-        flag("MEDIUM", "java-present",
+        # NOTE: the CVE previously cited here (CVE-2026-22020 "Java Flight
+        # Recorder") returns zero records from the NVD API, i.e. it is not a
+        # published identifier.  No advisory backs it, so it is not cited.
+        # The old runtime is still worth upgrading on age alone -> LOW.
+        flag("LOW", "java-present",
              f"java --version -> {java.strip().splitlines()[0][:60]} "
-             "(CVE-2026-22020 Java Flight Recorder: patch to latest CPU)")
+             "(old runtime - upgrade on general age/unsupported-CPU grounds; "
+             "no specific advisory is attached to this finding)")
 
 
 LOOPBACK = {"127.0.0.1", "::1", "localhost", ""}
@@ -529,6 +664,7 @@ def main() -> int:
     check_scheduled_tasks()
     check_runtimes()
     check_python_brotli()
+    check_native_brotli()
     check_wallets()
     check_ca_trust()
     check_ai_runtimes()

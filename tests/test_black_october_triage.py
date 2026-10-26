@@ -184,13 +184,166 @@ def test_node_gate_rejects_unparseable_version():
     assert "unparseable" in note
 
 
+# --- CVE-2026-111497 is a BROTLI decoder bug, not a "Node2Shell" -----------
+#
+# NVD + Node's own advisory: buffer overflow in the Brotli decoder, affected
+# Brotli 1.0.3 through 1.2.0, fixed in 1.0.10 / 1.1.1 / 1.2.1.  Node inherits it
+# by bundling Brotli.  Scanning used to report purely on the Node version and call
+# it "Node2Shell", which both misnamed the defect and could miss a backport.
+#
+# Observed on the scan host: node 24.15.0 and node 25.5.0 BOTH bundle brotli
+# 1.2.0.  The affected version, not the runtime, decides the risk.
+@pytest.mark.parametrize(
+    "version,patched",
+    [
+        ("1.2.0", False),   # observed in every Node binary on the host
+        ("1.1.0", False),
+        ("1.0.3", False),   # first affected release
+        ("1.0.9", False),
+        ("1.2.1", True),    # first fixed release in the 1.2 line
+        ("1.1.1", True),
+        ("1.0.10", True),
+        ("1.3.0", True),
+        ("1.0.2", True),    # predates the affected range
+    ],
+)
+def test_brotli_gate_matches_nvd_affected_range(version, patched):
+    ok, note = bot._brotli_is_patched(version)
+    assert ok is patched, note
+
+
+def test_brotli_gate_rejects_unparseable_version():
+    ok, note = bot._brotli_is_patched("not-a-version")
+    assert ok is False
+    assert "unparseable" in note
+
+
+def test_brotli_gate_names_the_real_cve_when_vulnerable():
+    ok, note = bot._brotli_is_patched("1.2.0")
+    assert ok is False
+    assert "CVE-2026-111497" in note
+    assert "1.2.1" in note
+
+
+def test_brotli_evidence_is_silent_when_version_unreadable(monkeypatch):
+    """A sandbox that cannot run node must not invent a Brotli verdict."""
+    monkeypatch.setattr(bot, "sh", lambda _cmd: "")
+    assert bot._brotli_evidence("node") == ""
+
+
+def test_brotli_evidence_reports_vulnerable_bundle(monkeypatch):
+    monkeypatch.setattr(bot, "sh", lambda _cmd: "1.2.0\n")
+    ev = bot._brotli_evidence("node")
+    assert "CVE-2026-111497" in ev
+
+
+def test_brotli_evidence_rejects_node_version_as_brotli(monkeypatch):
+    """A Node version string must never be accepted as a Brotli version.
+
+    Node is on major 22/24/25/26; Brotli is on major 0/1.  Accepting 'v24.15.0'
+    here produced the nonsense verdict 'brotli 24.15.0 is newer than the
+    affected range' during development.
+    """
+    monkeypatch.setattr(bot, "sh", lambda _cmd: "v24.15.0\n")
+    assert bot._brotli_evidence("node") == ""
+
+
+# --- standalone brotli.exe copies shipped by other apps -------------------
+#
+# Git for Windows ships brotli 1.2.0 and the ComfyUI bundle ships 1.1.0 on the
+# scan host; both are inside the affected range, and 1.1.0 needs 1.1.1 rather
+# than 1.2.1.  The mingw libbrotlidec.dll copies carry no version resource, so
+# the CLI is the only reliable probe.
+
+
+def test_native_brotli_flags_vulnerable_cli(monkeypatch, tmp_path):
+    exe = tmp_path / "brotli.exe"
+    exe.write_bytes(b"")
+    monkeypatch.setattr(bot, "FINDINGS", [])
+    monkeypatch.setattr(bot, "_brotli_cli_paths", lambda: [exe])
+    monkeypatch.setattr(bot, "sh", lambda _cmd: "brotli 1.2.0\n")
+    bot.check_native_brotli()
+    names = {name for _sev, name, _detail in bot.FINDINGS}
+    assert names == {"brotli-cli-vulnerable"}
+
+
+def test_native_brotli_accepts_fixed_cli(monkeypatch, tmp_path):
+    exe = tmp_path / "brotli.exe"
+    exe.write_bytes(b"")
+    monkeypatch.setattr(bot, "FINDINGS", [])
+    monkeypatch.setattr(bot, "_brotli_cli_paths", lambda: [exe])
+    monkeypatch.setattr(bot, "sh", lambda _cmd: "brotli 1.2.1\n")
+    bot.check_native_brotli()
+    assert bot.FINDINGS == []
+
+
+def test_native_brotli_parses_thirteen_version_as_fixed(monkeypatch, tmp_path):
+    """brotli 1.3.0 is past the affected range - must not be a finding."""
+    exe = tmp_path / "brotli.exe"
+    exe.write_bytes(b"")
+    monkeypatch.setattr(bot, "FINDINGS", [])
+    monkeypatch.setattr(bot, "_brotli_cli_paths", lambda: [exe])
+    monkeypatch.setattr(bot, "sh", lambda _cmd: "brotli 1.3.0\n")
+    bot.check_native_brotli()
+    assert bot.FINDINGS == []
+
+
+def test_native_brotli_reports_unreadable_version_rather_than_guessing(
+    monkeypatch, tmp_path
+):
+    """A sandbox that blocks the probe must say 'unreadable', not invent a verdict."""
+    exe = tmp_path / "brotli.exe"
+    exe.write_bytes(b"")
+    monkeypatch.setattr(bot, "FINDINGS", [])
+    monkeypatch.setattr(bot, "_brotli_cli_paths", lambda: [exe])
+    monkeypatch.setattr(bot, "sh", lambda _cmd: "Access is denied.\n")
+    bot.check_native_brotli()
+    names = {name for _sev, name, _detail in bot.FINDINGS}
+    assert names == {"brotli-cli-unreadable"}
+
+
+def test_native_brotli_is_quiet_when_no_cli_present(monkeypatch):
+    monkeypatch.setattr(bot, "FINDINGS", [])
+    monkeypatch.setattr(bot, "_brotli_cli_paths", lambda: [])
+    bot.check_native_brotli()
+    assert bot.FINDINGS == []
+
+
+def test_node_findings_do_not_claim_nonexistent_node2shell(monkeypatch):
+    """The misnamed 'node2shell' finding ids must not come back."""
+    monkeypatch.setattr(bot, "FINDINGS", [])
+
+    def fake_sh(cmd):
+        # php must look genuinely absent, or it masks the node assertion
+        if cmd.startswith("php"):
+            return "'php' is not recognized as an internal or external command"
+        if cmd.startswith("certutil"):
+            return ""
+        return "v24.15.0"
+
+    monkeypatch.setattr(bot, "sh", fake_sh)
+    monkeypatch.setattr(bot, "_bundled_node", lambda: [])
+    bot.check_runtimes()
+    names = {name for _sev, name, _detail in bot.FINDINGS}
+    assert names == {"node-brotli"}
+
+
+def test_java_finding_cites_no_unpublished_cve(monkeypatch):
+    """CVE-2026-22020 returns 0 NVD records, so it must not be presented as fact."""
+    monkeypatch.setattr(bot, "FINDINGS", [])
+    monkeypatch.setattr(bot, "sh", lambda cmd: 'java version "1.8.0_491"')
+    bot.check_ai_runtimes()
+    details = " ".join(d for _s, n, d in bot.FINDINGS if n == "java-present")
+    assert "CVE-2026-22020" not in details
+
+
 def test_main_returns_finding_count(monkeypatch):
     monkeypatch.setattr(bot, "FINDINGS", [])
     for fn in (
         "check_startup_hooks", "check_litellm", "check_run_keys",
         "check_startup_folders", "check_scheduled_tasks", "check_runtimes",
-        "check_python_brotli", "check_wallets", "check_ca_trust",
-        "check_ai_runtimes", "check_listening_sockets",
+        "check_python_brotli", "check_native_brotli", "check_wallets",
+        "check_ca_trust", "check_ai_runtimes", "check_listening_sockets",
     ):
         monkeypatch.setattr(bot, fn, lambda: None)
     assert bot.main() == 0

@@ -1,51 +1,67 @@
 # Black October — Local Exposure Triage & Fix Plan
 
 Scope: this workstation (`DESKTOP-K3R3JAS`, `192.168.1.173`) as scanned by
-`python tools/black_october_triage.py`. Exit code = number of findings (currently **17**).
+`python tools/black_october_triage.py`. Exit code = number of findings (currently **19**).
 
 Evidence basis: every item below comes from a live scan on this machine, not from
 assumption. The *versions installed here* are directly observed.
 
 Verification status of the external claims.
 
-**Read this first — the CVE identifiers are NOT trustworthy.** A second
-verification pass on 2026-10-26 could not reach the network at all: `web_search`
-returned zero results for every query, including `CVE-2021-44228 log4shell` and
-`Node.js release schedule LTS versions` — controls that must return hits. That is a
-tool/network failure, not evidence about the event. No CVE below was independently
-re-confirmed in that pass, and the scanner prints these IDs as though they were
-established fact. **Treat every CVE number here as unconfirmed.** What *is* observed
-first-hand on this box is listed in the "Evidence" column of the priority stack.
+**Superseded: the CVE identifiers are now confirmed against authoritative sources.**
+An earlier pass could not reach the network (`web_search` returned zero results even
+for `CVE-2021-44228 log4shell`, a control that must return hits). The cause was the
+search tool, not the network: the NVD REST API and `nodejs.org` are both reachable
+directly. Method: query each ID against
+`services.nvd.nist.gov/rest/json/cves/2.0?cveId=…` with `CVE-2021-44228` as a
+positive control. The control returned `totalResults=1`, so a `0` result below is a
+real absence, not a failed fetch. CISA's KEV feed was downloaded as well
+(catalog size 1756).
 
-- **CVE-2026-111497 (Node2Shell) — unconfirmed.** Recorded as fixed on 21 Oct 2026 in
-  22.23.4, 24.22.1 and 26.12.1, matching the floors this scanner uses. Not in CISA's
-  Known Exploited Vulnerabilities catalog, but a public PoC is claimed. The *version
-  gates* are correct regardless; only the advisory provenance is unverified.
-- **Node 25 — claim narrowed.** The advisory says only that EOL lines get no official
-  fix. It does not name major 25. The scanner therefore reports "not a fixed release
-  line" rather than "EOL"; treat Node 25 as unpatched, not as formally end-of-lifed.
-- **CVE-2026-22020 (Java JFR) — UNVERIFIED.** No advisory was found for this ID. The
-  installed Java 8 *is* observed and is worth upgrading on its own merits, but the CVE
-  number attached to it in the scanner should be treated as unconfirmed.
-- **Electrum supply-chain theft — partially confirmed.** Corroborated only at the
-  "an Electrum theft happened in the wave" level; the installers/provenance angle was
-  not independently verified.
+**The headline correction: CVE-2026-111497 is not "Node2Shell". It is a Brotli
+decoder bug that Node inherits by bundling Brotli.** The scanner misnamed it.
+
+- **CVE-2026-111497 — CONFIRMED, but re-scoped.** NVD record exists, published
+  `2026-10-22T14:17`, CVSS v4.0 **9.2 CRITICAL**. Description: buffer overflow in the
+  **Brotli decoder** (`c/dec/decode.c`), affected range **Brotli 1.0.3 → 1.2.0**,
+  fixed in **1.0.10 / 1.1.1 / 1.2.1**. Impact: memory disclosure, DoS, potential RCE
+  from a crafted Brotli stream. Node merely bundles the library, so Node's own page
+  rates the issue **high** while NVD rates it **9.2 critical** — the scanner adopts
+  NVD's score. Not in KEV.
+- **CVE-2026-109618 / CVE-2026-109619 — CONFIRMED (PHP).** Both `9.2` CRITICAL, both
+  `Analyzed`: an out-of-memory `longjmp()` path that leaves request memory
+  uninitialized, and stale global state pointing into freed request memory; each yields
+  RCE. Fixed floors: `8.2.35`, `8.3.36`, `8.4.27`, `8.5.12`. **PHP is not installed
+  here, so this leg does not apply.** Not in KEV.
+- **CVE-2026-22020 (Java "Flight Recorder") — DOES NOT EXIST.** `totalResults=0`.
+  No advisory, no record. The scanner cited it as fact; that citation has been removed
+  and the Java finding is now `LOW` on age grounds alone.
+- **None of the four IDs is in CISA KEV.** So the "ongoing, actively exploited" framing
+  does not hold for these specific CVEs; treat them as patching debt, not as an active
+  intrusion.
+- **Node 25 — claim narrowed.** The advisory patches only 22.23.4 / 24.22.1 / 26.12.1.
+  Major 25 is not among them, so no fix exists on that line. That is not the same as
+  saying 25 is formally end-of-lifed.
+- **Electrum supply-chain theft — still only partially confirmed.** The installer
+  provenance angle was not independently verified; the wallet-presence finding stands
+  on observation alone.
 
 ## Priority stack
 
 | # | Sev | Finding | Evidence (observed) | Why it ranks here |
 |---|-----|---------|---------------------|-------------------|
-| 1 | CRITICAL | Node 2 Shell — Node **24.15.0** below fixed 24.22.1 | `where.exe node` → `C:\Program Files\nodejs\node.exe` → `v24.15.0` (re-verified 2026-10-26 16:16). `winget list --name Node.js`: installed 24.15.0, available **24.22.1** | One binary, not two: the PATH copy *is* the `Program Files` copy, so a single upgrade closes both. `node` is on PATH, so any tool/edge-runtime that shells to node hits the vulnerable binary. Trivial remote trigger class, trivial fix. |
+| 1 | CRITICAL | **Brotli decoder 1.2.0** (CVE-2026-111497) inside Node **24.15.0** on PATH | `node -p process.versions.brotli` → **`1.2.0`** on all three node binaries (re-verified this pass). `where.exe node` → `C:\Program Files\nodejs\node.exe` → `v24.15.0`. `winget`: installed 24.15.0, available **24.22.1** | The defect is the **bundled Brotli**, not Node: affected range is Brotli 1.0.3–1.2.0 and this box runs 1.2.0 in every binary. Path to fix is still a Node upgrade (24.22.1 ships 1.2.1). One binary, not two: the PATH copy *is* the `Program Files` copy. `node` is on PATH, so any tool that shells to node loads the vulnerable decoder. |
 | 2 | HIGH | LM Studio **LM Link** connector listening on **0.0.0.0:61236** | `netstat -ano` → `0.0.0.0:61236` LISTENING, PID 20444 (re-verified 2026-10-26 16:16). Running build `lmlink-connector-win-x86_64-avx2-0.1.1`; `settings.json` → `"enableLocalService": true` | LLM endpoint reachable off-host on the LAN = prompt-injection → tool-execution surface. Auto-starts at login via the `--run-as-service` Run key. Fixable in two minutes; see Step 2. |
 | 3 | HIGH | Daedalus Mainnet desktop wallet installed | `C:\Program Files\Daedalus Mainnet` present | Irreversible-loss class. Nothing else on this list can cost you money directly. |
-| 4 | HIGH | Bundled Node **25.5.0** — not a patched release line, **no fix available** | `Bionic\...\bin\node.exe` → `v25.5.0` and `LM Studio\...\bin\node.exe` → `v25.5.0` (both run, re-verified 16:16). `winget`: LM Studio `0.4.26+4`, **no newer build offered** | The advisory patches only 22.23.4 / 24.22.1 / 26.12.1, so nothing on the 25 line is fixed. There is no patch available *and* no app update that would deliver one — containment only (Step 4). |
+| 4 | HIGH | Bundled Node **25.5.0** also carries Brotli **1.2.0** — no patched 25 line | `Bionic\...\bin\node.exe` → `v25.5.0`, brotli **1.2.0**; `LM Studio\...\bin\node.exe` → `v25.5.0`, brotli **1.2.0**. `winget`: LM Studio `0.4.26+4`, **no newer build offered** | Same affected Brotli 1.2.0 as #1, but the advisory patches only 22.23.4 / 24.22.1 / 26.12.1, so nothing on the 25 line is fixed and no app update delivers one — containment only (Step 4). |
 | 5 | HIGH | Auto-start surface broad and unaudited | HKCU Run keys: `OneDrive`, `LM Studio … --run-as-service`, `Teams`; Startup folder: `Lemonade Server.lnk`, `Wispr Flow.lnk` | Each is a persistence+wake-up path that survives patching of #1/#4. LM Studio's is what exposes #2. |
-| 6 | MEDIUM | Java **1.8.0_491** (JFR CVE class) | `java -version` → `1.8.0_491`. `winget`: installed 8.0.4910.10, available **8.0.5110.32** | Ancient runtime, still on PATH. Only matters if something loads untrusted JARs. The CVE number attached to it is unconfirmed (see above); the upgrade is justified on age alone. |
+| 6 | LOW | Java **1.8.0_491** — old, not linked to any published CVE | `java -version` → `1.8.0_491`. `winget`: installed 8.0.4910.10, available **8.0.5110.32** | Downgraded from MEDIUM: the CVE previously cited for it (CVE-2026-22020) returns **zero NVD records**, so there is no advisory. Still on PATH and ancient, so upgrading (or removing) is justified on age alone. |
 | 7 | MEDIUM | 3 scheduled tasks launch from a user-writable dir | `\OneDrive Reporting Task-…`, `\OneDrive Standalone Update Task-…`, `\OneDrive Startup Task-…`: actions in `%localappdata%` / `AppData\Local`, author `Microsoft Corporation` | All three are vendor-signed and benign in substance, so they rank last. They are listed only because the launch directory is the one a dropper uses; the 37 earlier "suspect task" hits were vendor/OS noise and are no longer reported. |
 | 8 | MEDIUM | NetBIOS/139 listening on LAN address | `192.168.1.173:139 (system)` | Windows default, but it is legacy SMB-era surface. |
 | 9 | MEDIUM | Third-party wildcard listener | `0.0.0.0:61236 (lmlink-connector.exe)` | Same socket as #2; counted separately because other apps inherit the pattern. |
-| — | ok | PHP absent | `php` not found | PHP 2 Shell leg not applicable. |
-| — | ok | No `brotli` / `brotlicffi` | not in `pyproject.toml` deps, not in pip list | HTTP 2 Shell Python leg not applicable. |
+| 10 | MEDIUM | **Git for Windows** ships Brotli **1.2.0**; a second Git under `AMD\AI_Bundle\ComfyUI` ships **1.1.0** | `Git\mingw64\bin\brotli.exe --version` → **`brotli 1.2.0`**; `ComfyUI\Git\mingw64\bin\brotli.exe --version` → **`brotli 1.1.0`** (both re-verified this pass). `Tesseract-OCR\libbrotlidec.dll` is also present but has **no version resource**, so its version is unknown | Both are inside the affected range 1.0.3–1.2.0 — 1.1.0 needs **1.1.1**, not 1.2.1. Ranked below Node because nothing here decodes attacker-supplied Brotli automatically: it needs a user or script to run `brotli -d` on hostile input. Fix is a Git for Windows update (covers both copies). |
+| — | ok | PHP absent | `php` not found | CVE-2026-109618/109619 (PHP 9.2 criticals) not applicable — no PHP on this box. |
+| — | ok | No `brotli` / `brotlicffi` in Python | `importlib.util.find_spec` → all absent | Python-side Brotli decode leg not applicable. |
 | — | ok | No eMudhra CA in user Root store | `certutil -store -user Root` | Cert-compromise leg clear. |
 | — | ok | `.env` never committed | `git log --all -- .env` empty; `.env` is gitignored | No secret leak via this repo. |
 
@@ -61,13 +77,25 @@ Do 1 → 4 first; they are the only items that are both reachable and fixable to
 winget upgrade --id OpenJS.NodeJS.LTS --accept-source-agreements
 ```
 
-Then open a *new* shell (PATH cache) and verify all three ways:
+Then open a *new* shell (PATH cache) and verify three ways:
 1. `node --version` → `v24.22.1` or higher.
-2. `python tools/black_october_triage.py` — the `[CRITICAL] node2shell` line is gone
-   and the total drops from 17 to 16.
-3. If a global npm install breaks, reinstall it; don't roll Node back.
+2. `node -p process.versions.brotli` → **`1.2.1`** or higher. This is the check that
+   actually proves the fix: the vulnerability is in the Brotli decoder, so a 24.22.1
+   label with a still-1.2.0 Brotli would mean the fix did not land.
+3. `python tools/black_october_triage.py` — both `node 24.15.0` lines are gone (the
+   `[CRITICAL] node-brotli` PATH line and the `[HIGH] bundled-node-brotli` line for
+   `C:\Program Files\nodejs\node.exe`, which is the same binary counted twice) and the
+   total drops from **19 to 17**.
+
+If a global npm install breaks, reinstall it; don't roll Node back.
 
 This is the single highest-value action on this list: cheapest fix, reachable binary.
+
+Naming note: this CVE is a **Brotli** decoder bug that Node inherits. The NVD
+reference list includes `broccoli2shell.com`, so the campaign name circulating for it
+is **Broccoli2Shell** — not the "Node2Shell" the earlier scan printed. The scan now
+says `node-brotli` and names the component, so a wrong product name cannot send you
+looking for the wrong patch.
 
 **Step 2 — Take LM Link off the LAN (kills #2 and #9). Highest severity after #1.**
 Confirmed on this box right now: `netstat -ano` shows `0.0.0.0:61236` LISTENING under
@@ -114,7 +142,7 @@ Because there is no patch, the only real options are containment:
 Keep only what you can name a reason for. Drop `--run-as-service` and any
 Startup-folder `.lnk` you do not use (`Lemonade Server`, `Wispr Flow`).
 
-**Step 6 — Low-priority hardening (#6, #7, #8).**
+**Step 6 — Low-priority hardening (#6, #7, #8, #10).**
 Java: `winget upgrade --id Oracle.JavaRuntimeEnvironment` takes `8.0.4910.10` →
 `8.0.5110.32`. Only do this if something on the box actually needs Java — if not, remove
 it instead, which is strictly better than patching an 8.x runtime.
@@ -122,13 +150,20 @@ Tasks: confirm the three `user-writable` tasks are the vendor tasks they claim t
 scanner filters vendor/OS noise, so a `CRITICAL scheduled-task-persistence` line means the
 dropper shape — user-writable path plus LOLBin or download — and is not expected here).
 139: leave NetBIOS alone unless you have a reason to disable NetBIOS over TCP/IP.
+Brotli CLIs (#10): `winget upgrade --id Git.Git` replaces the `1.2.0` copy with whatever
+the current Git for Windows bundles — re-check afterwards with `brotli.exe --version`, and
+do not assume the update lands on 1.2.1 or later. The `ComfyUI` copy is `1.1.0` and only
+moves if you update that AMD AI bundle; if you no longer use it, deleting the bundle is
+cheaper. `Tesseract-OCR\libbrotlidec.dll` has no version resource, so treat it as unknown
+until you probe it (`python -c` cannot help here — run a Brotli decode through Tesseract or
+check the installer's changelog).
 
 ## Harness notes
 
 - `tools/black_october_triage.py` — the scanner. Listener attribution uses
   `netstat -ano` + `tasklist` because `Get-NetTCPConnection`'s process lookup fails
   on this box (`Get-Process` inside the pipeline errors out).
-- `tests/test_black_october_triage.py` — 32 regression tests covering the parser,
+- `tests/test_black_october_triage.py` — 53 regression tests covering the parser,
   the `lmlink` AI-process match, the OS-owned-wildcard filter, the Node version gate,
   and the scheduled-task persistence classifier (`_parse_schtasks_verbose` /
   `_task_risk`) with explicit vendor-noise and OS-baseline regression cases.
