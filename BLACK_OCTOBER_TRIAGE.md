@@ -64,9 +64,9 @@ The numbering below is unchanged and remains relative to device-local risk only.
 | 2 | HIGH | LM Studio **LM Link** connector listening on **0.0.0.0:61236** | `netstat -ano` → `0.0.0.0:61236` LISTENING, PID 20444 (re-verified 2026-10-26 16:16). Running build `lmlink-connector-win-x86_64-avx2-0.1.1`; `settings.json` → `"enableLocalService": true` | LLM endpoint reachable off-host on the LAN = prompt-injection → tool-execution surface. Auto-starts at login via the `--run-as-service` Run key. Fixable in two minutes; see Step 2. |
 | 3 | HIGH | Daedalus Mainnet desktop wallet installed | `C:\Program Files\Daedalus Mainnet` present | Irreversible-loss class. Nothing else on this list can cost you money directly. |
 | 4 | HIGH | Bundled Node **25.5.0** also carries Brotli **1.2.0** — no patched 25 line | `Bionic\...\bin\node.exe` → `v25.5.0`, brotli **1.2.0**; `LM Studio\...\bin\node.exe` → `v25.5.0`, brotli **1.2.0**. `winget`: LM Studio `0.4.26+4`, **no newer build offered** | Same affected Brotli 1.2.0 as #1, but the advisory patches only 22.23.4 / 24.22.1 / 26.12.1, so nothing on the 25 line is fixed and no app update delivers one — containment only (Step 4). |
-| 5 | HIGH | Auto-start surface broad and unaudited | HKCU Run keys: `OneDrive`, `LM Studio … --run-as-service`, `Teams`; Startup folder: `Lemonade Server.lnk`, `Wispr Flow.lnk` | Each is a persistence+wake-up path that survives patching of #1/#4. LM Studio's is what exposes #2. |
+| 5 | HIGH | Auto-start surface broad and unaudited | HKCU Run keys: `LM Studio … --run-as-service`, `Teams`; Startup folder: `Lemonade Server.lnk`, `Wispr Flow.lnk`. `OneDrive` **removed 2026-10-26** (§ Applied fixes) | Each is a persistence+wake-up path that survives patching of #1/#4. LM Studio's is what exposes #2. |
 | 6 | LOW | Java **1.8.0_491** — old, not linked to any published CVE | `java -version` → `1.8.0_491`. `winget`: installed 8.0.4910.10, available **8.0.5110.32** | Downgraded from MEDIUM: the CVE previously cited for it (CVE-2026-22020) returns **zero NVD records**, so there is no advisory. Still on PATH and ancient, so upgrading (or removing) is justified on age alone. |
-| 7 | MEDIUM | 3 scheduled tasks launch from a user-writable dir | `\OneDrive Reporting Task-…`, `\OneDrive Standalone Update Task-…`, `\OneDrive Startup Task-…`: actions in `%localappdata%` / `AppData\Local`, author `Microsoft Corporation` | All three are vendor-signed and benign in substance, so they rank last. They are listed only because the launch directory is the one a dropper uses; the 37 earlier "suspect task" hits were vendor/OS noise and are no longer reported. |
+| 7 | LOW | 3 scheduled tasks launch from a user-writable dir | `\OneDrive Reporting Task-…`, `\OneDrive Standalone Update Task-…`, `\OneDrive Startup Task-…`: actions in `%localappdata%` / `AppData\Local`, author `Microsoft Corporation`. **`OneDrive Startup Task` disabled 2026-10-26** (§ Applied fixes); the two updaters remain Enabled | Downgraded MEDIUM → LOW. All three are vendor-signed and benign in substance, so they rank last. They are listed only because the launch directory is the one a dropper uses; the 37 earlier "suspect task" hits were vendor/OS noise and are no longer reported. The Startup Task mattered only because it would relaunch OneDrive at logon. |
 | 8 | MEDIUM | NetBIOS/139 listening on LAN address | `192.168.1.173:139 (system)` | Windows default, but it is legacy SMB-era surface. |
 | 9 | MEDIUM | Third-party wildcard listener | `0.0.0.0:61236 (lmlink-connector.exe)` | Same socket as #2; counted separately because other apps inherit the pattern. |
 | 10 | MEDIUM | **Git for Windows** ships Brotli **1.2.0**; a second Git under `AMD\AI_Bundle\ComfyUI` ships **1.1.0** | `Git\mingw64\bin\brotli.exe --version` → **`brotli 1.2.0`**; `ComfyUI\Git\mingw64\bin\brotli.exe --version` → **`brotli 1.1.0`** (both re-verified this pass). `Tesseract-OCR\libbrotlidec.dll` is also present but has **no version resource**, so its version is unknown | Both are inside the affected range 1.0.3–1.2.0 — 1.1.0 needs **1.1.1**, not 1.2.1. Ranked below Node because nothing here decodes attacker-supplied Brotli automatically: it needs a user or script to run `brotli -d` on hostile input. Fix is a Git for Windows update (covers both copies). |
@@ -168,7 +168,62 @@ cheaper. `Tesseract-OCR\libbrotlidec.dll` has no version resource, so treat it a
 until you probe it (`python -c` cannot help here — run a Brotli decode through Tesseract or
 check the installer's changelog).
 
+## Applied fixes
+
+### 2026-10-26 — OneDrive removed from startup
+
+Requested by the user. OneDrive registered its autostart in **three** places, not one;
+removing only the Run key would have been a fake fix.
+
+| What changed | From | To | How |
+|---|---|---|---|
+| `HKCU\...\Run\OneDrive` | `"...\OneDrive.exe" /background` | **deleted** | `winreg.DeleteValue` |
+| `HKCU\Software\Microsoft\OneDrive\AutoStartEnabled` | `1` | **`0`** | `winreg.SetValueEx` (REG_DWORD) |
+| Scheduled task `\OneDrive Startup Task-S-1-5-…-1001` | Enabled (logon trigger → `OneDriveLauncher.exe /startInstances`) | **Disabled** | `schtasks /change /tn <name> /disable` |
+
+Why each was needed:
+
+- **`AutoStartEnabled`** is OneDrive's own "start at sign-in" switch. Left at `1`, the
+  client re-creates the Run value on its next launch, so the deletion silently reverts.
+- **The Startup Task** has a `<LogonTrigger>` and an action of
+  `C:\Users\Holger\AppData\Local\Microsoft\OneDrive\26.189.0928.0009\OneDriveLauncher.exe`
+  with `/startInstances` — it starts OneDrive at logon regardless of the Run key. This
+  was the gap that would have undone the fix, and it was invisible while I only read
+  `HKCU` Run keys.
+
+Verified after the change (re-read from the registry / Task Scheduler, not from the writes):
+
+- no `OneDrive` value in `HKCU` Run; none in `HKLM` Run or `HKLM` WOW64 Run;
+- `AutoStartEnabled = 0`;
+- `OneDrive Startup Task` → `Scheduled Task State = Disabled`;
+- `schtasks /query` → **0** OneDrive tasks in `Ready` state.
+
+Not touched, by design: **`OneDrive Reporting Task`** and **`OneDrive Standalone Update
+Task`** remain Enabled. They are update/reporting jobs, not logon triggers, so they do not
+start OneDrive; disabling them would only stop OneDrive patching itself.
+
+Rollback: backups hold the original values and the full task XML —
+`%LOCALAPPDATA%\Agent1\backups\onedrive-startup-<stamp>.json` (Run value + original
+`AutoStartEnabled`) and `onedrive-startup-task-<stamp>.json` (task XML + prior state
+`Enabled`, restorable with `schtasks /change /tn <name> /enable`).
+
+Two caveats worth recording:
+
+- OneDrive (PID 16944) was still running when this was applied; the change takes effect at
+  the **next sign-in**. Until then the process keeps syncing — that is expected, not a
+  failure.
+- The client is user-mode sync, so this does **not** narrow the #5 persistence surface in
+  the way disabling a network service would. It removes an autostart, not a capability.
+
+Scanner note: `tools/black_october_triage.py` `check_startup_folders` reads the Startup
+folder and Run keys, but it does not classify one of these three tasks as "restarts the
+app". An `os.walk` over `C:\Windows\System32\Tasks` also fails with `Access denied` and
+silently returns **0 hits**, which is how the first pass wrongly concluded the tasks were
+gone — `schtasks /query` is the reliable probe on this box. Correcting the scanner is
+tracked as follow-up, not done here to keep this change reviewable.
+
 ## Harness notes
+
 
 - `tools/black_october_triage.py` — the scanner. Listener attribution uses
   `netstat -ano` + `tasklist` because `Get-NetTCPConnection`'s process lookup fails
