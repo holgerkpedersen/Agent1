@@ -215,12 +215,28 @@ Two caveats worth recording:
 - The client is user-mode sync, so this does **not** narrow the #5 persistence surface in
   the way disabling a network service would. It removes an autostart, not a capability.
 
-Scanner note: `tools/black_october_triage.py` `check_startup_folders` reads the Startup
-folder and Run keys, but it does not classify one of these three tasks as "restarts the
-app". An `os.walk` over `C:\Windows\System32\Tasks` also fails with `Access denied` and
-silently returns **0 hits**, which is how the first pass wrongly concluded the tasks were
-gone — `schtasks /query` is the reliable probe on this box. Correcting the scanner is
-tracked as follow-up, not done here to keep this change reviewable.
+Scanner note — both gaps found during this change were **fixed** in
+`tools/black_october_triage.py`:
+
+- **Blind scan reported as clean.** An `os.walk` over `C:\Windows\System32\Tasks` fails
+  with `Access denied` and silently returns **0 hits**, which is how the first pass
+  wrongly concluded the OneDrive tasks were gone — `schtasks /query` is the reliable
+  probe on this box. `check_scheduled_tasks` now reports a zero-task parse as
+  `MEDIUM scheduled-task-scan-empty` ("the task scan is BLIND, not clean") instead of
+  printing `[ok]`.
+- **The restarting task was invisible.** Nothing classified a task as "relaunches the
+  app", so removing a Run key looked complete while a logon task undid it.
+  `_autostart_restart_risk` now flags an *enabled* task with an `At logon` /
+  `At startup` / `On workstation unlock` trigger whose action mentions a known
+  autostart app, as `MEDIUM`. The parser reads columns 11 (`Scheduled Task State`) and
+  18 (`Schedule Type`) for this — no per-task XML call needed.
+
+Verified on this host's live task data (259 tasks parsed, 28 with logon triggers): the
+now-**Disabled** OneDrive Startup Task is correctly **silent**, and the same real action
+string with the state flipped to `Enabled` produces the MEDIUM finding. It stays MEDIUM
+rather than CRITICAL because a vendor shipping both a Run key and a logon task is not
+malicious — this is an autostart-*completeness* finding, not a persistence finding.
+
 
 ## Harness notes
 
@@ -228,19 +244,23 @@ tracked as follow-up, not done here to keep this change reviewable.
 - `tools/black_october_triage.py` — the scanner. Listener attribution uses
   `netstat -ano` + `tasklist` because `Get-NetTCPConnection`'s process lookup fails
   on this box (`Get-Process` inside the pipeline errors out).
-- `tests/test_black_october_triage.py` — 53 regression tests covering the parser,
+- `tests/test_black_october_triage.py` — 61 regression tests covering the parser,
   the `lmlink` AI-process match, the OS-owned-wildcard filter, the Node version gate,
-  and the scheduled-task persistence classifier (`_parse_schtasks_verbose` /
-  `_task_risk`) with explicit vendor-noise and OS-baseline regression cases.
+  the scheduled-task persistence classifier (`_parse_schtasks_verbose` /
+  `_task_risk`) with explicit vendor-noise and OS-baseline regression cases, and the
+  autostart/blind-scan cases added with the OneDrive fix (`_autostart_restart_risk`,
+  `scheduled-task-scan-empty`).
 - The scheduled-task check parses `schtasks /query /fo csv /nh /v` and inspects
-  columns 1 (name), 7 (author) and 8 (action). It reports the persistence shape
-  (action in a user-writable dir, plus a LOLBin or a second-stage fetch) and treats
-  `%windir%` actions and `ProgramData\Microsoft` as OS baseline, so Defender's own
-  rundll32 maintenance tasks are not findings.
-- Both files are tracked in git and committed: `00068cd` (scanner + this report) and
-  `ead8012` (CVE-claim verification). The scheduled-task classifier rewrite and the
-  UTF-8 encoding pin from earlier notes landed in `ead8012`, so this doc is the record.
-  These commits are local only — push them or CI never sees them.
+  columns 1 (name), 7 (author), 8 (action), 11 (state) and 18 (trigger). It reports the
+  persistence shape (action in a user-writable dir, plus a LOLBin or a second-stage
+  fetch), treats `%windir%` actions and `ProgramData\Microsoft` as OS baseline (so
+  Defender's own rundll32 maintenance tasks are not findings), and separately flags an
+  enabled logon/startup task that relaunches a known autostart app.
+- Both files are tracked in git and committed: `00068cd` (scanner + this report),
+  `ead8012` (CVE-claim verification), `4b97e53`/`b289ad9` (triage report, CVR exposure),
+  and `6bd306e` (OneDrive autostart removal). All of these are pushed to
+  `origin/master`. The scheduled-task classifier rewrite and the UTF-8 encoding pin
+  from earlier notes landed in `ead8012`, so this doc is the record.
 - Known environmental failure, unrelated to these files:
   `tests/test_run_timeout.py::test_timeout_kills_process_tree` fails on this box
   because the strict run sandbox rejects `python -m x` before the timeout path is

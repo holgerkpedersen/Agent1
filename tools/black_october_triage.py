@@ -153,8 +153,10 @@ def _parse_schtasks_verbose(text: str) -> list[dict[str, str]]:
     """Parse ``schtasks /query /fo csv /nh /v`` rows into task dicts.
 
     Columns (0-based) as emitted by Windows: 1 TaskName, 2 Next Run Time,
-    3 Status, 7 Author, 8 Task To Run.  Rows shorter than 9 fields are
-    skipped rather than indexed, so this cannot raise on localized output.
+    3 Status, 7 Author, 8 Task To Run, 11 Scheduled Task State, 18 Schedule
+    Type.  Rows shorter than 9 fields are skipped rather than indexed, so this
+    cannot raise on localized output; the two trailing fields are read only
+    when present and default to "" so a 9-field row still parses.
     """
     rows: list[dict[str, str]] = []
     for line in text.splitlines():
@@ -170,9 +172,55 @@ def _parse_schtasks_verbose(text: str) -> list[dict[str, str]]:
                 "status": fields[3].strip(),
                 "author": fields[7].strip(),
                 "action": fields[8].strip(),
+                "state": fields[11].strip() if len(fields) > 11 else "",
+                "schedule_type": fields[18].strip() if len(fields) > 18 else "",
             }
         )
     return rows
+
+
+#: Triggers that mean "this task brings the app back by itself" rather than
+#: "this task does periodic maintenance".  Matched against the CSV's Schedule
+#: Type column, so no per-task XML call is needed.
+AUTOSTART_TRIGGERS = ("at logon", "at startup", "on workstation unlock")
+
+#: Apps whose autostart has to be removed in *every* place it is registered.
+#: OneDrive was found in three (Run key, AutoStartEnabled, logon task); removing
+#: only the Run key looked like a fix and silently reverted, because the logon
+#: task re-launched the client on the next sign-in.
+AUTOSTART_APPS = {
+    "onedrive": "OneDrive",
+    "teams": "Teams",
+    "lmlink": "LM Link connector",
+    "lm studio": "LM Studio",
+    "lemonade": "Lemonade Server",
+}
+
+
+def _autostart_restart_risk(task: dict[str, str]) -> tuple[str, str] | None:
+    """Flag an *enabled* logon/startup task that relaunches a known autostart app.
+
+    This is the gap that made the OneDrive removal look complete when it was not:
+    ``check_run_keys`` reported the Run value, and nothing looked at the logon
+    task that restarted the same client.  A vendor that ships both is not
+    malicious, so the severity stays MEDIUM - it is an autostart-completeness
+    finding, not a persistence finding.
+    """
+    if task.get("state", "").strip().lower() == "disabled":
+        return None  # already handled; re-reporting it is noise
+    raw_trigger = task.get("schedule_type", "").strip()
+    trigger = next((t for t in AUTOSTART_TRIGGERS if t in raw_trigger.lower()), None)
+    if trigger is None:
+        return None
+    blob = f"{task.get('name', '')} {task.get('action', '')}".lower()
+    app = next((label for key, label in AUTOSTART_APPS.items() if key in blob), None)
+    if app is None:
+        return None
+    return "MEDIUM", (
+        f"{task.get('name', '')}: enabled task with trigger '{raw_trigger}' relaunches "
+        f"{app} - removing the Run key alone will NOT stop it starting; disable the "
+        f"task too | {task.get('action', '')[:120]}"
+    )
 
 
 def _task_risk(task: dict[str, str]) -> tuple[str, str] | None:
@@ -244,9 +292,20 @@ def check_scheduled_tasks() -> None:
     for task in tasks:
         verdict = _task_risk(task)
         if verdict is None:
+            verdict = _autostart_restart_risk(task)
+        if verdict is None:
             continue
         severity, reason = verdict
         flag(severity, "scheduled-task-persistence", reason)
+    # A zero-task parse is almost never "this box has no tasks": it is the probe
+    # failing.  Reporting that as clean is the false negative that hid the
+    # OneDrive logon task (`os.walk` of C:\Windows\System32\Tasks raises
+    # Access denied and yields 0 hits).  Say so instead of printing [ok].
+    if not tasks:
+        flag("MEDIUM", "scheduled-task-scan-empty",
+             "schtasks returned no parsable tasks - the task scan is BLIND, not "
+             "clean; re-run elevated before trusting any absence of findings")
+        return
     print(f"[ok] scheduled tasks scanned ({len(tasks)} task(s) parsed)")
 
 

@@ -464,3 +464,108 @@ def test_check_scheduled_tasks_is_quiet_on_vendor_only_host(monkeypatch):
     monkeypatch.setattr(bot, "FINDINGS", [])
     bot.check_scheduled_tasks()
     assert bot.FINDINGS == []
+
+
+# --- autostart completeness + blind-scan guard -------------------------------
+# Two gaps in the OneDrive removal: the task that restarts the app was invisible,
+# and a failed probe reported as clean instead of blind.  Both are pinned here.
+
+def _task_row(name, author, action, state="Enabled", schedule_type="At logon time"):
+    """Build a 28-column ``schtasks /fo csv /v`` row in Windows' column order."""
+    fields = [
+        "PC", name, "N/A", "Ready", "Interactive only", "26-10-2026 09:48:58",
+        "0", author, action, "N/A", "N/A", state, "Disabled",
+        "Stop On Battery Mode", "Holger", "Disabled", "02:00:00", "N/A",
+        schedule_type, "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A",
+        "N/A",
+    ]
+    assert len(fields) == 28
+    return '"' + '","'.join(fields) + '"\n'
+
+
+ONEDRIVE_STARTUP = _task_row(
+    "\\OneDrive Startup Task-S-1-5-21-1-2-3-1001",
+    "Microsoft Corporation",
+    "C:\\Users\\Holger\\AppData\\Local\\Microsoft\\OneDrive\\26.189\\"
+    "OneDriveLauncher.exe /startInstances",
+)
+
+
+def test_parse_schtasks_verbose_captures_state_and_schedule_type():
+    """Column 11 and 18 decide 'is this enabled' and 'is it a logon trigger'."""
+    task = bot._parse_schtasks_verbose(ONEDRIVE_STARTUP)[0]
+    assert task["state"] == "Enabled"
+    assert task["schedule_type"] == "At logon time"
+
+
+def test_parse_schtasks_verbose_defaults_trailing_fields_on_nine_column_rows():
+    task = bot._parse_schtasks_verbose(
+        '"PC","\\n","N/A","Ready","Interactive only","N/A","0","a","b"\n'
+    )[0]
+    assert task["state"] == ""
+    assert task["schedule_type"] == ""
+
+
+def test_autostart_restart_flags_enabled_onedrive_logon_task():
+    """The real finding: a logon task relaunches OneDrive regardless of Run key."""
+    task = bot._parse_schtasks_verbose(ONEDRIVE_STARTUP)[0]
+    verdict = bot._autostart_restart_risk(task)
+    assert verdict is not None
+    severity, reason = verdict
+    assert severity == "MEDIUM"
+    assert "At logon time" in reason
+    assert "OneDrive" in reason
+    assert "disable the task" in reason
+
+
+def test_autostart_restart_silent_once_task_is_disabled():
+    """Re-reporting a task that has been fixed is noise, not a finding."""
+    row = ONEDRIVE_STARTUP.replace('"Enabled"', '"Disabled"', 1)
+    task = bot._parse_schtasks_verbose(row)[0]
+    assert task["state"] == "Disabled"
+    assert bot._autostart_restart_risk(task) is None
+
+
+def test_autostart_restart_silent_for_non_logon_trigger():
+    """The updater does periodic work, not logon launch - must stay silent."""
+    task = bot._parse_schtasks_verbose(
+        _task_row(
+            "\\OneDrive Reporting Task",
+            "Microsoft Corporation",
+            "%localappdata%\\Microsoft\\OneDrive\\"
+            "OneDriveStandaloneUpdater.exe /reporting",
+            schedule_type="One Time Only",
+        )
+    )[0]
+    assert bot._autostart_restart_risk(task) is None
+
+
+def test_autostart_restart_silent_for_unrelated_logon_task():
+    task = bot._parse_schtasks_verbose(
+        _task_row("\\Acme Prune", "Acme", "C:\\Program Files\\Acme\\prune.exe")
+    )[0]
+    assert bot._autostart_restart_risk(task) is None
+
+
+def test_check_scheduled_tasks_reports_enabled_onedrive_logon_task(monkeypatch):
+    monkeypatch.setattr(bot, "sh", lambda _cmd: ONEDRIVE_STARTUP)
+    monkeypatch.setattr(bot, "FINDINGS", [])
+    bot.check_scheduled_tasks()
+    names = [name for sev, name, _d in bot.FINDINGS if sev == "MEDIUM"]
+    assert "scheduled-task-persistence" in names
+    assert "scheduled-task-scan-empty" not in names
+
+
+def test_check_scheduled_tasks_reports_blind_scan_instead_of_clean(monkeypatch):
+    """Regression: an empty parse means the probe failed, not that the box is clean.
+
+    The earlier ``os.walk`` of C:\\Windows\\System32\\Tasks raised Access denied and
+    returned 0 hits, which was reported as clean and hid a live logon task.
+    """
+    monkeypatch.setattr(bot, "sh", lambda _cmd: "")
+    monkeypatch.setattr(bot, "FINDINGS", [])
+    bot.check_scheduled_tasks()
+    assert [n for _s, n, _d in bot.FINDINGS] == ["scheduled-task-scan-empty"]
+    severity = bot.FINDINGS[0][0]
+    assert severity == "MEDIUM"
+    assert "BLIND" in bot.FINDINGS[0][2]
