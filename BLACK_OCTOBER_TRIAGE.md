@@ -123,11 +123,13 @@ If a global npm install breaks, reinstall it; don't roll Node back.
 
 This is the single highest-value action on this list: cheapest fix, reachable binary.
 
-Naming note: this CVE is a **Brotli** decoder bug that Node inherits. The NVD
-reference list includes `broccoli2shell.com`, so the campaign name circulating for it
-is **Broccoli2Shell** — not the "Node2Shell" the earlier scan printed. The scan now
-says `node-brotli` and names the component, so a wrong product name cannot send you
-looking for the wrong patch.
+Naming note: this CVE is a **Brotli** decoder bug that Node inherits. Both
+**Broccoli2Shell** (NVD references `broccoli2shell.com`) and **Node2Shell** are in
+public circulation for it — an earlier revision of this document claimed only the
+former was valid and that "Node2Shell" was a scanner error, which was wrong (Sysdig,
+Atlasum and Wiz all use Node2Shell). Either name is defensible; what matters is that
+the *component* is Brotli, not Node's own parser. The scan says `node-brotli` and names
+the component, so a wrong product name cannot send you looking for the wrong patch.
 
 **Step 2 — Take LM Link off the LAN (kills #2 and #9). Highest severity after #1.**
 Confirmed on this box right now: `netstat -ano` shows `0.0.0.0:61236` LISTENING under
