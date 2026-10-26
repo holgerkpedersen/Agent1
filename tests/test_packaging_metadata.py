@@ -376,6 +376,27 @@ def test_build_backend_is_read_from_pyproject() -> None:
     assert _build_backend() == "setuptools.build_meta"
 
 
+def test_dev_extra_installs_the_build_requirements(pyproject: dict) -> None:
+    """The ``dev`` extra must install every ``[build-system].requires`` entry.
+
+    Regression: ``pip install -e .[dev]`` did not install setuptools, so
+    :func:`test_wheel_contains_every_subpackage` had no importable backend and
+    fell back to an isolated build, which DOWNLOADS a backend mid-test and
+    failed with ``BackendUnavailable: Cannot import 'setuptools.build_meta'``.
+    The fallback is correct, but a dev install must not depend on the network to
+    build the repo's own wheel: declaring the build requirements in the dev
+    extra keeps that suite local and deterministic.
+    """
+    build_requires = {_split_spec(d)[0] for d in pyproject["build-system"]["requires"]}
+    dev = {
+        _split_spec(d)[0] for d in pyproject["project"]["optional-dependencies"]["dev"]
+    }
+    assert build_requires - dev == set(), (
+        f"[build-system].requires not installed by the dev extra: "
+        f"{sorted(build_requires - dev)}"
+    )
+
+
 def test_module_importable_probes_without_importing() -> None:
     """Probing resolves a spec and must never execute the module."""
     assert _module_importable("json") is True

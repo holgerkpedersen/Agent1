@@ -61,6 +61,12 @@ rag-embeddings = [
     "sentence-transformers>=2.2",
 ]
 dev = [
+    # The build backend named in [build-system].  tests/test_packaging_metadata.py
+    # builds a real wheel with `pip wheel`; when setuptools is absent from this
+    # interpreter pip falls back to an isolated build and DOWNLOADS a backend
+    # mid-test, so the suite needs the network and a clean runner fails with
+    # BackendUnavailable.  Declaring it here keeps the build local and offline.
+    "setuptools>=61.0",
     "mypy>=1.0",
     "pytest>=7.0",
     "pytest-cov>=4.0",

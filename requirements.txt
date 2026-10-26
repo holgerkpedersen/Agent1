@@ -21,3 +21,7 @@ marshmallow>=3.0
 redis>=4.2
 # AGENT_RAG_EMBEDDER=st backend for harnessfix/embed.py (lazy import).
 sentence-transformers>=2.2
+# Build backend for this repo ([build-system] in pyproject.toml). Dev-only:
+# tests/test_packaging_metadata.py builds a real wheel, and without setuptools
+# pip downloads a backend mid-test (network + BackendUnavailable on CI).
+setuptools>=61.0
