@@ -96,7 +96,7 @@ Then open a *new* shell (PATH cache) and verify three ways:
 3. `python tools/black_october_triage.py` — both `node 24.15.0` lines are gone (the
    `[CRITICAL] node-brotli` PATH line and the `[HIGH] bundled-node-brotli` line for
    `C:\Program Files\nodejs\node.exe`, which is the same binary counted twice) and the
-   total drops from **19 to 17**.
+   total drops from **18 to 16**.
 
 If a global npm install breaks, reinstall it; don't roll Node back.
 
@@ -245,12 +245,13 @@ malicious — this is an autostart-*completeness* finding, not a persistence fin
 - `tools/black_october_triage.py` — the scanner. Listener attribution uses
   `netstat -ano` + `tasklist` because `Get-NetTCPConnection`'s process lookup fails
   on this box (`Get-Process` inside the pipeline errors out).
-- `tests/test_black_october_triage.py` — 61 regression tests covering the parser,
+- `tests/test_black_october_triage.py` — 65 regression tests covering the parser,
   the `lmlink` AI-process match, the OS-owned-wildcard filter, the Node version gate,
   the scheduled-task persistence classifier (`_parse_schtasks_verbose` /
-  `_task_risk`) with explicit vendor-noise and OS-baseline regression cases, and the
+  `_task_risk`) with explicit vendor-noise and OS-baseline regression cases, the
   autostart/blind-scan cases added with the OneDrive fix (`_autostart_restart_risk`,
-  `scheduled-task-scan-empty`).
+  `scheduled-task-scan-empty`), and the disabled-task demotion cases added when an
+  applied fix was still printing as an open MEDIUM finding.
 - The scheduled-task check parses `schtasks /query /fo csv /nh /v` and inspects
   columns 1 (name), 7 (author), 8 (action), 11 (state) and 18 (trigger). It reports the
   persistence shape (action in a user-writable dir, plus a LOLBin or a second-stage
