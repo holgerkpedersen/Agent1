@@ -12,7 +12,7 @@ Two severity tiers, deliberately:
   filename, "wip"/"commit changes").  These BLOCK the commit, because letting
   them in is what produced the mess this module exists to stop.
 * **warnings** -- format deviations (no type prefix, unknown type, trailing
-  period, over 72 columns).  Advisory only; an author is never locked out of
+  period, over 88 columns).  Advisory only; an author is never locked out of
   committing over a period.
 
 Stdlib only and **no intra-package imports on purpose**: ``.githooks/commit-msg``
@@ -30,9 +30,11 @@ ALLOWED_TYPES: frozenset[str] = frozenset(
     {"feat", "fix", "refactor", "docs", "test", "chore"}
 )
 
-#: Soft limit (git log / GitHub truncate around here) and the hard limit that
-#: turns a long subject into an error.
-SOFT_MAX_LEN = 72
+#: Soft limit -- advisory only, the subject still commits.  Aligned with the
+#: project's 88-column ruff line length (pyproject.toml) so one width applies to
+#: code and commit subjects alike.  HARD_MAX_LEN is where a long subject turns
+#: into an error.
+SOFT_MAX_LEN = 88
 HARD_MAX_LEN = 120
 
 #: A type prefix (``fix:``, ``feat(jev)!:``) is evidence of intent, so anything

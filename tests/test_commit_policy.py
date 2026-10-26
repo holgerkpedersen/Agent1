@@ -22,12 +22,22 @@ import pytest
 
 from agent_core.commit_policy import (
     ALLOWED_TYPES,
+    SOFT_MAX_LEN,
     check_message,
     is_placeholder_subject,
     validate_subject,
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def ruff_line_length() -> int:
+    """Read ``[tool.ruff] line-length`` from pyproject.toml (stdlib only)."""
+    import tomllib
+
+    with (REPO_ROOT / "pyproject.toml").open("rb") as fh:
+        data = tomllib.load(fh)
+    return int(data["tool"]["ruff"]["line-length"])
 
 
 class TestPlaceholderDetection:
@@ -115,10 +125,35 @@ class TestValidateSubject:
         assert result.errors == []
         assert any("period" in w.lower() for w in result.warnings)
 
-    def test_subject_over_72_is_a_warning(self) -> None:
-        result = validate_subject("fix: " + "y" * 80)
+    def test_subject_over_the_soft_limit_is_a_warning(self) -> None:
+        subject = "fix: " + "y" * 85  # 90 chars, past the 88-column soft limit
+        assert len(subject) == 90
+        result = validate_subject(subject)
         assert result.errors == []
-        assert any("72" in w for w in result.warnings)
+        assert any("88" in w for w in result.warnings)
+
+    def test_soft_limit_aligns_with_the_ruff_line_length(self) -> None:
+        """One width for code and commit subjects: 88, from pyproject.toml."""
+        assert SOFT_MAX_LEN == 88
+        assert SOFT_MAX_LEN == ruff_line_length()
+
+    @pytest.mark.parametrize("length", [88, 89])
+    def test_soft_limit_boundary_is_exact(self, length: int) -> None:
+        """88 columns warns not; 89 does.  The old 72 limit is gone."""
+        subject = "fix: " + "z" * (length - 5)
+        assert len(subject) == length
+        result = validate_subject(subject)
+        assert result.errors == []
+        warns_about_length = any("characters" in w for w in result.warnings)
+        assert warns_about_length is (length > 88), result.warnings
+
+    def test_the_73_char_subject_that_prompted_this_now_passes(self) -> None:
+        """Regression: 38f4ae9 warned at 73 chars under the old 72 limit."""
+        subject = (
+            "fix(triage): probe real Brotli decoder version, drop unverified CVE claim"
+        )
+        assert len(subject) == 73
+        assert validate_subject(subject).warnings == []
 
     def test_lowercase_type_is_enforced_by_convention(self) -> None:
         result = validate_subject("Fix: capitalised type prefix")

@@ -298,7 +298,7 @@ into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`
   package, which would drag the whole agent stack into a git hook) and is
   stdlib-only. Vacuous subjects (`"commit changes"`, `wip`, a bare filename)
   are **errors** and block the commit; format deviations (no type prefix,
-  unknown type, trailing period, >72 chars) are **warnings** and never block
+  unknown type, trailing period, >88 chars) are **warnings** and never block
   you. Covered by `tests/test_commit_policy.py`.
 - Implement auto-runs `py_compile` on every written file.
 

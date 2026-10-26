@@ -110,7 +110,7 @@ a lazy placeholder. Install the hook once with
 `git config core.hooksPath .githooks`.
 
 Format deviations — missing/unknown type prefix, trailing period, subject over
-72 characters — are printed as advisory warnings and never block a commit.
+88 characters — are printed as advisory warnings and never block a commit.
 
 ---
 
