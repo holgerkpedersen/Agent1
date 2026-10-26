@@ -19,8 +19,18 @@ positive control. The control returned `totalResults=1`, so a `0` result below i
 real absence, not a failed fetch. CISA's KEV feed was downloaded as well
 (catalog size 1756).
 
-**The headline correction: CVE-2026-111497 is not "Node2Shell". It is a Brotli
-decoder bug that Node inherits by bundling Brotli.** The scanner misnamed it.
+**Two corrections, one of which retracts an earlier over-correction.**
+
+- **Mechanism (still correct): CVE-2026-111497 is a Brotli decoder bug that Node
+  inherits by bundling Brotli.** The scanner's description of the defect is right.
+- **Naming (earlier claim RETRACTED): "Node2Shell" is a real, widely used public
+  name for this CVE, and "Broccoli2Shell" is also in circulation.** An earlier
+  revision of this document asserted the CVE "is not Node2Shell" and that the
+  scanner "misnamed it". That was wrong. Sysdig, Atlasum and Wiz all use those names.
+  What matters is the *mechanism* (bundled Brotli, not Node's own code), not the
+  nickname — so the scanner's finding text is acceptable as-is. Renaming in the tool
+  is not required and the guard test below targets the *defect description*, not the
+  nickname.
 
 - **CVE-2026-111497 — CONFIRMED, but re-scoped.** NVD record exists, published
   `2026-10-22T14:17`, CVSS v4.0 **9.2 CRITICAL**. Description: buffer overflow in the
@@ -29,6 +39,17 @@ decoder bug that Node inherits by bundling Brotli.** The scanner misnamed it.
   from a crafted Brotli stream. Node merely bundles the library, so Node's own page
   rates the issue **high** while NVD rates it **9.2 critical** — the scanner adopts
   NVD's score. Not in KEV.
+- **Independent research says the RCE path may be unreachable in practice.**
+  `github.com/ikow/brotli2crash` argues the vulnerable fast-path branch is
+  *structurally unreachable* from any Brotli stream, valid or malformed, because the
+  Brotli spec caps `MLEN`. The public PoC reached code execution only on a
+  **deliberately weakened, non-PIE test build**; on a standard build its author
+  reported a crash and a limited process-memory read. So the defensible expectation
+  on this host is **DoS + memory disclosure**, with RCE unproven. That does not
+  justify skipping the patch — 9.2 severity, trivially reachable decoder, patch is
+  one command — but it does mean the honest impact statement is "crash/leak", not
+  "attacker runs code". Downgrading the *headline* from "critical RCE" to
+  "high-severity memory-safety bug whose RCE is unproven" is the accurate framing.
 - **CVE-2026-109618 / CVE-2026-109619 — CONFIRMED (PHP).** Both `9.2` CRITICAL, both
   `Analyzed`: an out-of-memory `longjmp()` path that leaves request memory
   uninitialized, and stale global state pointing into freed request memory; each yields
