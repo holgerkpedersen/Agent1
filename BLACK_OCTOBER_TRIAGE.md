@@ -46,6 +46,16 @@ decoder bug that Node inherits by bundling Brotli.** The scanner misnamed it.
   provenance angle was not independently verified; the wallet-presence finding stands
   on observation alone.
 
+## Out-of-band finding — higher priority than everything below
+
+This document covers **device-local** exposure. It is not the top of the overall
+priority stack: a personal-data finding outranks all of it, because every item below
+still requires an attacker to reach this machine, whereas a public home address needs
+no exploit at all. See **`PII_EXPOSURE_TRIAGE.md`** — the Danish CVR filing that
+published a residential address, plus the CPR § 28 / CVR suppression plan.
+
+The numbering below is unchanged and remains relative to device-local risk only.
+
 ## Priority stack
 
 | # | Sev | Finding | Evidence (observed) | Why it ranks here |
