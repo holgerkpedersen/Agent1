@@ -19,6 +19,7 @@ from agent_core.orchestration import DependencyGraph
 from agent_core.orchestration.task_scheduler import TaskExecutor, TaskScheduler
 from agent_core.orchestration.types import TaskNode
 
+from . import chunking
 from .parser import PlanTask
 
 
@@ -35,11 +36,50 @@ async def _default_executor(
             parts.append(f"- {dep_id}: {summary}")
         desc = f"{desc}\n\nUpstream results from dependencies:\n" + "\n".join(parts)
     result = await sub.respond(desc)
-    return {
-        "success": True,
-        "result": result,
-        "summary": sub.get_context_summary(max_messages=3),
-    }
+    summary = sub.get_context_summary(max_messages=3)
+    reset = getattr(sub, "reset", None)
+    if callable(reset):
+        reset()
+    return {"success": True, "result": result, "summary": summary}
+
+
+def build_scheduler(
+    tasks: List[PlanTask],
+    agent: Any,
+    *,
+    executor_factory: Optional[Callable[[PlanTask], TaskExecutor]] = None,
+) -> TaskScheduler:
+    """Build a scheduler whose results are bounded summaries.
+
+    Each completed task's result is replaced by a character-capped summary
+    (``AGENT_PLAN_MAX_SUMMARY_CHARS``): the full text stays retrievable from
+    the subagent manager, while only the bounded summary is retained in the
+    scheduler and persisted to ``dep_<id>_result.json``, so one verbose model
+    result cannot inflate every downstream prompt.  Callers are responsible
+    for scheduling waves of at most ``max_concurrent`` tasks (see
+    :func:`chunking.plan_chunks`) so only a finished wave's summaries remain
+    resident while later waves run.
+    """
+    scheduler = TaskScheduler()
+    for t in tasks:
+        scheduler.add_task(
+            TaskNode(
+                task_id=t.id,
+                name=t.id,
+                description=t.description,
+                dependencies=list(t.depends_on),
+            )
+        )
+
+        def _executor(_t: PlanTask = t) -> TaskExecutor:
+            async def run(input_data: Dict[str, Any]) -> Dict[str, Any]:
+                outcome = await _default_executor(agent, _t, input_data)
+                return chunking.summarize_result(outcome)
+
+            return run
+
+        scheduler.register_executor(t.id, _executor())
+    return scheduler
 
 
 def build_and_validate_graph(
@@ -86,7 +126,31 @@ async def run_plan(
 
     This mirrors the filesystem contract that ``_nlp_plan_step`` already reads,
     making batch execution (``plan_start``) resumable across sessions (#108).
+
+    Memory bounding (#109): every task result is passed through
+    :func:`chunking.summarize_result` before it is retained in the scheduler,
+    persisted, or embedded into a downstream prompt, so one verbose model
+    answer cannot inflate every later prompt.  Execution proceeds in waves of
+    at most ``AGENT_PLAN_MAX_CONCURRENT`` tasks (see :func:`chunking.plan_chunks`).
     """
+    # Capture each task's resolved input_data on the snapshot so callers
+    # (and the execution report) can see how dependency results flowed in.
+    captured_inputs: dict[str, dict[str, Any]] = {}
+
+    def _make_executor(t: PlanTask) -> TaskExecutor:
+        base = (
+            executor_factory(t)
+            if executor_factory is not None
+            else lambda input_data: _default_executor(agent, t, input_data)
+        )
+
+        async def wrapper(input_data: dict[str, Any]) -> dict[str, Any]:
+            captured_inputs[t.id] = dict(input_data)
+            outcome = await base(input_data)
+            return chunking.summarize_result(outcome)
+
+        return wrapper
+
     scheduler = TaskScheduler()
     for t in tasks:
         scheduler.add_task(
@@ -97,28 +161,24 @@ async def run_plan(
                 dependencies=list(t.depends_on),
             )
         )
+        scheduler.register_executor(t.id, _make_executor(t))
 
-    # Capture each task's resolved input_data on the snapshot so callers
-    # (and the execution report) can see how dependency results flowed in.
-    captured_inputs: dict[str, dict[str, Any]] = {}
+    # Schedule in waves of at most max_concurrent tasks.  The scheduler's
+    # monitor only dispatches a scheduled task once its deps are terminal, so
+    # scheduling one wave at a time keeps at most one wave's bounded results
+    # resident while later waves run (chunking.plan_chunks).
+    order = [t.id for t in tasks]
+    waves = chunking.plan_chunks(order)
 
-    def _factory(t: PlanTask) -> TaskExecutor:
-        base = (
-            executor_factory(t)
-            if executor_factory is not None
-            else lambda input_data: _default_executor(agent, t, input_data)
-        )
-
-        async def wrapper(input_data: dict[str, Any]) -> dict[str, Any]:
-            captured_inputs[t.id] = dict(input_data)
-            return await base(input_data)
-
-        return wrapper
-
-    for t in tasks:
-        scheduler.register_executor(t.id, _factory(t))
-    for t in tasks:
-        scheduler.schedule_task(t.id)
+    async def _run_wave(wave: List[str]) -> None:
+        for tid in wave:
+            scheduler.schedule_task(tid)
+        while (
+            scheduler.pending_count() > 0
+            or scheduler.scheduled_count() > 0
+            or scheduler._inflight
+        ):
+            await asyncio.sleep(0.02)
 
     # ── Persistence: write dep results + execution report per terminal task (#108) ──
     plan_dir_path = Path(plan_dir) if plan_dir else None
@@ -166,13 +226,8 @@ async def run_plan(
         return snap
 
     await scheduler.start()
-    # Wait until nothing is pending, scheduled, or still in flight.
-    while (
-        scheduler.pending_count() > 0
-        or scheduler.scheduled_count() > 0
-        or scheduler._inflight
-    ):
-        await asyncio.sleep(0.02)
+    for wave in waves:
+        await _run_wave(wave)
     await scheduler.stop()
     snap = scheduler.snapshot()
     for rec in snap["tasks"]:
