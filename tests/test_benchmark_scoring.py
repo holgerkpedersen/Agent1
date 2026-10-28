@@ -480,3 +480,52 @@ class TestNullContentResponse:
         assert text == ""
         assert tokens == 7
         assert latency_ms >= 0.0
+
+
+class TestLatexAnswers:
+    """Reasoning models wrap math final answers in LaTeX.
+
+    Live regression (deepseek-v4.1-flash, --deep, math): two CORRECT answers
+    were graded wrong.  ``ANSWER: \\(x=8\\)`` normalized to "x 8" — the old
+    containment guard skipped every 1-char expectation — and
+    ``ANSWER: \\(\\frac{3}{8}\\)`` normalized to "frac 3 8" because the
+    fraction command was not converted to "3/8".
+    """
+
+    def test_frac_command_matches_slash_answer(self) -> None:
+        assert answers_match("ANSWER: \\(\\frac{3}{8}\\)", "3/8")
+
+    def test_frac_command_matches_decimal_answer(self) -> None:
+        assert answers_match("ANSWER: \\(\\frac{1}{2}\\)", "0.5")
+
+    def test_dfrac_and_tfrac_also_convert(self) -> None:
+        assert answers_match("ANSWER: \\dfrac{3}{8}", "3/8")
+        assert answers_match("ANSWER: \\tfrac{3}{8}", "3/8")
+
+    def test_inline_latex_single_number(self) -> None:
+        assert answers_match("so \\(x = 15 - 7 = 8\\)\n\nANSWER: \\(x=8\\)", "8")
+
+    def test_dollar_delimiters(self) -> None:
+        assert answers_match("ANSWER: $42$", "42")
+
+    def test_correct_answer_still_wrong_for_wrong_value(self) -> None:
+        # LaTeX handling must not credit a wrong value.
+        assert not answers_match("ANSWER: \\(\\frac{3}{7}\\)", "3/8")
+        assert not answers_match("ANSWER: \\(x=9\\)", "8")
+
+    def test_latex_conversion_does_not_weaken_substring_guard(self) -> None:
+        # The old false positives must stay dead after LaTeX stripping.
+        assert not answers_match("142", "42")
+        assert not answers_match("15", "5")
+        assert not answers_match("retry the test", "true")
+
+    def test_plain_prose_untouched(self) -> None:
+        assert normalize_answer("  Hello, World! ") == "hello world"
+
+    def test_malformed_latex_does_not_raise(self) -> None:
+        assert isinstance(normalize_answer("\\frac{3"), str)
+        assert isinstance(normalize_answer("\\frac{}{}"), str)
+        assert isinstance(normalize_answer("\\"), str)
+
+    def test_nested_fraction_converts(self) -> None:
+        assert answers_match("ANSWER: \\frac{\\frac{1}{2}}{2}", "1/4")

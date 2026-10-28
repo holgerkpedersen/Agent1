@@ -1,7 +1,24 @@
+"""Accuracy / latency benchmark for OpenAI-compatible LLM servers.
+
+Two modes:
+
+* **standard** (default) — single shot, ``temperature=0.1``, 2048 tokens per
+  question.  Cheap pass/fail signal.
+* **deep-analysis** (``--deep``) — the agent's own ``deep-analysis`` profile
+  (``temperature=0.7``, larger token budget) plus a second, self-checking
+  attempt on reasoning/math questions, and a per-question trace in the report.
+  Use it to measure the model the way the agent actually drives it.
+
+Results are keyed ``model|profile`` (decision #055) and written to
+``reports/models.json``; each run also drops a ``reports/benchmark_<stamp>.json``
+snapshot so ``--trend`` has history to read.
+"""
+
 import argparse
 import asyncio
 import json
 import logging
+import os
 import re
 import statistics
 import sys
@@ -415,6 +432,26 @@ class QuestionResult:
 
 
 @dataclass
+class QuestionOutcome:
+    """One graded attempt: what the server returned and what it scored.
+
+    ``error`` is set (and the attempt is unscoreable) when the API failed —
+    a dead server must never be scored as a wrong answer.
+    """
+
+    response: str = ""
+    correct: bool | None = None
+    score: float = 0.0
+    latency_ms: float = 0.0
+    tokens_used: int | None = None
+    error: str = ""
+
+    @property
+    def answered(self) -> bool:
+        return not self.error and bool(self.response.strip())
+
+
+@dataclass
 class CategoryResult:
     category: str
     results: list[QuestionResult] = field(default_factory=list)
@@ -486,10 +523,100 @@ class ModelResult:
     def total_questions(self) -> int:
         return sum(len(c.results) for c in self.categories.values())
 
+    @property
+    def total_tokens(self) -> int | None:
+        """Sum of reported ``usage.total_tokens``; None when no question
+        reported usage (some servers omit it)."""
+        vals = [
+            r.tokens_used
+            for c in self.categories.values()
+            for r in c.results
+            if r.tokens_used is not None
+        ]
+        return sum(vals) if vals else None
+
+    def accuracy_for(self, category: str) -> float | None:
+        cr = self.categories.get(category)
+        return cr.accuracy if cr else None
+
 
 # ---------------------------------------------------------------------------
 # Scorer
 # ---------------------------------------------------------------------------
+
+
+#: LaTeX a reasoning model wraps math answers in: \(x=8\), $\frac{3}{8}$,
+#: \[ 42 \].  These are stripped before normalization so a formatted answer
+#: grades the same as the plain one the question sheet expects.
+_LATEX_DELIMS_RE = re.compile(r"\\[()[\]]|\$+")
+_LATEX_SPACING_RE = re.compile(r"\\(?:left|right|!|,|;|:|quad|qquad)")
+_LATEX_FRAC_CMDS = ("\\dfrac", "\\tfrac", "\\frac")
+_LATEX_SYMBOLS = (
+    ("\\times", "*"),
+    ("\\cdot", "*"),
+    ("\\div", "/"),
+    ("\\pi", "pi"),
+    ("\\%", "%"),
+)
+
+
+def _read_brace_group(text: str, i: int) -> tuple[str, int]:
+    """Return the contents of the brace group starting at *text[i]* and the
+    index just past its closing brace.  Unbalanced input degrades to a single
+    character so a malformed answer can never raise mid-run."""
+    if i >= len(text) or text[i] != "{":
+        return "", i
+    depth = 0
+    for j in range(i, len(text)):
+        if text[j] == "{":
+            depth += 1
+        elif text[j] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[i + 1 : j], j + 1
+    return text[i + 1 :], len(text)
+
+
+def _convert_latex_fracs(text: str) -> str:
+    """Rewrite ``\\frac{a}{b}`` (and dfrac/tfrac) as ``a/b``.
+
+    A plain ``a/b`` matters: normalize_answer keeps "/" but drops brackets, so
+    ``(3)/(8)`` would normalize to "3 / 8" and never equal the expected "3/8".
+    Nested fractions are handled by rescanning after each rewrite.
+    """
+    out = text
+    for cmd in _LATEX_FRAC_CMDS:
+        while cmd in out:
+            start = out.find(cmd)
+            i = start + len(cmd)
+            while i < len(out) and out[i] in " \t":
+                i += 1
+            num, i = _read_brace_group(out, i)
+            while i < len(out) and out[i] in " \t":
+                i += 1
+            den, i = _read_brace_group(out, i)
+            if not num and not den:
+                # \frac with no operands: drop the command only.
+                out = out[:start] + " " + out[start + len(cmd) :]
+                continue
+            out = f"{out[:start]}{num.strip()}/{den.strip()}{out[i:]}"
+    return out
+
+
+def latex_to_text(text: str) -> str:
+    """Strip LaTeX markup so math answers compare as text.
+
+    Only activates when the text shows LaTeX markers, so ordinary prose is
+    passed through untouched.
+    """
+    if "\\" not in text and "$" not in text:
+        return text
+    out = _convert_latex_fracs(text)
+    for sym, plain in _LATEX_SYMBOLS:
+        out = out.replace(sym, plain)
+    out = _LATEX_DELIMS_RE.sub(" ", out)
+    out = _LATEX_SPACING_RE.sub(" ", out)
+    return out.replace("{", " ").replace("}", " ")
 
 
 def normalize_answer(text: str | None) -> str:
@@ -498,14 +625,84 @@ def normalize_answer(text: str | None) -> str:
         # normalize to "" so answers_match scores it False instead of
         # crashing the whole run on .strip().
         return ""
-    text = text.strip().lower()
+    text = latex_to_text(text.strip().lower())
     text = re.sub(r"[^\w\s./]", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
 
 
+#: A labelled final answer, e.g. the line the deep-analysis review pass asks
+#: the model to end with ("ANSWER: 42").  Graded on the label's payload, so a
+#: long self-review is not scored wrong just for containing reasoning text.
+_ANSWER_LABEL_RE = re.compile(r"(?im)^\s*(?:final\s+)?answer\s*[:=]\s*(.+?)\s*$")
+
+
+def extract_final_answer(response: str | None) -> str:
+    """Return the model's declared final answer, else *response* unchanged.
+
+    The deep-analysis review prompt ends with "ANSWER: <final answer>"; when
+    that label is present the payload is the answer being graded.  The LAST
+    label wins (a model that restates itself leaves the newest verdict last).
+    """
+    if not response:
+        return response or ""
+    matches = _ANSWER_LABEL_RE.findall(response)
+    if not matches:
+        return response
+    last = matches[-1].strip()
+    return last or response
+
+
+def _to_float(text: str) -> float | None:
+    """Parse a plain number, tolerating thousands separators and spaces."""
+    try:
+        return float(text.replace(",", "").replace(" ", ""))
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
+def _eval_slash_expr(text: str) -> float | None:
+    """Evaluate a bare ``a/b[/c...]`` expression left to right.
+
+    Returns None when the text is not a pure slash expression, so callers can
+    fall back.  Nested ``\\frac{\\frac{1}{2}}{2}`` flattens to "1/2/2" during
+    LaTeX conversion; evaluating left to right yields the right value.
+    """
+    parts = text.replace(" ", "").split("/")
+    if len(parts) < 2:
+        return None
+    values: list[float] = []
+    for part in parts:
+        value = _to_float(part)
+        if value is None:
+            return None
+        values.append(value)
+    result = values[0]
+    for divisor in values[1:]:
+        if divisor == 0:
+            return None
+        result /= divisor
+    return result
+
+
+def _numeric_candidates(text: str) -> list[float]:
+    """Return every numeric reading of *text* (plain value and slash value).
+
+    "0.5" -> [0.5];  "1/2" -> [0.5];  "1/2/2" -> [0.25].  A text that is not
+    numeric at all contributes nothing, so prose never scores numerically.
+    """
+    candidates: list[float] = []
+    plain = _to_float(text)
+    if plain is not None:
+        candidates.append(plain)
+    slash = _eval_slash_expr(text)
+    if slash is not None and slash not in candidates:
+        candidates.append(slash)
+    return candidates
+
+
 def answers_match(response: str | None, expected: str) -> bool:
-    norm_resp = normalize_answer(response)
+    norm_resp = normalize_answer(extract_final_answer(response))
     norm_exp = normalize_answer(expected)
 
     if not norm_exp or not norm_resp:
@@ -522,6 +719,12 @@ def answers_match(response: str | None, expected: str) -> bool:
     ):
         return True
 
+    # Short numeric answers: a reasoning model says "x = 8" or "gives 8" where
+    # the sheet expects "8".  Compare WHOLE tokens, never substrings, so "5"
+    # still cannot match "15" and "42" still cannot match "142".
+    if re.fullmatch(r"\d+(?:\.\d+)?", norm_exp) and norm_exp in norm_resp.split():
+        return True
+
     # Numeric tolerance for math answers (also accept "1 000" for "1,000")
     try:
         r_val = float(norm_resp.replace(",", "").replace(" ", ""))
@@ -533,18 +736,14 @@ def answers_match(response: str | None, expected: str) -> bool:
             "Numeric comparison failed for response=%r expected=%r", norm_resp, norm_exp
         )
 
-    # Fraction equivalence
-    for frac in [norm_resp, norm_exp]:
-        if "/" in frac:
-            try:
-                num, den = frac.split("/")
-                fval = float(num) / float(den)
-                other = normalize_answer(norm_exp if frac == norm_resp else norm_resp)
-                oval = float(other.replace(",", "").replace(" ", ""))
-                if abs(fval - oval) < 0.01:
-                    return True
-            except (ValueError, ZeroDivisionError):
-                logger.debug("Fraction comparison failed for %r", frac)
+    # Fraction equivalence (0.5 == 1/2, and nested \frac{a}{b} forms which
+    # flatten to "1/2/2" and evaluate left to right).  Both sides are reduced
+    # to candidate numeric values and compared pairwise, so plain decimals and
+    # slash expressions match in either direction.
+    for r_cand in _numeric_candidates(norm_resp):
+        for e_cand in _numeric_candidates(norm_exp):
+            if abs(r_cand - e_cand) < 0.01:
+                return True
 
     # Keyword overlap for knowledge questions — TIGHTENED: overlap must be
     # substantial (>= 0.85 of the expected words), at least two words must
@@ -805,6 +1004,168 @@ PROVIDER_BASE_URLS: dict[str, str] = {
 }
 DEFAULT_PROVIDER = "lmstudio"
 
+#: Benchmark profiles.  ``standard`` stays the historic single-shot,
+#: temperature-0.1, 2048-token run so old snapshots stay comparable.
+#: ``deep-analysis`` mirrors agent_core.llm.model_profiles' deep profile
+#: (temperature 0.7 = brainstorming/analysis temperature) with a token budget
+#: reasoning models need, and re-asks reasoning/math questions so a model that
+#: reasons itself into a wrong first answer can correct it on review.
+#:
+#: ``max_tokens`` is resolved at run time (CLI, then env, then this default) to
+#: keep the benchmark usable on servers with a small context window.
+PROFILES: dict[str, dict[str, Any]] = {
+    "standard": {
+        "temperature": 0.1,
+        "max_tokens": 2048,
+        "verify_round": False,
+    },
+    "deep-analysis": {
+        "temperature": 0.7,
+        "max_tokens": 16384,
+        "verify_round": True,
+    },
+}
+DEFAULT_BENCH_PROFILE = "standard"
+
+#: Environment override for the deep-analysis token budget (the benchmark CLI
+#: cannot know llama-server's -c value, so deployments that run a small context
+#: set this instead of editing code).
+DEEP_MAX_TOKENS_ENV = "BENCHMARK_DEEP_MAX_TOKENS"
+
+#: Deep-analysis verification pass.  Only the factual categories are re-asked:
+#: instruction-following answers are graded on the shape of the first attempt
+#: and coding answers are graded by the judge, so a retry would just add
+#: latency to the same verdict.
+VERIFY_CATEGORIES: frozenset[str] = frozenset({"reasoning", "math"})
+
+#: Upper bound on how much of an answer is kept in the report (a deep run's
+#: reasoning can run to tens of KB per question).
+REPORT_ANSWER_CHARS = 4000
+
+
+def resolve_bench_profile(profile: str) -> dict[str, Any]:
+    """Return the setting dict for *profile*.
+
+    An unknown profile name is not an error: the user may want a custom tag
+    (e.g. ``--profile friday-1``) that only groups results in the report.  Such
+    a tag gets the standard settings unless it names one of the built-ins.
+    """
+    if profile in PROFILES:
+        return PROFILES[profile]
+    return PROFILES[DEFAULT_BENCH_PROFILE]
+
+
+def resolve_server_model_id(
+    provider: str,
+    chat_url: str,
+    model: str,
+    timeout: float = 3.0,
+) -> str:
+    """Return the model id the server will actually accept.
+
+    A llama.cpp ``llama-server`` loads exactly one model at startup and
+    registers it under its own id (e.g.
+    ``deepseek-v4.1-flash-ista-2.00bpw``), so the ``llama/`` routing label the
+    agent framework uses (``llama/deepseek-v4.1-flash``) is rejected with
+    ``model not found``.  For the ``llama`` provider we therefore ask
+    ``GET <base>/models`` which id is served and use that when the requested
+    name does not match.  Best effort: any failure keeps the requested name.
+    """
+    if provider != "llama":
+        return model
+
+    base = chat_url[: -len("/chat/completions")] if chat_url.endswith(
+        "/chat/completions"
+    ) else chat_url
+    try:
+        import urllib.request
+
+        req = urllib.request.Request(f"{base}/models", method="GET")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8", "replace"))
+    except Exception as exc:  # noqa: BLE001 - discovery is best effort
+        logger.debug("Could not list llama-server models: %s", exc)
+        return model
+
+    items = data.get("data") if isinstance(data, dict) else None
+    served = [
+        str(m.get("id")).strip()
+        for m in (items or [])
+        if isinstance(m, dict) and m.get("id")
+    ]
+    if not served:
+        return model
+
+    bare = model[len("llama/") :] if model.startswith("llama/") else model
+    for candidate in served:
+        if candidate == model or candidate == bare:
+            return candidate
+
+    # The requested label is not what the server serves.  Use the server's id
+    # and say so: silently benchmarking a different loaded model would make
+    # the report a lie.
+    chosen = served[0]
+    print(
+        f"  Note: llama-server serves {chosen!r}; requesting that instead "
+        f"of {model!r} (loaded model wins on a single-model server)."
+    )
+    return chosen
+
+
+def print_deep_summary(results: list[ModelResult], profile: str) -> None:
+    """Print the per-question detail a deep-analysis run exists for.
+
+    The comparison table only shows accuracy; a deep run also cares about how
+    the questions it can act on went (reasoning/math network), how much it
+    cost, and which answers came in under the budget — i.e. were cut off before
+    they could be graded.
+    """
+    for r in results:
+        print(f"  Deep-analysis detail for {r.display_name}")
+        print(f"  {'-' * 60}")
+        tokens = r.total_tokens
+        print(
+            f"    Total tokens:  {tokens if tokens is not None else 'not reported'}"
+            f"   Questions: {r.total_questions}"
+        )
+        for cat in ("reasoning", "math", "coding"):
+            acc = r.accuracy_for(cat)
+            if acc is not None:
+                print(f"    {cat:<12} {acc:>6.1f}%")
+        truncated = [
+            qr
+            for c in r.categories.values()
+            for qr in c.results
+            if qr.correct is False and not qr.response.strip()
+        ]
+        if truncated:
+            print(
+                f"    WARNING: {len(truncated)} question(s) returned an empty "
+                "answer (token budget exhausted?) — raise --max-tokens."
+            )
+        print()
+
+
+def deep_max_tokens(default: int) -> int:
+    """Resolve the deep-analysis token budget: env override, else *default*."""
+    raw = os.environ.get(DEEP_MAX_TOKENS_ENV)
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning(
+            "Ignoring %s=%r: not an integer.", DEEP_MAX_TOKENS_ENV, raw
+        )
+        return default
+    if value <= 0:
+        logger.warning(
+            "Ignoring %s=%r: must be positive.", DEEP_MAX_TOKENS_ENV, raw
+        )
+        return default
+    return value
+
+
 #: Default chat-completions URL; set from --provider/--url in main().
 BASE_URL = f"{lmstudio_base_url()}/chat/completions"
 
@@ -836,6 +1197,7 @@ async def query_model(
     max_retries: int = 3,
     base_delay: float = 1.0,
     max_tokens: int = 2048,
+    temperature: float = 0.1,
 ) -> tuple[str, float, int | None]:
     (
         """Returns (response_text, latency_ms, """
@@ -848,12 +1210,16 @@ async def query_model(
         {
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.1,
+            # 0.1 keeps the standard run reproducible; the deep-analysis
+            # profile passes 0.7 (see PROFILES) to sample the way the agent's
+            # analysis prompts do.
+            "temperature": temperature,
             # Reasoning models (e.g. qwen3.8-27b) consume the budget in
             # reasoning_content BEFORE emitting content: with 512 tokens the
             # answer came back empty (finish_reason "length"), scoring a
             # False the model did not deserve.  2048 gives the reasoning
-            # room to finish AND the answer room to exist.
+            # room to finish AND the answer room to exist; deep-analysis
+            # raises it further.
             "max_tokens": max_tokens,
         }
     ).encode("utf-8")
@@ -982,6 +1348,90 @@ def _probe_endpoint(base_url: str, timeout: float = 5.0) -> None:
         ) from exc
 
 
+async def evaluate_question(
+    model: str,
+    prompt: str,
+    expected: str | None,
+    category: str,
+    judge_fn: Any = None,
+    max_tokens: int = 2048,
+    temperature: float = 0.1,
+) -> QuestionOutcome:
+    """Ask one question once and grade it.
+
+    API failures come back as an *unscoreable* outcome carrying the error text,
+    never as a wrong answer: a dead endpoint must not depress accuracy.
+    """
+    try:
+        response, latency_ms, tokens = await query_model(
+            model,
+            prompt,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+    except ModelAPIError as exc:
+        return QuestionOutcome(error=f"{exc} (after {time.strftime('%H:%M:%S')})")
+
+    correct, score = await score_question(
+        prompt, response, expected, category, judge_fn=judge_fn
+    )
+    return QuestionOutcome(
+        response=response,
+        correct=correct,
+        score=score,
+        latency_ms=latency_ms,
+        tokens_used=tokens,
+    )
+
+
+async def verify_question(
+    model: str,
+    prompt: str,
+    expected: str | None,
+    category: str,
+    first: QuestionOutcome,
+    judge_fn: Any = None,
+    max_tokens: int = 2048,
+    temperature: float = 0.1,
+) -> QuestionOutcome:
+    """Deep-analysis second pass: shows the model its own answer for review.
+
+    The model gets the original question plus its first attempt and is asked to
+    re-check it — the same "look again before you commit" step the agent's
+    analysis loop performs.  The verdict is the reviewed answer (up if the model
+    corrects itself, down if it talks itself out of a right answer); latency and
+    tokens are the sum of both attempts, so a deep run's cost stays visible.
+
+    Returns *first* unchanged when the retry failed, so a flaky second call can
+    only ever leave the score where it was.
+    """
+    review_prompt = (
+        f"{prompt}\n\n"
+        f"Your previous answer was:\n{first.response.strip()}\n\n"
+        "Re-check the reasoning above step by step. If it is correct, restate "
+        "the final answer. If it is wrong, give the corrected answer. End your "
+        "reply with the line 'ANSWER: <final answer>'."
+    )
+    second = await evaluate_question(
+        model,
+        review_prompt,
+        expected,
+        category,
+        judge_fn=judge_fn,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
+    if not second.answered:
+        return first
+    return QuestionOutcome(
+        response=second.response,
+        correct=second.correct,
+        score=second.score,
+        latency_ms=first.latency_ms + second.latency_ms,
+        tokens_used=((first.tokens_used or 0) + (second.tokens_used or 0)) or None,
+    )
+
+
 async def run_category(
     model: str,
     category: str,
@@ -989,38 +1439,69 @@ async def run_category(
     repetition: int = 0,
     judge_fn: Any = None,
     max_tokens: int = 2048,
+    temperature: float = 0.1,
+    verify_round: bool = False,
+    response_chars: int = 500,
 ) -> CategoryResult:
+    """Run one category.
+
+    ``verify_round`` is the deep-analysis pass: reasoning/math answers get a
+    second, self-reviewing attempt (see ``verify_question``).  ``response_chars``
+    caps how much of each answer is kept — 500 for the console-oriented standard
+    run, much more when the report is meant to be read.
+    """
     cat_result = CategoryResult(category=category)
     total = len(questions)
+    verify = verify_round and category in VERIFY_CATEGORIES
 
     print(f"  [{model}] {category}: running {total} questions...")
+    if verify:
+        print("    (deep-analysis: second self-review pass on each answer)")
     for idx, (prompt, expected) in enumerate(questions, 1):
         sys.stdout.write(f"\r    Question {idx}/{total}")
         sys.stdout.flush()
 
-        try:
-            response, latency_ms, tokens = await query_model(
-                model, prompt, max_tokens=max_tokens
+        outcome = await evaluate_question(
+            model,
+            prompt,
+            expected,
+            category,
+            judge_fn=judge_fn,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+        if verify and outcome.answered:
+            outcome = await verify_question(
+                model,
+                prompt,
+                expected,
+                category,
+                outcome,
+                judge_fn=judge_fn,
+                max_tokens=max_tokens,
+                temperature=temperature,
             )
-            correct, score = await score_question(
-                prompt, response, expected, category, judge_fn=judge_fn
-            )
-        except ModelAPIError as e:
-            response = str(e)
-            latency_ms = 0.0
-            tokens = None
+
+        if outcome.error:
+            # Keep the transport error in the response field so a reader of the
+            # report can see why the question is unscoreable.
+            response = outcome.error
             correct = None
             score = 0.0
+        else:
+            response = outcome.response
+            correct = outcome.correct
+            score = outcome.score
 
         cat_result.results.append(
             QuestionResult(
                 question_idx=idx - 1,
                 prompt=prompt,
-                response=response[:500],
+                response=response[:response_chars],
                 correct=correct,
                 score=score,
-                latency_ms=latency_ms,
-                tokens_used=tokens,
+                latency_ms=outcome.latency_ms,
+                tokens_used=outcome.tokens_used,
             )
         )
 
@@ -1035,8 +1516,18 @@ async def run_benchmark(
     judge_fn: Any = None,
     profile: str = "",
     max_tokens: int = 2048,
+    temperature: float = 0.1,
+    verify_round: bool = False,
+    response_chars: int = 500,
 ) -> list[ModelResult]:
     results = []
+    run_kwargs: dict[str, Any] = {
+        "judge_fn": judge_fn,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "verify_round": verify_round,
+        "response_chars": response_chars,
+    }
 
     for model in models:
         print(f"\n{'=' * 60}")
@@ -1049,7 +1540,7 @@ async def run_benchmark(
         for cat_name, questions in categories.items():
             if repetitions == 1:
                 cat_res = await run_category(
-                    model, cat_name, questions, judge_fn=judge_fn, max_tokens=max_tokens
+                    model, cat_name, questions, **run_kwargs
                 )
                 model_result.categories[cat_name] = cat_res
             else:
@@ -1062,8 +1553,7 @@ async def run_benchmark(
                         cat_name,
                         questions,
                         repetition=rep,
-                        judge_fn=judge_fn,
-                        max_tokens=max_tokens,
+                        **run_kwargs,
                     )
                     all_cat_results.append(cr)
 
@@ -1369,15 +1859,17 @@ def save_json_report(results: list[ModelResult], path: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Benchmark local LLMs via LM Studio API",
+        description="Benchmark local LLMs via LM Studio / llama.cpp API",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
             "  python benchmark.py --model qwen2.5-coder-7b\n"
             "  python benchmark.py --model m1 m2 --repetitions 3\n"
             "  python benchmark.py --provider llama --model qwen3-8b\n"
+            "  python benchmark.py --deep --provider llama "
+            "--model llama/deepseek-v4.1-flash\n"
             "  python benchmark.py --trend qwen2.5-coder-7b\n"
         ),
     )
@@ -1395,7 +1887,16 @@ def parse_args() -> argparse.Namespace:
         "--model",
         nargs="+",
         required=False,
-        help="Model name(s) as registered in LM Studio",
+        help="Model name(s) as registered in LM Studio / llama-server. A "
+        "llama/ routing prefix is accepted and stripped for llama-server.",
+    )
+    parser.add_argument(
+        "--deep",
+        action="store_true",
+        help="Deep-analysis run: deep-analysis profile (temperature 0.7, "
+        "larger token budget), a second self-review pass on every "
+        "reasoning/math question, and longer answers kept in the report. "
+        "Equivalent to --profile deep-analysis --verify-round.",
     )
     parser.add_argument(
         "--profile",
@@ -1403,15 +1904,30 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="Profile tag for the run (e.g. deep-analysis); results are keyed "
         "model|profile so the same model under different profiles is "
-        "compared like with like (decision #055)",
+        "compared like with like (decision #055). Defaults to the profile "
+        "implied by --deep (deep-analysis) or standard.",
     )
     parser.add_argument(
         "--max-tokens",
         type=int,
-        default=2048,
-        help="Token budget per question (default: 2048). Reasoning models "
-        "consume the budget in reasoning_content before emitting the "
-        "answer; 512 starves it into empty responses.",
+        default=None,
+        help="Token budget per question. Default: the profile's budget "
+        "(standard 2048, deep-analysis 16384 or $BENCHMARK_DEEP_MAX_TOKENS). "
+        "Reasoning models consume the budget in reasoning_content before "
+        "emitting the answer; 512 starves it into empty responses.",
+    )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=None,
+        help="Sampling temperature. Default: the profile's value "
+        "(standard 0.1, deep-analysis 0.7).",
+    )
+    parser.add_argument(
+        "--verify-round",
+        action="store_true",
+        help="Re-ask reasoning/math questions with the model's own answer for "
+        "review (implied by --deep).",
     )
     parser.add_argument(
         "--categories",
@@ -1431,7 +1947,8 @@ def parse_args() -> argparse.Namespace:
         "-o",
         type=str,
         default=None,
-        help="Path to save JSON report",
+        help="Path to save the JSON snapshot (default: "
+        "reports/benchmark_<timestamp>.json)",
     )
     parser.add_argument(
         "--url",
@@ -1449,7 +1966,7 @@ def parse_args() -> argparse.Namespace:
         help="Print the accuracy trend for MODEL over "
         "reports/benchmark_*.json snapshots and exit",
     )
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 async def main() -> None:
@@ -1485,35 +2002,75 @@ async def main() -> None:
         sum(len(qs) for qs in categories.values()) * len(args.model) * args.repetitions
     )
 
+    # ---- profile resolution: --deep is sugar for the deep-analysis profile ----
+    profile = args.profile or ("deep-analysis" if args.deep else "")
+    settings = resolve_bench_profile(profile or DEFAULT_BENCH_PROFILE)
+    max_tokens = (
+        args.max_tokens
+        if args.max_tokens is not None
+        else deep_max_tokens(settings["max_tokens"])
+    )
+    temperature = (
+        args.temperature if args.temperature is not None else settings["temperature"]
+    )
+    verify_round = bool(args.verify_round or args.deep or settings["verify_round"])
+    deep_run = verify_round or profile == "deep-analysis"
+    # A deep report is read, not skimmed: keep enough of each answer to see the
+    # reasoning that produced the verdict.
+    response_chars = REPORT_ANSWER_CHARS if deep_run else 500
+
+    # llama-server serves exactly one model under its own id; translate the
+    # agent's routing label (llama/deepseek-v4.1-flash) to that id.
+    models = [
+        resolve_server_model_id(args.provider, BASE_URL, m) for m in args.model
+    ]
+
     print("\n  Benchmark Configuration")
     print(f"  {'-' * 40}")
-    print(f"  Models:        {', '.join(args.model)}")
-    if args.profile:
-        print(f"  Profile:       {args.profile}")
+    print(f"  Models:        {', '.join(models)}")
+    print(f"  Profile:       {profile or DEFAULT_BENCH_PROFILE}")
     print(f"  Categories:    {', '.join(categories.keys())}")
     print(
         "  Questions:     "
-        f"{total_q // (len(args.model) * args.repetitions)} per model "
+        f"{total_q // (len(models) * args.repetitions)} per model "
         f"({total_q} total with repetitions)"
     )
     print(f"  Repetitions:   {args.repetitions}")
-    print(f"  Max tokens:    {args.max_tokens} per question")
+    print(f"  Max tokens:    {max_tokens} per question")
+    print(f"  Temperature:   {temperature}")
+    if verify_round:
+        print(
+            "  Verify round:  on (second self-review pass for "
+            f"{', '.join(sorted(VERIFY_CATEGORIES))})"
+        )
     print(f"  Provider:      {args.provider}")
     print(f"  API URL:       {BASE_URL}")
     print()
 
     results = await run_benchmark(
-        args.model,
+        models,
         categories,
         args.repetitions,
-        profile=args.profile,
-        max_tokens=args.max_tokens,
+        profile=profile,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        verify_round=verify_round,
+        response_chars=response_chars,
     )
 
     print_report(results)
+    if deep_run:
+        print_deep_summary(results, profile)
 
     if args.output:
-        save_json_report(results, args.output)
+        snapshot_path = args.output
+    else:
+        # Every run leaves a snapshot so --trend has history to read; the
+        # timestamp keeps them distinct and sortable.
+        snapshot_path = str(
+            Path("reports") / f"benchmark_{time.strftime('%Y%m%d-%H%M%S')}.json"
+        )
+    save_json_report(results, snapshot_path)
 
     models_path = Path("reports") / "models.json"
     save_models_json(results, str(models_path))
