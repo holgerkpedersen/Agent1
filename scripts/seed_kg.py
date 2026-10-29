@@ -36,6 +36,7 @@ SECTIONS: tuple[str, ...] = ("facts", "files", "tags", "symbols")
 # Curated knowledge about Agent1 itself.  Section -> key -> value.
 SEED: dict[str, dict[str, Any]] = {
     "facts": {
+        # -- the knowledge graph itself -----------------------------------
         "kg-command": (
             "kg (commands/kg_cmd.py) adds/shows/removes entries in "
             "agent._knowledge_graph; every mutation calls _save_memory()."
@@ -56,12 +57,60 @@ SEED: dict[str, dict[str, Any]] = {
             "The tags section is a free-form user category; it starts "
             "empty and fills via 'kg add tag <key> <value>'."
         ),
+        # -- memory & persistence ------------------------------------------
         "memory-persistence": (
             "Memory persists atomically (tmp + os.replace) to "
             "agent_memory.json: files_read, semantic_index, knowledge_graph, "
             "working_memory, history, original_goal."
         ),
-        "plan-mode": "Plan mode blocks mutating tools; read-only tools stay allowed.",
+        "corrupt-file-quarantine": (
+            "A corrupt memory/chat-history JSON is quarantined as "
+            "<file>.bad-<timestamp> before falling back to empty defaults, "
+            "so bad bytes stay inspectable instead of being clobbered by "
+            "the next save."
+        ),
+        "memory-store": (
+            "memory/memory_store.py: MemoryStore is a thread-safe "
+            "cache-over-backend store (SQLiteStorage backend) with optional "
+            "semantic search; the semantic-index cache is keyed by "
+            "(embedding-service id, vector-db id, ledger fingerprint)."
+        ),
+        # -- REPL & command registry ----------------------------------------
+        "command-registry": (
+            "commands/registry.py: CommandRegistry.register/get/names/"
+            "execute/print_help. interactive._register_commands is the "
+            "single registration point — the banner listing and dispatch "
+            "both read from it."
+        ),
+        "repl-line-editing": (
+            "interactive._start_line_editing enables arrow keys and "
+            "command recall; history lives in <workspace>/.agent_history."
+        ),
+        # -- tool loop & turn loop -------------------------------------------
+        "tool-loop": (
+            "llm/tool_loop.py: ToolLoopRunner drives the iterative "
+            "LLM<->tool loop (default max 150 iterations) with in-loop "
+            "context compaction, oversized-arg stripping, path-miss "
+            "recovery and a forced final answer when the budget runs out."
+        ),
+        "turn-loop": (
+            "turn_loop.py: _run_chained_tool_loop runs one REPL turn; "
+            "_finish_turn records the experience; check_stale_files/"
+            "invalidate_stale track files changed on disk since they were read."
+        ),
+        # -- modes -------------------------------------------------------------
+        "plan-mode": (
+            "modes.py: is_plan_mode/filter_tool_schemas/check_tool_allowed "
+            "+ plan-mode prompt suffixes. Plan mode blocks mutating tools; "
+            "read-only tools stay allowed."
+        ),
+        # -- parallel & subagents -----------------------------------------------
+        "parallel-delegate": (
+            "llm/parallel.py + llm/tool_reply.py: parallel delegation of "
+            "tool calls and tool-reply handling, extracted from the monolith "
+            "during the turn-loop refactor. Sub-agent machinery lives in "
+            "subagent.py."
+        ),
     },
     "files": {
         "agent_core/agent.py": (
@@ -79,8 +128,28 @@ SEED: dict[str, dict[str, Any]] = {
             "clear command: shows memory stats (incl. knowledge-graph count) "
             "and clears history/memory."
         ),
+        "agent_core/commands/registry.py": (
+            "CommandRegistry: register/get/names/execute/print_help — the "
+            "REPL command dispatch core."
+        ),
         "agent_core/memory/persistence.py": (
             "load/save of agent memory JSON, clear_history, memory_stats."
+        ),
+        "agent_core/memory/memory_store.py": (
+            "MemoryStore: thread-safe cache-over-backend store with "
+            "optional semantic search over the memory ledger."
+        ),
+        "agent_core/turn_loop.py": (
+            "One REPL turn: chained tool loop, failover reporting, "
+            "_finish_turn bookkeeping, stale-file tracking."
+        ),
+        "agent_core/llm/tool_loop.py": (
+            "ToolLoopRunner: the iterative LLM<->tool loop with context "
+            "compaction and forced-final-answer logic."
+        ),
+        "agent_core/modes.py": (
+            "Plan-mode gating: is_plan_mode, filter_tool_schemas, "
+            "check_tool_allowed, plan-mode prompt suffixes."
         ),
     },
     "symbols": {
@@ -104,12 +173,51 @@ SEED: dict[str, dict[str, Any]] = {
             "memory/persistence.py: persists all memory stores atomically "
             "to agent_memory.json."
         ),
+        "clear_history": (
+            "memory/persistence.py (~line 75): clears history, chat, files "
+            "read, knowledge graph, working memory and semantic index; "
+            "removes the persisted state files."
+        ),
+        "memory_stats": (
+            "memory/persistence.py (~line 61): counts chat_history, "
+            "files_read, stale_files, history, working_memory, "
+            "semantic_index and knowledge_graph sections — the numbers "
+            "clear prints."
+        ),
+        "ToolLoopRunner.run": (
+            "llm/tool_loop.py (~line 795): entry point of the tool loop; "
+            "runs messages through llm_chat_fn/execute_tool_fn until a "
+            "final answer or the iteration budget."
+        ),
+        "_run_chained_tool_loop": (
+            "turn_loop.py (~line 52): async runner for one chained REPL "
+            "turn; returns final text, messages, llm error and the loop."
+        ),
     },
     "tags": {
         "core-subsystems": (
             "Core subsystems: agent loop, REPL commands, memory "
             "persistence, plan execution. Add more with 'kg add tag "
             "<key> <value>'."
+        ),
+        "repl-commands": (
+            "Registry-based REPL commands (read, write, search, clear, "
+            "model, analyze, plan, entities, taskplan, cleanup, git, "
+            "implement, fix, workflow, optimize, perf, habits, paste, "
+            "display, decide, review, issue, run, self_heal, reconstruct, "
+            "multillm, demo_data, mode, subagent, mcp, propose, speculate, "
+            "jev, memory, kg, help) — all registered in one place by "
+            "_register_commands."
+        ),
+        "memory-subsystem": (
+            "Memory: persistence.py (load/save/clear/stats), "
+            "memory_store.py (MemoryStore + semantic search), types.py "
+            "(StorageBackend/SQLiteStorage/vector DB)."
+        ),
+        "llm-subsystem": (
+            "LLM layer: client, engines, providers (lemonade, llama, "
+            "lmstudio, opencode, openrouter), orchestrator, parallel, "
+            "tool_loop, tool_reply, retry, caching and metrics modules."
         ),
     },
 }
