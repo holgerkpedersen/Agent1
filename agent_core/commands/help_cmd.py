@@ -63,6 +63,7 @@ class HelpCommand(Command):
         from .memory_cmd import MemoryCommand
         from .habits_cmd import HabitsCommand
         from .issue_cmd import IssueCommand
+        from .kg_cmd import KGCommand
 
         for cmd_cls in (
             ReadCommand,
@@ -100,6 +101,7 @@ class HelpCommand(Command):
             MemoryCommand,
             HabitsCommand,
             IssueCommand,
+            KGCommand,
             HelpCommand,
         ):
             registry.register(cmd_cls())

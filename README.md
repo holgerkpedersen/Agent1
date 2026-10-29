@@ -98,7 +98,10 @@ Type `quit` or `exit` to leave.
 | `mode build` | Full access mode (default) |
 | `display intent` | Show the model's intent + planned calls before they run |
 | `display verbose\|clean\|quiet` | Adjust how much tool activity is printed |
-| `clear` | View and clear memory |
+| `kg add <fact\|file\|tag\|symbol> <key> [value...]` | Add a knowledge-graph entry (persisted) |
+| `kg show [section [key]]` | Print the knowledge graph, one section, or one key |
+| `kg remove <section> <key>` | Delete one knowledge-graph entry |
+| `clear` | View and clear memory — includes a `Knowledge graph: N entries` line |
 
 Run `help` inside the REPL for the full list.
 

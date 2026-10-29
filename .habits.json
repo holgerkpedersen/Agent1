@@ -1,0 +1,32 @@
+[
+  {
+    "text": "\"suggest refactoring of files greater than 100KB\"",
+    "count": 1,
+    "category": "pinned"
+  },
+  {
+    "text": "\"apply the SOLID Principles when coding\"",
+    "count": 1,
+    "category": "pinned"
+  },
+  {
+    "text": "\"make sure the repository documentation is up-to-date before a 'git push'\"",
+    "count": 1,
+    "category": "pinned"
+  },
+  {
+    "text": "\"always ensure the timeout is not stopping the full pytests, since timeout must increase with more tests\"",
+    "count": 1,
+    "category": "pinned"
+  },
+  {
+    "text": "\"make sure CI is not broken before committing and pushing changes to origin\"",
+    "count": 1,
+    "category": "pinned"
+  },
+  {
+    "text": "\"check if changes can affect integrations to other systems (like Kanban Board)\"",
+    "count": 1,
+    "category": "pinned"
+  }
+]

@@ -603,6 +603,19 @@ Fuzzy matching works with partial names: `model 27b`, `model gemma`, `model lagu
 ## Memory management
 
 ```
+> kg add fact deployment "single-host docker compose"
+  [kg] added facts/deployment
+
+> kg add file agent_core/agent.py "agent core — read this first for any task"
+  [kg] added files/agent_core/agent.py
+
+> kg show facts
+  facts (2):
+    deployment: single-host docker compose [2026-10-31T14:22:01]
+
+> kg remove facts deployment
+  [kg] removed facts/deployment
+
 > clear
 Agent Memory Status
   Chat history: 12 messages
@@ -619,6 +632,14 @@ Not cleared.
 > clear --force
 # Clears everything without asking
 ```
+
+Knowledge-graph entries are stored in `agent_memory.json` under the
+`knowledge_graph` key with schema `{section: {key: {"value", "ts"}}}` —
+the four sections are `facts`, `files`, `tags`, and `symbols`. Every `kg`
+mutation saves memory immediately, so entries survive the session and show
+up in `clear`'s count. The graph is curated by hand; a starter set of
+Agent1 facts ships in `scripts/seed_kg.py` (`python scripts/seed_kg.py`
+merges missing entries, `--dry-run` previews, `--force` overwrites).
 
 ---
 
