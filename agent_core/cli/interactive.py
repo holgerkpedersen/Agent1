@@ -232,6 +232,9 @@ def _register_commands(registry: CommandRegistry) -> None:
     from agent_core.commands.memory_cmd import MemoryCommand
 
     registry.register(MemoryCommand())
+    from agent_core.commands.kg_cmd import KGCommand
+
+    registry.register(KGCommand())
     from agent_core.commands.help_cmd import HelpCommand
 
     registry.register(HelpCommand())

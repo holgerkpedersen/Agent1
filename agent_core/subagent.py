@@ -19,7 +19,6 @@ LLM chat with an isolated history and no tool access.
 
 from __future__ import annotations
 
-import json
 import os
 from typing import TYPE_CHECKING, Any
 
@@ -111,6 +110,7 @@ class SubAgent:
         forever even though its history is isolated.
         """
         from agent_core.llm.tool_loop import ToolLoopRunner
+        from agent_core.llm.tool_reply import parse_tool_reply
         from agent_core.tool_schemas import NLP_TOOL_SCHEMAS
 
         schemas = [
@@ -122,26 +122,7 @@ class SubAgent:
             tools: list[dict[str, Any]],
         ) -> tuple[str, list[dict[str, Any]]]:
             raw = await self.llm.chat(m, tools=tools, disable_thinking=True)
-            if raw.strip() == "(no output)":
-                raw = ""
-            try:
-                parsed = json.loads(raw)
-            except (json.JSONDecodeError, TypeError):
-                parsed = None
-            if isinstance(parsed, dict) and parsed.get("tool_calls"):
-                parsed.pop("role", None)
-                updated = list(m)
-                updated.append(
-                    {
-                        "role": "assistant",
-                        "content": parsed.get("content") or "",
-                        **parsed,
-                    }
-                )
-                return str(parsed.get("content") or ""), updated
-            updated = list(m)
-            updated.append({"role": "assistant", "content": raw})
-            return raw, updated
+            return parse_tool_reply(raw, m)
 
         assert self.role_spec is not None
         from agent_core.run_utils import resolve_display_mode

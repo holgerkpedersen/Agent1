@@ -50,7 +50,6 @@ Design notes
 from __future__ import annotations
 
 import asyncio
-import json
 import re
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Sequence
@@ -59,6 +58,7 @@ from .refinement_voter import RefinementVoter
 from .context_budget import trim_messages_to_context
 from .engines import device_for_provider
 from .provider import ResponseMetrics, build_provider, get_last_metrics, provider_for
+from .tool_reply import parse_tool_reply
 
 #: Text prefix every provider returns on failure (never raises).
 _ERROR_PREFIXES = ("[Error", "[LM Studio")
@@ -309,28 +309,9 @@ def _make_tool_llm_chat_fn(
             max_tokens=max_tokens,
             disable_thinking=disable_thinking,
         )
-        if raw.strip() == "(no output)":
-            raw = ""
         if raw.startswith(_ERROR_PREFIXES):
             return raw, messages
-        try:
-            parsed = json.loads(raw)
-        except (json.JSONDecodeError, TypeError):
-            parsed = None
-        if isinstance(parsed, dict) and parsed.get("tool_calls"):
-            parsed.pop("role", None)
-            updated = list(messages)
-            updated.append(
-                {
-                    "role": "assistant",
-                    "content": parsed.get("content") or "",
-                    **parsed,
-                }
-            )
-            return str(parsed.get("content") or ""), updated
-        updated = list(messages)
-        updated.append({"role": "assistant", "content": raw})
-        return raw, updated
+        return parse_tool_reply(raw, messages)
 
     return llm_chat_fn
 

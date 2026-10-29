@@ -10,7 +10,6 @@ still live in ``agent.py`` are resolved lazily from the ``agent`` module
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
@@ -26,6 +25,7 @@ from agent_core.colors import gray, green, magenta, red, yellow
 from agent_core.config import AgentDisplayMode
 from agent_core.history_compaction import _trim_chat_history
 from agent_core.llm.context_budget import provider_context_limit
+from agent_core.llm.tool_reply import parse_tool_reply
 from agent_core.modes import filter_tool_schemas
 from agent_core.run_utils import (
     append_turn_log as _append_turn_log,
@@ -79,39 +79,17 @@ async def _run_chained_tool_loop(
     async def llm_chat_fn(
         msgs: list[dict[str, Any]], tools: list[dict[str, Any]]
     ) -> tuple[str, list[dict[str, Any]]]:
-        """Call the LLM with tools; parse a JSON tool_calls message back into
-        the message list so ToolLoopRunner can execute them."""
+        """Call the LLM with tools; normalize the reply into an assistant
+        message (structured ``tool_calls`` or recovered text-form calls) so
+        ToolLoopRunner can execute them."""
         raw = await agent.llm.chat(msgs, tools=tools, disable_thinking=True)
-        if raw.strip() == "(no output)":
-            raw = ""
         if raw.startswith("[Error") or raw.startswith("[LM Studio"):
             if not llm_error:
                 llm_error.append(raw)
             return (raw, msgs)
-        try:
-            parsed = json.loads(raw)
-        except (json.JSONDecodeError, TypeError):
-            parsed = None
-        if isinstance(parsed, dict) and parsed.get("tool_calls"):
-            parsed.pop("role", None)
-            for tc in parsed["tool_calls"]:
-                func = tc.get("function") or {}
-                args_str = func.get("arguments", "{}")
-                try:
-                    json.loads(args_str)
-                except (json.JSONDecodeError, TypeError):
-                    func["arguments"] = json.dumps(
-                        mod._repair_tool_arguments(args_str), ensure_ascii=False
-                    )
-            updated = list(msgs)
-            updated.append(
-                {"role": "assistant", "content": parsed.get("content") or "", **parsed}
-            )
-            text = str(parsed.get("content") or "")
-            return (text, updated)
-        updated = list(msgs)
-        updated.append({"role": "assistant", "content": raw})
-        return (raw, updated)
+        return parse_tool_reply(
+            raw, msgs, repair_arguments=mod._repair_tool_arguments
+        )
 
     final_text = ""
     final_messages = messages
