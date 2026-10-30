@@ -7,7 +7,8 @@ Apache-2.0), kode: github.com/lamm-mit/Prospector · **Målmodel:**
 
 **Verifikationsstatus (læs først):** Papiret, HF-repoet og GitHub-repoet er
 bekræftet, og gate-reglerne i afsnit 0 er verificeret mod både paper-abstract,
-HF-modelkort og GitHub (`agent/gate.py`: "cites at least one edge, every cited
+HF-modelkort og GitHub (upstream-repoets `agent/gate.py`, altså i
+`lamm-mit/Prospector` — ikke i dette workspace: "cites at least one edge, every cited
 edge was seen, and it names a node of the cited chain: set membership, with no
 judge"). **Målmodellens eksakte navn og modelkort-citat er derimod IKKE
 genverificeret** (web-søgning var utilgængelig under denne gennemgang), og
@@ -44,7 +45,7 @@ uoptrænet i et harness som Agent1. Finetuning er trin 5 og valgfrit.
 |---|---|
 | Episode-loop med sekventielle tool-kald | `agent_core/llm/tool_loop.py::ToolLoopRunner` (max_iterations, deadline, compaction, tracing) |
 | Værktøjsschemas til modellen | `agent_core/tool_schemas.py::NLP_TOOL_SCHEMAS`, native OpenAI-format |
-| Lokal model med function calling | `agent_core/llm/llama_provider.py::LlamaProvider` (LM Studio/llama.cpp, `_build_payload(messages, tools, ...)`), `model_profiles.py` |
+| Lokal model med function calling | `agent_core/llm/llama_provider.py::LlamaProvider` (LM Studio/llama.cpp, `_build_payload(messages, tools, ...)`), `agent_core/llm/model_profiles.py` |
 | "Seen"-sæt / sporbarhed | `harnessfix/tracing.py` — JSONL per task med `tool_call`/`tool_result`/`llm_response`-events (beslutning #033: `reports/traces/`, gitignored) |
 | Eksterne datakildefacader uden kerneændring | `agent_core/mcp/manager.py` — MCP-servere eksponerer tools til hovedloopet |
 | Måling på faste scenarier | `agentic_bench.py` — kører RIGTIGE main-loop-tools, scorer pr. run |
@@ -94,7 +95,7 @@ andet er genbrug.
 - Systemprompt med de tre værktøjers signaturer + eksempel-episode (fra
   papirets prompt-ordlyst, HF-repo `agent/prompts.py` kan studeres som
   reference — Apache-2.0).
-- Modelprofil via `model_profiles.py`: E4B, temp lav, maks 20 tool-kald pr.
+- Modelprofil via `agent_core/llm/model_profiles.py`: E4B, temp lav, maks 20 tool-kald pr.
   episode (harness' `max_iterations` sat pr. scenarie, ikke globalt).
 
 ### Fase 5 — Måling og rapport
@@ -162,7 +163,7 @@ Det, der kan gøres sikkert, og som er gjort sikkert her, er
 
 | Fejltilstand | Hvorfor den ikke kan give skade | Verificeret i |
 |---|---|---|
-| Modellen finder på en kant | Gaten er sætmedlemskab mod "seen"; en ikke-returneret kant kan ikke passere | `agent/gate.py`-regel + planens fase 3 |
+| Modellen finder på en kant | Gaten er sætmedlemskab mod "seen"; en ikke-returneret kant kan ikke passere | Upstream `lamm-mit/Prospector` `agent/gate.py`-regel + planens fase 3 (gaten findes endnu ikke her) |
 | Modellen løber i ring | `max_iterations`, `deadline_window`, `no_mutation_limit`, `force_after_no_mutation` findes allerede som konstruktørparametre og håndhæves af loopet | `agent_core/llm/tool_loop.py:685` (`ToolLoopRunner.__init__`) |
 | Modellen muterer repoet utilsigtet | Prospector-episoder kører read-only over grafen; ingen skrive-tools i værktøjssættet | Fase 1 (kun `find`/`expand`/`connect`) |
 | Kontekst eksploderer | Compaction og char-budget er indbygget (`_ensure_char_budget`, `_compact_messages`) | `tool_loop.py:1710`, `:416` |
