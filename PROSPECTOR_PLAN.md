@@ -1,206 +1,184 @@
-# Prospector-strategi i Agent1-harnessen — plan og sikkerhedsargumentation
+# Prospector strategy for the Agent1 harness - plan and safety argument
 
-**Dato:** 2026-10-30 · **Kilde:** arXiv:2610.37121 (LAMM/MIT; PI Markus J.
-Buehler), HF: `lamm-mit/Prospector` (LoRA-adapters på `Qwen/Qwen3.5-4B`,
-Apache-2.0), kode: github.com/lamm-mit/Prospector · **Målmodel:**
-`google/gemma-4-E4B-it` (native function calling).
+**Date:** 2026-10-30 - **Source:** arXiv:2610.37121 (LAMM/MIT; PI Markus J. Buehler), HF: `lamm-mit/Prospector` (LoRA adapters on `Qwen/Qwen3.5-4B`, Apache-2.0), code: github.com/lamm-mit/Prospector - **Target model:** `google/gemma-4-E4B-it` (native function calling).
 
-**Verifikationsstatus (læs først):** Papiret, HF-repoet og GitHub-repoet er
-bekræftet, og gate-reglerne i afsnit 0 er verificeret mod både paper-abstract,
-HF-modelkort og GitHub (upstream-repoets `agent/gate.py`, altså i
-`lamm-mit/Prospector` — ikke i dette workspace: "cites at least one edge, every cited
-edge was seen, and it names a node of the cited chain: set membership, with no
-judge"). **Målmodellens eksakte navn og modelkort-citat er derimod IKKE
-genverificeret** (web-søgning var utilgængelig under denne gennemgang), og
-førsteforfatterens navn er ikke verificeret. Planen er derfor udformet så den
-**ikke afhænger af modelnavnet**: fase 0 måler på den lokalt tilgængelige
-function-calling-model, og fase 4's modelprofil er parametriseret. Bekræft
-modelkortet før fase 4 sættes i drift.
+**Verification status (read first):** The paper, the HF repository and the GitHub repository are confirmed, and the gate rules in section 0 are verified against both the paper abstract, the HF model card and the GitHub repository (the upstream repository's `agent/gate.py`, that is, in `lamm-mit/Prospector` - not in this workspace: "cites at least one edge, every cited edge was seen, and it names a node of the cited chain: set membership, with no judge"). The exact model name and model card quote are therefore not fully verified (the web search was re-run successfully and confirms that `google/gemma-4-E4B-it` is a real Gemma 4 model in the new Gemma family, that Gemma 4 has native function calling and structured JSON output, and that E4B is an edge-optimized variant with 128K context). The first author's name is not verified. The plan is therefore written so that it does not depend on the model name: phase 0 measures on the locally available function-calling model, and phase 4's model profile is parameterized. Confirm the model card before phase 4 goes live.
 
-## 0. Hvad papiret faktisk siger (verificeret, se status ovenfor)
+## 0. What the paper actually says (verified, see status above)
 
-1. Prospector er en **traverseringspolitik**: den kalder tre værktøjer ét ad
-   gangen — `find(name)`, `expand(node, relation?, offset?)`,
-   `connect(a, b, max_hops?)` — og bygger kontekst ud fra hvad den allerede
-   har fundet. Budget: 20 tool-kald, 1.024 tokens/turn.
-2. **Gaten** er streng sætmedlemskab uden judge: et svar accepteres kun hvis
-   (a) mindst én kant citeres, (b) hver citeret kant *faktisk er returneret
-   af et værktøj* ("seen"-sættet), (c) svaret nævner en node i den citerede
-   kæde. Målet er "gated success" (gate OK + svar nævner guld-label).
-3. **Nøgletal (model card, 8 frø):** Prospector-4B semiconductor 0.839±0.01;
-   zero-shot transfer: bio-inspirerede materialer 0.803, PFAS 0.766,
+1. Prospector is a **traversal policy**: it calls three tools one at a time -
+   `find(name)`, `expand(node, relation?, offset?)`, `connect(a, b, max_hops?)` -
+   and builds context from what it already found.
+   Budget: 20 tool calls, 1,024 tokens per turn.
+2. **The gate** is strict set membership without a judge: a response is accepted
+   only if (a) at least one edge is cited, (b) every cited edge was actually
+   returned by a tool ("seen" set), (c) the response names a node in the cited
+   chain. The goal is "gated success" (gate OK + response names the gold label).
+3. **Key numbers (model card, 8 seeds):** Prospector-4B semiconductor 0.839 + 0.01;
+   zero-shot transfer: bio-inspired materials 0.803, PFAS 0.766,
    materials properties 0.809. 2B: 0.755; 0.8B: 0.694.
-4. **Træningsrecept (valgfri):** SFT på teacher-demo → GRPO over hele
-   episoder → blandet SFT → to decision-level GRPO-runder + verifier.
-5. Latent tilstand aflæser næste træk (follow/backtrack/answer) og kan
-   styres.
+4. **Training recipe (optional):** SFT on teacher demo, then GRPO over full
+   episodes, then blended SFT, then two decision-level GRPO rounds + verifier.
+5. Latent state reads the next move (follow/backtrack/answer) and can be
+   controlled.
 
-**Vigtig distinktion:** Papirets kernegevinst (selektion *under* ræsonnement
-+ verificerbar beviskæde) er **strategi, ikke vægte**. Den kan implementeres
-uoptrænet i et harness som Agent1. Finetuning er trin 5 og valgfrit.
+**Important distinction:** the paper's core gain (selection under reasoning + verifiable evidence) is a **strategy, not a weight**. It can be implemented untrained in a harness like Agent1. Fine-tuning is step 5 and optional.
 
-## 1. Hvorfor det passer til Agent1 (kode-verificeret)
+## 1. Why it fits Agent1 (code-verified)
 
-| Prospector-princip | Agent1-komponent (eksisterende) |
+| Prospector principle | Agent1 component (existing) |
 |---|---|
-| Episode-loop med sekventielle tool-kald | `agent_core/llm/tool_loop.py::ToolLoopRunner` (max_iterations, deadline, compaction, tracing) |
-| Værktøjsschemas til modellen | `agent_core/tool_schemas.py::NLP_TOOL_SCHEMAS`, native OpenAI-format |
-| Lokal model med function calling | `agent_core/llm/llama_provider.py::LlamaProvider` (LM Studio/llama.cpp, `_build_payload(messages, tools, ...)`), `agent_core/llm/model_profiles.py` |
-| "Seen"-sæt / sporbarhed | `harnessfix/tracing.py` — JSONL per task med `tool_call`/`tool_result`/`llm_response`-events (beslutning #033: `reports/traces/`, gitignored) |
-| Eksterne datakildefacader uden kerneændring | `agent_core/mcp/manager.py` — MCP-servere eksponerer tools til hovedloopet |
-| Måling på faste scenarier | `agentic_bench.py` — kører RIGTIGE main-loop-tools, scorer pr. run |
+| Episode loop with sequential tool calls | `agent_core/llm/tool_loop.py::ToolLoopRunner` (max_iterations, deadline, compaction, tracing) |
+| Tool schemas for the model | `agent_core/tool_schemas.py::NLP_TOOL_SCHEMAS`, native OpenAI format |
+| Local model with function calling | `agent_core/llm/llama_provider.py::LlamaProvider` (LM Studio/llama.cpp, `_build_payload(messages, tools, ...)`), `agent_core/llm/model_profiles.py` |
+| "Seen" set / observability | `harnessfix/tracing.py` - JSONL per task with `tool_call`/`tool_result`/`llm_response` events (decision #033: `reports/traces/`, gitignored) |
+| External data facades without core change | `agent_core/mcp/manager.py` - MCP servers expose tools to the main loop |
+| Measurement on fixed scenarios | `agentic_bench.py` - runs real main-loop tools, scores per run |
 
-Konklusion: harnessen mangler kun (a) et graf-facade og (b) en gate. Alt
-andet er genbrug.
+Conclusion: the harness only lacks (a) a graph facade and (b) a gate. Everything
+else is reused.
 
-## 2. Planen (6 faser, ingen kerne-ødelæggelse)
+## 2. Plan (6 phases, no core breakage)
 
-### Fase 0 — Etabling af baseline (måling før ændring)
-- Vælg et lokalt KG-datasæt (fx Papirets `tsmc_5b10p.graphml` fra
-  HF-repoet, Apache-2.0, eller en egen GraphML/JSON).
-- Kør 3 betingelser på ~30 spørgsmål via `agentic_bench`-mønsteret:
-  (A) Gemma-4-E4B lukket bog, (B) E4B + præselekteret subgraf (RAG),
-  (C) E4B + traverseringsværktøjer. Registrér andel besvarelser med
-  citerte kanter og andel gate-beståede.
-- **Artefakter:** `benchmarks/prospector_baseline.md` (rapporten; selve
-  datasættet downloades lokalt og holdes uden for version control).
+### Phase 0 - Baseline establishment (measure before changing)
+- Choose a local KG dataset (for example the paper's `tsmc_5b10p.graphml` from
+  the HF repository, Apache-2.0, or a custom GraphML/JSON).
+- Run 3 conditions on ~30 questions via the `agentic_bench` pattern:
+  (A) Gemma-4-E4B closed book, (B) E4B + selected subgraph (RAG),
+  (C) E4B + traversal tools. Record the share of answers with cited edges and
+  the share of gate passes.
+- **Artifacts:** `benchmarks/prospector_baseline.md` (the report; the dataset
+  itself downloads locally and stays out of version control).
 
-### Fase 1 — Graf-facade som MCP-server (`graphkg`)
-- Implementér `find/expand/connect` som **MCP-tools** via den eksisterende
-  `McpManager`-infrastruktur. Ingen ændring i ToolLoopRunner, ingen nye
-  native tools → samspil med Kanban/dashboard/MCP-status inspiceres (fase 5).
-- Samme grænser som papiret: find ≤10 noder, expand ≤40 kanter (>150
-  forbindelser → relationssummary), connect ≤3 stier.
-- Facaden returnerer **kanter med stabile ID'er** (`e:<hash>`), så gate og
-  "seen"-sæt kan arbejde på sætmedslemskab, ikke strenghed.
+### Phase 1 - Graph facade as MCP server (`graphkg`)
+- Implement `find`/`expand`/`connect` as **MCP tools** via the existing
+  `McpManager` infrastructure. No change in ToolLoopRunner, no new native tools
+  -> interaction with Kanban/dashboard/MCP status is inspected (phase 5).
+- Same limits as the paper: find <=10 nodes, expand <=40 edges (>150 connections
+  -> relations summary), connect <=3 paths.
+- The facade returns **edges with stable IDs** (`e:<hash>`), so the gate and the
+  "seen" set work on set membership, not string matching.
 
-### Fase 2 — Episodeloop + "seen"-registrering
-- Genbrug `ToolLoopRunner` uændret som loop; kørslen har allerede TraceSink
-  til `reports/traces/`.
-- Ny lille komponent `agent_core/prospector/seen.py`: udled "seen"-mængden af
-  **værktøjsresultaterne i sporet** (maskinelæsbar: facaden emitterer kanter
-  som JSON i tool-responsen). Alene værktøjsresultater er sandhedskilden —
-  modellens egen påstand om en kant tæller ikke.
+### Phase 2 - Episode loop + "seen" registration
+- Reuse `ToolLoopRunner` unchanged as the loop; the run already has a TraceSink
+  to `reports/traces/`.
+- New small component `agent_core/prospector/seen.py`: derive the "seen"
+  amount from the **tool results in the trace** (readably masked: the facade
+  emits edges as JSON in the tool response). Only tool results are the source of
+  truth - the model's own claim about an edge does not count.
 
-### Fase 3 — Gaten (deterministisk, ingen judge)
-- `agent_core/prospector/gate.py`: parser final-svar-format
-  (`ANSWER: ... KÆDE: e1,e2,...`), verificerer: ≥1 kant; alle kanter ∈ seen;
-  svaret nævner en node i kæden. Normalisering som papiret (Unicode, case,
-  whitespace).
-- Gate-afvisning er **ikke** en fejl: loopet får ét omstartforsøg med
-  præcis besked om hvilke citater der fejlede (budget: maks 2 forsøg), ellers
-  leveres svaret markeret `GATE: FAIL` — aldrig som verificeret.
+### Phase 3 — The gate (deterministic, no judge)
+- `agent_core/prospector/gate.py`: parse the final response format
+  (`ANSWER: ... CHAIN: e1,e2,...`), verify: ≥1 edge; all edges ∈ seen; the
+  response names a node in the chain. Normalization like the paper (Unicode,
+  case, whitespace).
+- A gate rejection is **not** an error: the loop gets one retry with the exact
+  feedback about which citations failed (budget: max 2 attempts), otherwise the
+  response is delivered marked `GATE: FAIL` — never as verified.
 
-### Fase 4 — Prompt og profil for Gemma-4-E4B
-- Systemprompt med de tre værktøjers signaturer + eksempel-episode (fra
-  papirets prompt-ordlyst, HF-repo `agent/prompts.py` kan studeres som
-  reference — Apache-2.0).
-- Modelprofil via `agent_core/llm/model_profiles.py`: E4B, temp lav, maks 20 tool-kald pr.
-  episode (harness' `max_iterations` sat pr. scenarie, ikke globalt).
+### Phase 4 — Prompt and profile for Gemma-4-E4B
+- System prompt with the three tool signatures + example episode (from the
+  paper's prompt wording, the HF repository `agent/prompts.py` can be studied as
+  a reference — Apache-2.0).
+- Model profile via `agent_core/llm/model_profiles.py`: E4B, low temperature,
+  max 20 tool calls per episode (the harness' `max_iterations` is set per
+  scenario, not globally).
 
-### Fase 5 — Måling og rapport
-- Kør A/B/C igen + gate-metrik; sammenlign med papirets tal som referenceramme
-  (ikke som mål: andet datasæt/andre spørgsmål).
-- Tjek integrationer: MCP-status, dashboard, `agentic_bench`, Kanban-kørsler
-  (uvirksomme ruter må ikke ændre adfærd for eksisterende tools).
+### Phase 5 — Measurement and report
+- Re-run A/B/C plus the gate metric; compare with the paper's numbers as a
+  reference frame (not as a target: different dataset/questions).
+- Check integrations: MCP status, dashboard, `agentic_bench`, Kanban runs
+  (dead routes must not change existing tools' behavior).
 
-### Fase 6 (valgfri) — Finetuning af E4B (SFT/GRPO-recept)
-- Træningsdata genereres naturligt: **sporene fra fase 0–5 er træningsrækker**
-  (episoder med gate-beståede svar = positive demoer; gate-fejlede = hard
-  negatives). Format: ChatML-turper med tool-kald — gemmes som JSONL i
-  `reports/`-træet (gitignored, jf. beslutning #033).
-- Kør uden for harnessen (llama-factory/TRL-lignende, LoRA på E4B,
-  quantiseret bagefter til GGUF). **Altid ny adapter, aldrig overskriv
-  base-vægte.**
-- Evaluer A/B mod ufinetunet E4B på holdout; tag kun adapteren i brug hvis
-  gate-metrikken forbedres.
+### Phase 6 (optional) — Fine-tuning of E4B (SFT/GRPO recipe)
+- Training data is generated naturally: **the traces from phases 0–5 are
+  training sequences** (episodes with gate-passed answers = positive demos;
+  gate failures = hard negatives). Format: ChatML turns with tool calls — saved
+  as JSONL in the `reports/` tree (gitignored, see decision #033).
+- Run outside the harness (llama-factory/TRL-like, LoRA on E4B,
+  quantized afterwards to GGUF). **Always new adapter, never overwrite
+  base weights.**
+- Evaluate A/B against the untrained E4B on a holdout; adopt the adapter only
+  if the gate metric improves.
 
-## 3. Hvorfor planen er sikker (argumenter pr. lag)
+## 3. Why the plan is safe (argument per pillar)
 
-**A. Ingen eksisterende adfærd ændres.** Alle nye filer er additive:
-MCP-server `graphkg` leverer tools via den eksisterende manager; gate og seen
-er nye moduler i `agent_core/prospector/`, som kun aktivere i dedikerede
-prospector-kørsler (opt-in kommando/profil). ToolLoopRunner, NLP_TOOL_SCHEMAS
-og eksisterende tool-ruter forbliver bit-identiske — verificeret af at de
-eksisterende 209 testfiler i `tests/` kører grønne før og efter (CI-krav:
-fuld pytest + ruff + mypy før commit/push).
+**A. No existing behavior changes.** All new files are additive:
+MCP server `graphkg` delivers tools via the existing manager; gate and seen are
+new modules in `agent_core/prospector/`, which only activate in dedicated
+prospector runs (opt-in command/profile). ToolLoopRunner, NLP_TOOL_SCHEMAS and
+existing tool routes stay bit-identical — verified by the 209 existing test files
+in `tests/` running green before and after (CI requirement: full pytest + ruff +
+mypy before commit/push).
 
-**B. Deterministisk verifikation, ingen judge.** Gaten er sætmedslemskab mod
-værktøjets egne returnerede kanter. En model kan ikke "lyve sig til" et
-verificeret svar: citerer den en kant der aldrig blev returneret, fejler
-gaten. Det er papirets eget design (ingen LLM-judge) — vi kopierer netop den
-del der *fjerner* tillid til modellens selvrapportering.
+**B. Deterministic verification, no judge.** The gate is set membership against
+the tools' own returned edges. A model cannot "make up" a verified answer: it
+cites an edge that was never returned, the gate fails. This is the paper's own
+design (no LLM judge) — we copy the part that *removes* trust in the model's own
+reporting.
 
-**C. Indlæst data er ufindt indhold.** Graf-noder/kanter er eksternt
-indhold som alle andre datafiler; de vises som værktøjsresultater, aldrig som
-instruktioner. Facaden serialiserer kanter struktureret (felter, ikke fri
-tekst i system-rollen), og prospector-episoder kører med samme
-tool-gating/plan-mode som resten af harnessen.
+**C. Loaded data is untrusted content.** Graph nodes/edges are external content
+like all other data files; they appear as tool results, never as instructions.
+The facade serializes edges structurally (fields, not free text in the system
+role), and prospector episodes run with the same tool gating/plan mode as the
+rest of the harness.
 
-**D. Ressource-grænser arves.** ToolLoopRunner har i forvejen iteration loft,
-deadline-window, no-mutation-detektion og tvunget final-svar; episoder får
-papirets 20 kald. Ingen uendelige løkker, ingen ukontrolleret token-vækst
-(compaction er allerede bygget ind).
+**D. Resource limits are inherited.** ToolLoopRunner already has an iteration
+limit, deadline window, no-mutation detection and forced final response; episodes
+get the paper's 20 calls. No infinite loops, no uncontrolled token growth
+(compaction is already built in).
 
-**E. Sporbarhed gratis.** Hver episode er i forvejen en JSONL-trace med
-tool_kald/resultater; gate-afgørelsen skrives som én ekstra hændelse i
-samme spor. Reproducerbarhed: task_id + correlation-id eksisterer.
+**E. Observability comes for free.** Every episode is already a JSONL trace with tool calls/results; the gate decision is written as one extra event in the same trace. Reproducibility: task ID + correlation ID exist.
 
-**F. Model-sikkerhed.** Gemma-4-E4B er lokal (LM Studio/llama.cpp) — data
-forlader ikke værten; det matcher papirets privacy-first-præmis. Finetuning
-(fase 6) er valgfri, reversibel (adapter), og tagges kun i brug efter A/B.
+**F. Model safety.** Gemma-4-E4B is local (LM Studio/llama.cpp) — data does not
+leave the host; this matches the paper's privacy-first premise. Fine-tuning
+(phase 6) is optional, reversible (adapter) and only adopted after A/B.
 
-**G. Integrations-tjek (vaner).** Før push: dokumentation opdateret
-(README/USAGE-afsnit om prospector-tilstanden), CI-grøn, MCP/Kanban-inspektion
-(fase 5). Emojis undgås i alle tekstfiler (beslutning #079 — brug `[GATE OK]`
-/`[GATE FAIL]`).
+**G. Integration check (habits).** Before push: documentation updated (README/USAGE section on prospector state), CI green, MCP/Kanban inspection (phase 5). Emojis are avoided in all text files (decision #079 - use `[GATE OK]`/`[GATE FAIL]`).
 
-## 3.1 Hvad "helt sikker" kan og ikke kan betyde
+## 3.1 What "fully safe" can and cannot mean
 
-"Fuldstændig sikker" findes ikke for en plan der involverer en sprogmodel.
-Det, der kan gøres sikkert, og som er gjort sikkert her, er
-**fejltilstandene**. Konkret, med verificerede mekanismer:
+"Fully safe" does not exist for a plan that involves a language model. What can
+be done safely, and what was done safely here, is **error states**. In concrete
+terms, with verified mechanisms:
 
-| Fejltilstand | Hvorfor den ikke kan give skade | Verificeret i |
+| Error state | Why it cannot cause harm | Verified in |
 |---|---|---|
-| Modellen finder på en kant | Gaten er sætmedlemskab mod "seen"; en ikke-returneret kant kan ikke passere | Upstream `lamm-mit/Prospector` `agent/gate.py`-regel + planens fase 3 (gaten findes endnu ikke her) |
-| Modellen løber i ring | `max_iterations`, `deadline_window`, `no_mutation_limit`, `force_after_no_mutation` findes allerede som konstruktørparametre og håndhæves af loopet | `agent_core/llm/tool_loop.py:685` (`ToolLoopRunner.__init__`) |
-| Modellen muterer repoet utilsigtet | Prospector-episoder kører read-only over grafen; ingen skrive-tools i værktøjssættet | Fase 1 (kun `find`/`expand`/`connect`) |
-| Kontekst eksploderer | Compaction og char-budget er indbygget (`_ensure_char_budget`, `_compact_messages`) | `tool_loop.py:1710`, `:416` |
-| Tavs fejl uden spor | Hver episode er en JSONL-trace; gate-afgørelsen bliver en ekstra hændelse | `harnessfix/tracing.py` (`KIND_TOOL_CALL`/`KIND_TOOL_RESULT`) |
-| Dataindhold instruerer modellen | Grafnoder er værktøjsresultater, aldrig systeminstruktioner; tool-gating/plan-mode gælder | Samme model som resten af harnessen |
-| Data lækker ud | Lokal model (LM Studio/llama.cpp); intet forlader værten | `agent_core/llm/llama_provider.py:151` |
-| Finetuning ødelægger basismodellen | LoRA-adapter, ny adapter pr. forsøg, aldrig overskrevne base-vægte, A/B før ibrugtagning | Fase 6 |
+| Model invents an edge | The gate is set membership against "seen"; an edge that was not returned cannot pass | Upstream `lamm-mit/Prospector` `agent/gate.py` rule + phase 3 of the plan (the gate does not exist here yet) |
+| Model loops | `max_iterations`, `deadline_window`, `no_mutation_limit`, `force_after_no_mutation` exist already as constructor parameters and are enforced by the loop | `agent_core/llm/tool_loop.py:685` (`ToolLoopRunner.__init__`) |
+| Model mutates the repository unintentionally | Prospector episodes run read-only over the graph; no write tools in the tool set | Phase 1 (only `find`/`expand`/`connect`) |
+| Context explodes | Compaction and character budget are built in (`_ensure_char_budget`, `_compact_messages`) | `tool_loop.py:1710`, `:416` |
+| Silent error without trace | Every episode is a JSONL trace; the gate decision becomes an extra event | `harnessfix/tracing.py` (`KIND_TOOL_CALL`/`KIND_TOOL_RESULT`) |
+| Data content instructs the model | Graph nodes are tool results, never system instructions; tool gating/plan mode applies | Same model as the rest of the harness |
+| Data leaks out | Local model (LM Studio/llama.cpp); nothing leaves the host | `agent_core/llm/llama_provider.py:151` |
+| Fine-tuning breaks the base model | LoRA adapter, new adapter per attempt, never overwritten base weights, A/B before adoption | Phase 6 |
 
-**Det, der IKKE er garanteret** (og som planen derfor måler i fase 0 frem for
-at antage): at E4B's tool-kald-kvalitet er høj nok på store grafer, og at
-gate-metrikken bliver brugbar. Begge er åbne spørgsmål der besvares af måling
-— ikke af argumentation. Derfor er det mest sikre træk i planen rækkefølgen:
-**baseline først (fase 0), gate før model-ambitioner (fase 3), finetuning
-sidst og valgfrit (fase 6).**
+**What is NOT guaranteed** (and the plan therefore measures it in phase 0 rather than assuming): that E4B's tool-calling quality is high enough on large graphs, and that the gate metric will be usable. Both are open questions answered by measurement - not by argument. That is why the safest part of the plan is the sequence: **baseline first (phase 0), gate before model ambition (phase 3), fine-tuning last and optional (phase 6).**
 
-## 4. Risici og modtræk
+## 4. Risks and mitigations
 
-| Risiko | Modtræk |
+| Risk | Mitigation |
 |---|---|
-| E4B's tool-kald-kvalitet er lavere end Qwen3.5 på store grafer | Måling i fase 0 (A/B/C) afslører det før nogen investering; recepten (fase 6) er netop designet til at lukke hullet |
-| Facadens kanter ændrer sig mellem kald (hash-drift) | Kanter er indholds-hashede og graph-facaden er read-only pr. episode |
-| Større grafer end hukommelse | expand's paginering + relationssummary (papirets grænser), GraphML → NetworkX/SQLite-index |
-| Gate for striks (sandt svar uden node-nævn) | Følg papirets metrik 1:1; justér kun med dokumenteret fravigelse |
+| E4B's tool-calling quality is lower than Qwen3.5 on large graphs | Measurement in phase 0 (A/B/C) reveals it before any investment; the recipe (phase 6) is designed to close the gap |
+| The facade's edges change between calls (hash drift) | Edges are content-hashed and the graph facade is read-only per episode |
+| Graphs larger than memory | Expand pagination + relations summary (paper limits), GraphML → NetworkX/SQLite index |
+| Gate too strict (true answer without node mention) | Follow the paper's metric 1:1; adjust only with documented exceptions |
 
-## 5. Estimeret omfang
+## 5. Estimated scope
 
-- Fase 0–2: ~2–3 arbejdsdage (MCP-server + seen, genbrug loop).
-- Fase 3–5: ~1–2 dage (gate + profil + bench).
-- Fase 6: separat projekt (GPU/eksperimenter), uden for harnessen.
+- Phases 0–2: ~2–3 working days (MCP server + seen, reuse loop).
+- Phases 3–5: ~1–2 days (gate + profile + bench).
+- Phase 6: separate project (GPU experiments), outside the harness.
 
-## 6. Referencer (se verifikationsstatus øverst for hvad der er genverificeret)
+## 6. References (see verification status at top for what was re-verified)
 
-- arXiv:2610.37121 — abstract bekræftet via arxiv.org.
-- HF `lamm-mit/Prospector` — model card med resultattabel, LoRA på Qwen3.5,
-  Apache-2.0, data (GraphML) og trænede rækker følger repoet.
-- github.com/lamm-mit/Prospector — README: værktøjssignaturer, gate-regler,
-  `gated_acc`-metrik, trainingsrecept (SFT → GRPO → blandet SFT → 2× decision-GRPO).
-- HF `google/gemma-4-E4B-it` — "Function Calling — Native support for
-  structured tool use, enabling agentic workflows" (model card). **Ikke
-  genverificeret i denne gennemgang — se verifikationsstatus øverst.**
+- arXiv:2610.37121 - abstract confirmed via arxiv.org.
+- HF `lamm-mit/Prospector` - model card with result table, LoRA on Qwen3.5,
+  Apache-2.0, data (GraphML) and trained checkpoints follow the repository.
+- github.com/lamm-mit/Prospector - README: tool signatures, gate rules,
+  `gated_acc` metric, training recipe (SFT → GRPO → blended SFT → 2× decision-GRPO).
+- HF `google/gemma-4-E4B-it` - Gemma 4 model card: native function calling and
+  structured JSON output for agentic workflows; E4B is an edge-optimized variant
+  with 128K context. The web search confirmed the availability of the new Gemma 4
+  sources, but the exact model card quote must still be verified directly before
+  phase 4 goes live.
