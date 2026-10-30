@@ -60,6 +60,12 @@ dashboard-storage = [
 rag-embeddings = [
     "sentence-transformers>=2.2",
 ]
+# GGUF model downloads.  strata_download.py imports huggingface_hub lazily
+# (function-level `from huggingface_hub import hf_hub_download`), so the
+# module imports fine without it; only an actual download needs it.
+strata-download = [
+    "huggingface-hub>=0.23",
+]
 dev = [
     # The build backend named in [build-system].  tests/test_packaging_metadata.py
     # builds a real wheel with `pip wheel`; when setuptools is absent from this
@@ -92,6 +98,10 @@ dev = [
     "flask>=2.0",
     "marshmallow>=3.0",
     "redis>=4.2",
+    # tests/test_strata_download.py imports strata_download; the module itself
+    # is importable without huggingface_hub (its use is a lazy import), and
+    # the download tests mock hf_hub_download, so no network is needed.
+    "huggingface-hub>=0.23",
 ]
 
 [project.urls]

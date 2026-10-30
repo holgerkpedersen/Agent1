@@ -96,7 +96,7 @@ Type `quit` or `exit` to leave.
 | `model <name>` | Switch model |
 | `mode plan` | Read-only research mode (no writes) |
 | `mode build` | Full access mode (default) |
-| `display intent` | Show the model's intent + planned calls before they run |
+| `display intent` | Show the model's plain-language intent before each call runs |
 | `display verbose\|clean\|quiet` | Adjust how much tool activity is printed |
 | `kg add <fact\|file\|tag\|symbol> <key> [value...]` | Add a knowledge-graph entry (persisted) |
 | `kg show [section [key]]` | Print the knowledge graph, one section, or one key |
@@ -193,21 +193,23 @@ Display mode set to 'intent' (persisted to .env).
 
   [intent 1]
     I need to find where ToolRouter is defined before I can explain it.
-    -> search(query=ToolRouter)
+    intent: to locate 'ToolRouter' in the workspace
       why: to locate 'ToolRouter' in the workspace
-  [tool] search(query=ToolRouter)
   [result] Found 14 matches in 6 files
 
   [intent 2]
     proof: Found 14 matches in 6 files
-    -> read(path=agent_core/llm/tool_router.py)
-      why: to inspect agent_core/llm/tool_router.py
+    intent: to inspect agent_core/llm/tool_router.py
+      why: to inspect agent_core/llm/tool_router.py — because the last step showed: Found 14 matches in 6 files
+  [result] ...
 ```
 
 Every round shows the model's narration, a `proof:` line summarizing what the
-previous call established, the planned calls with full arguments, and a `why:`
-line that reasons from that proof. When the model writes no narration, a short
-heuristic `why:` still explains the call, so nothing is ever a silent action.
+previous call established, and one `intent:` sentence per planned action. Tool
+names and argument payloads are never printed in this mode — the `why:` line
+carries the reasoning, citing the earlier evidence in words. When the model
+writes no narration, a short heuristic purpose phrase still explains the call,
+so nothing is ever a silent action. Use `display verbose` to see the raw calls.
 Modes: `verbose` (default), `clean`, `quiet`, `intent` — see
 [USAGE.md](USAGE.md#display-modes--seeing-what-the-llm-is-trying-to-do).
 
@@ -268,7 +270,7 @@ agent_core/
   commands/                   # All REPL commands (read, write, search, workflow, ...)
   constants.py                # Model catalog, defaults, settings
 harnessfix/                   # Self-improvement loop (traces, diagnostics, repairs)
-tests/                        # ~1448 tests (pytest)
+tests/                        # ~4280 tests (pytest)
 ```
 
 ### Testing

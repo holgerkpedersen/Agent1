@@ -58,10 +58,8 @@ except Exception:  # pragma: no cover - colors degrade gracefully if unavailable
 class DisplayMode(str, enum.Enum):
     VERBOSE = "verbose"  # every call + full (truncated) result shown
     CLEAN = "clean"  # reason line per call; results summarized for display only
-    QUIET = "quiet"  # tool calls/results hidden; only final answer printed
-    # per LLM round: model's intent + planned calls shown BEFORE execution,
-    # then verbose lines
-    INTENT = "intent"
+    QUIET = "quiet"  # one intent line per round; NO tool calls, NO results
+    INTENT = "intent"  # intent block per round (narration + full planned calls)
 
 
 #: Injected into the history when only a few iterations remain, so the model
@@ -1110,6 +1108,12 @@ class ToolLoopRunner:
             #: line ties the next action back to that proof.
             if self.display_mode == DisplayMode.INTENT:
                 _print_intent(iteration, prev_text, tool_calls, prev_result)
+            elif self.display_mode == DisplayMode.QUIET:
+                # QUIET shows the OVERALL intent of the round — a single
+                # compact line per planned call (narration + tool names).
+                # No arguments, no [tool]/[result] echoes: the calls and
+                # their results stay invisible.
+                _print_intent_quiet(iteration, prev_text, tool_calls)
 
             # Seed this batch's duplicate detection with the FULL key set of
             # the previous batch: any key re-issued in consecutive batches is
@@ -1142,7 +1146,31 @@ class ToolLoopRunner:
             ) -> dict[str, Any]:
                 nonlocal calls_without_progress, prev_call_key, prev_result, stuck
                 tc_id, tool_name, args, call_key, args_hash, prev_text = prepared
-                if self.display_mode != DisplayMode.QUIET:
+                #: The proof the agent is acting on: the result of the PREVIOUS
+                #: round.  Captured BEFORE this call runs — once it completes,
+                #: ``prev_result`` is overwritten with this call's own output,
+                #: so a reason printed after execution cannot cite the earlier
+                #: evidence (the CLEAN [reason] line used to lose it this way).
+                prev_proof = prev_result
+                if self.display_mode == DisplayMode.INTENT:
+                    # INTENT is human-language only: no tool name, no argument
+                    # dump.  The intent block already announced this action in
+                    # plain words; the [tool] echo is suppressed here and the
+                    # summarized result below is labelled as evidence, not as a
+                    # named tool's output.
+                    pass
+                elif self.display_mode == DisplayMode.CLEAN:
+                    # CLEAN is human-language only too: the action is stated as
+                    # a plain-language [reason] sentence, never as a tool name
+                    # + argument dump.  The old [tool] echo printed here is
+                    # gone for the same reason INTENT suppresses it.  The
+                    # reason cites ``prev_proof`` — the previous round's
+                    # result — so the evidence survives into the sentence.
+                    print(
+                        f"  {yellow('[reason]')} "
+                        f"{_derive_reason(tool_name, args, prev_text, prev_proof)}"
+                    )
+                elif self.display_mode != DisplayMode.QUIET:
                     tool_label = cyan(tool_name) + "(" + gray(_fmt_args(args)) + ")"
                     print(f"  {yellow('[tool]')} {tool_label}")
                 self._emit(
@@ -1215,10 +1243,8 @@ class ToolLoopRunner:
                 )
                 if self.display_mode != DisplayMode.QUIET:
                     if self.display_mode == DisplayMode.CLEAN:
-                        print(
-                            f"  {yellow('[reason]')} "
-                            f"{_derive_reason(tool_name, args, prev_text)}"
-                        )
+                        # The [reason] line was printed BEFORE the call ran;
+                        # here only the summarized result follows as evidence.
                         summary = _summarize_result(tool_name, result_str)[
                             :_RESULT_DISPLAY_LIMIT
                         ]
@@ -1415,25 +1441,37 @@ class ToolLoopRunner:
                         tc_id=tc_id,
                         duplicate=True,
                     )
-                    if self.display_mode != DisplayMode.QUIET:
+                    if self.display_mode == DisplayMode.INTENT:
+                        # INTENT: duplicate actions are announced in plain
+                        # words only — no tool name, no argument dump.  The
+                        # intent block already stated the action; here we say
+                        # what happened to it (skipped) and show the evidence.
+                        print(
+                            f"  {yellow('[result]')} "
+                            + gray(
+                                "this step was already done — result reused, not re-run"
+                            )
+                        )
+                    elif self.display_mode == DisplayMode.CLEAN:
+                        # CLEAN: plain-language reason line, then the evidence.
+                        # No tool-name echo (the dump is a VERBOSE affordance).
+                        print(
+                            f"  {yellow('[reason]')} "
+                            f"{_derive_reason(tool_name, args, prev_text, prev_result)}"
+                        )
+                        summary = _summarize_result(tool_name, result_str)[
+                            :_RESULT_DISPLAY_LIMIT
+                        ]
+                        print(f"  {yellow('[result]')} {colorize_result(summary)}")
+                    elif self.display_mode != DisplayMode.QUIET:
                         print(
                             f"  {yellow('[tool]')} {cyan(tool_name)}"
                             f"({gray(_fmt_args(args))}) (duplicate, not re-executed)"
                         )
-                        if self.display_mode == DisplayMode.CLEAN:
-                            print(
-                                f"  {yellow('[reason]')} "
-                                f"{_derive_reason(tool_name, args, prev_text)}"
-                            )
-                            summary = _summarize_result(tool_name, result_str)[
-                                :_RESULT_DISPLAY_LIMIT
-                            ]
-                            print(f"  {yellow('[result]')} {colorize_result(summary)}")
-                        else:
-                            shown = colorize_result(result_str[:_RESULT_DISPLAY_LIMIT])
-                            if "note:" in shown.lower():
-                                shown = magenta(shown)
-                            print(f"  {yellow('[result]')} {shown}")
+                        shown = colorize_result(result_str[:_RESULT_DISPLAY_LIMIT])
+                        if "note:" in shown.lower():
+                            shown = magenta(shown)
+                        print(f"  {yellow('[result]')} {shown}")
                     #: Defer the append (see dup_tool_msgs): this call sits in
                     #: the same assistant batch as pending calls that execute
                     #: LATER — appending now would put its tool message first.
@@ -1787,13 +1825,13 @@ def _print_intent(
 ) -> None:
     """INTENT display: print one block per LLM round before its tool calls run.
 
-    Shows the model's own narration (printed in FULL — never truncated) and,
-    when there is a previous result, a one-line ``proof:`` of what that result
-    verified.  Each planned call is printed with its FULL arguments (never
-    truncated) plus a human-readable ``why:`` explanation that diagnoses the
-    next action FROM the previous proof, so the user can see both what the
-    agent will do and the evidence it is acting on.  Tool results are
-    summarized (not dumped) so intent stays more visible than output.
+    The block is HUMAN LANGUAGE ONLY: the model's own narration (printed in
+    FULL — never truncated), a one-line ``proof:`` of what the previous
+    result verified, and one plain-language ``why:`` sentence per planned
+    action.  Tool names, argument payloads and raw commands never reach the
+    screen — the end user sees WHAT the agent intends to do and WHY, never
+    which tool implements it.  Results are summarized (not dumped) so intent
+    stays more visible than output.
     """
     print(f"  {magenta(f'[intent {iteration + 1}]')}")
     text = " ".join(_narration_text(narration).split())
@@ -1808,15 +1846,75 @@ def _print_intent(
         if not isinstance(tc, dict):
             continue
         func = tc.get("function", {}) or {}
-        name = func.get("name", "") or "?"
+        name = str(func.get("name", "") or "")
         try:
             args = json.loads(func.get("arguments", "{}") or "{}")
             if not isinstance(args, dict):
                 args = {}
         except (json.JSONDecodeError, TypeError):
             args = {}
-        print(f"    {yellow('->')} {cyan(name)}({gray(_fmt_args_full(args))})")
-        print(f"      {gray('why: ' + _short_intent_why(name, args, prev_result))}")
+        # The same privacy rule as QUIET: command payloads are the tool call
+        # itself and must stay invisible; paths/queries are short descriptors.
+        phrase = _why_base(name, _quiet_safe_args(name, args))
+        if phrase and phrase != "model action":
+            print(f"    {gray('intent: ' + phrase)}")
+        why = _short_intent_why(name, _quiet_safe_args(name, args), prev_result)
+        print(f"      {gray('why: ' + why)}")
+
+
+def _print_intent_quiet(
+    iteration: int, narration: Any, tool_calls: list[Any], prev_result: str = ""
+) -> None:
+    """QUIET display: one plain-language intent line per LLM round, nothing else.
+
+    QUIET shows ONLY the overall intent of each round — never a tool call,
+    its arguments, or its result.  The line is human language: the model's
+    narration when it wrote one, otherwise a plain-language purpose phrase
+    (``_why_base``) describing what the round will accomplish.  Tool names
+    and argument payloads stay invisible; even the previous-result proof is
+    phrased as evidence in words, never as a tool dump.  A round with
+    neither narration nor calls (the final answer round) prints nothing.
+    """
+    text = " ".join(_narration_text(narration).split())
+    if not text:
+        # No narration: derive the round's purpose in plain language from
+        # the planned calls, using only their verb phrases — never names.
+        # The phrase is built from a SAFE subset of arguments (paths, query
+        # text), never whole payloads: `_why_base` renders command-valued
+        # keys in full, which would put the tool call itself on screen and
+        # break QUIET's promise that calls stay invisible.
+        phrases: list[str] = []
+        for tc in tool_calls:
+            if not isinstance(tc, dict):
+                continue
+            func = tc.get("function", {}) or {}
+            name = str(func.get("name", "") or "")
+            try:
+                args = json.loads(func.get("arguments", "{}") or "{}")
+                if not isinstance(args, dict):
+                    args = {}
+            except (json.JSONDecodeError, TypeError):
+                args = {}
+            phrase = _why_base(name, _quiet_safe_args(name, args))
+            if phrase and phrase != "model action":
+                phrases.append(phrase)
+        if not phrases:
+            return
+        text = "; ".join(phrases)
+    print(f"  {magenta(f'[intent {iteration + 1}]')} {gray(text)}")
+
+
+def _quiet_safe_args(name: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Strip argument payloads down to what a QUIET intent line may show.
+
+    Command-valued keys (``command``/``cmd``, see ``_COMMAND_KEYS``) are the
+    tool call itself — in QUIET they must never reach the screen.  Dropping
+    them makes ``_why_base`` fall back to its generic category phrase
+    ("to execute/verify (command)"), which states the intent without the
+    payload.  Everything else (paths, queries) is a short descriptor and
+    stays.
+    """
+    return {k: v for k, v in args.items() if k not in _COMMAND_KEYS}
 
 
 def _narration_text(content: Any) -> str:
@@ -1864,18 +1962,24 @@ def _derive_reason(
 ) -> str:
     """Build a short human-readable reason for why a tool call was made.
 
-    Uses the model's own reasoning when it supplied one (via ``assistant``
-    message content), otherwise falls back to a small heuristic keyed on the
-    tool name and its arguments so bare calls are never unexplained.  When a
-    previous result proof exists, the reason diagnoses the next action FROM
-    that evidence."""
+    PURE HUMAN LANGUAGE: never a tool name, an argument dump, or a raw
+    command.  Uses the model's own reasoning when it supplied one (via
+    ``assistant`` message content), otherwise falls back to the plain-language
+    purpose phrase (``_short_intent_why``) keyed on what the call is FOR.
+    When a previous result proved something, the reason states that evidence
+    in words — "the last step showed ..." — never as a tool dump."""
     if prior_text:
         first = " ".join(prior_text.split())[:260]
-        return f"{tool_name}({_fmt_args(args)}) — {first}"
-    return (
-        f"{tool_name}({_fmt_args(args)}) — "
-        f"{_short_intent_why(tool_name, args, prev_result)}"
-    )
+        # The model's own words explain the action; when the previous
+        # result proved something, append that evidence in words so the
+        # reason cites what the agent is acting on.
+        evidence = _evidence_from_proof(prev_result)
+        if evidence:
+            return f"{first} — the last step showed: {evidence}"
+        return first
+    base = _short_intent_why(tool_name, args, prev_result)
+    # _short_intent_why already appends the evidence when there is any.
+    return base
 
 
 def _short_intent_why(
@@ -1964,11 +2068,17 @@ def _why_base(tool_name: str, args: dict[str, Any]) -> str:
         return f"to patch {path}"
     if tool_name in ("run", "git", "tests"):
         cmd = str(args.get("command", "") or args.get("cmd", "") or "")
-        purpose = _run_purpose(cmd)
-        if purpose:
-            return purpose
-        target = cmd or arg_summary or "(command)"
-        return f"to execute/verify {target}"
+        # The FULL command is rendered first: the reason line shows exactly
+        # what will run (never truncated).  Showing the command here is
+        # deliberate — CLEAN explains the action, and the user must be able
+        # to see which command the agent is about to execute.  A recognized
+        # command family appends its plain-language purpose in parentheses.
+        if cmd:
+            purpose = _run_purpose(cmd)
+            if purpose:
+                return f"{cmd} ({purpose})"
+            return f"to execute/verify {cmd}"
+        return f"to execute/verify {arg_summary or '(command)'}"
     if tool_name == "diff":
         file1 = str(args.get("file1", ""))[:60]
         return f"to compare changes in {file1}"

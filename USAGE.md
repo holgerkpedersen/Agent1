@@ -63,7 +63,7 @@ much of the model's intent is shown:
 > display intent          the model's intent + planned calls, before they run
 > display clean           one reason line per call, summarized results
 > display verbose         every call + full result (default)
-> display quiet           only the final answer
+> display quiet           one plain-language intent line per round
 ```
 
 The choice is written to `AGENT_DISPLAY_MODE` in `.env`, so it survives a REPL
@@ -79,16 +79,14 @@ any tool in that round runs**:
 
   [intent 1]
     I need to find where ToolRouter is defined before I can explain it.
-    -> search(query=ToolRouter)
+    intent: to locate 'ToolRouter' in the workspace
       why: to locate 'ToolRouter' in the workspace
-  [tool] search(query=ToolRouter)
   [result] Found 14 matches in 6 files
 
   [intent 2]
     proof: Found 14 matches in 6 files
-    -> read(path=agent_core/llm/tool_router.py)
-      why: to inspect agent_core/llm/tool_router.py
-  [tool] read(path=agent_core/llm/tool_router.py)
+    intent: to inspect agent_core/llm/tool_router.py
+      why: to inspect agent_core/llm/tool_router.py — because the last step showed: Found 14 matches in 6 files
   [result] ...
 
 The ToolRouter class routes natural language prompts to registered tools...
@@ -100,8 +98,13 @@ Each block has up to four parts, and each answers a different question:
 | ---- | ------- | ------------------- |
 | narration | *What is the model trying to achieve?* | The model's own sentence, printed in full |
 | `proof:` | *What did the last call establish?* | A one-line summary of the previous tool result |
-| `-> name(args)` | *Which call is next, exactly?* | The planned call, arguments shown in full |
-| `why:` | *Why this call, given that proof?* | The model's reasoning, or a heuristic when it wrote none |
+| `intent:` | *What is the round trying to achieve?* | A plain-language purpose phrase from the planned calls |
+| `why:` | *Why this call, given that proof?* | The purpose phrase, extended with the evidence it reasons from |
+
+Tool names and argument payloads are deliberately **not** part of this display:
+`intent` mode is human language only, so you read the agent's intent rather
+than a transcript of which tool it called. The end user sees *what* the agent
+intends to do and *why*, never the implementation detail.
 
 Two design points make the intent trustworthy rather than decorative:
 
@@ -115,10 +118,10 @@ Two design points make the intent trustworthy rather than decorative:
 The mode also nudges the model: while `intent` is on, the system prompt asks it
 to write one short sentence (about 20 words) before each tool call. The
 narration is therefore usually the model's real intent — not text reconstructed
-after the fact. Narration and arguments are printed in **full** (never
-truncated), and tool *results* are summarized, so the intent stays more visible
-than the output. The model still receives every full result payload — only the
-console display is shortened.
+after the fact. Narration is printed in **full** (never truncated), and tool
+*results* are summarized, so the intent stays more visible than the output. The
+model still receives every full result payload — only the console display is
+shortened.
 
 ---
 

@@ -11,6 +11,7 @@ import os
 
 import pytest
 
+from agent_core.config import AgentDisplayMode
 from agent_core.llm.tool_loop import ToolLoopRunner
 from agent_core.tool_schemas import NLP_TOOL_NAMES, NLP_TOOL_SCHEMAS
 
@@ -2254,6 +2255,84 @@ class TestDisplayModes:
         assert "line0" in tool_msg["content"] and len(tool_msg["content"]) > 1500
         assert final_text == "Done."
 
+    def test_clean_reason_line_is_plain_language_no_tool_dump(self, capsys):
+        """CLEAN's [reason] line must state the purpose in human words, never
+        as a tool name + argument dump (regression: it printed
+        ``read(path=a.py) — to inspect a.py``, which showed the user exactly
+        which tool implements the action)."""
+        from agent_core.llm.tool_loop import ToolLoopRunner
+
+        fake = _ScriptedLLM(
+            [
+                ("read", {"path": "a.py"}),
+                "Answer.",
+            ]
+        )
+
+        async def execute_tool(name, args):
+            return "ok"
+
+        runner = ToolLoopRunner(max_iterations=5, display_mode="clean")
+        _loop_runner_sync(runner, fake, execute_tool)
+
+        out = capsys.readouterr().out
+        # The reason is a plain-language purpose sentence.
+        assert "[reason] to inspect a.py" in out
+        # Never the tool-name dump.
+        assert "read(path=a.py)" not in out
+        # CLEAN never echoes [tool] at all (VERBOSE-only affordance).
+        assert "[tool]" not in out
+
+    def test_clean_reason_uses_model_narration_when_present(self, capsys):
+        """When the model wrote narration, the reason line IS that narration
+        (the model's own reasoning), not a tool dump."""
+        from agent_core.llm.tool_loop import ToolLoopRunner
+
+        fake = _ScriptedLLM(
+            [
+                ("read", {"path": "a.py"}, "I will read the file to check it."),
+                "Answer.",
+            ]
+        )
+
+        async def execute_tool(name, args):
+            return "ok"
+
+        runner = ToolLoopRunner(max_iterations=5, display_mode="clean")
+        _loop_runner_sync(runner, fake, execute_tool)
+
+        out = capsys.readouterr().out
+        assert "[reason] I will read the file to check it." in out
+        assert "read(path=a.py)" not in out
+
+    def test_clean_reason_cites_evidence_in_words(self, capsys):
+        """CLEAN's reason diagnoses from the previous result's proof, phrased
+        in words — never as a raw tool dump."""
+        from agent_core.llm.tool_loop import ToolLoopRunner
+
+        fake = _ScriptedLLM(
+            [
+                ("search", {"query": "symbol"}),
+                ("read", {"path": "a.py"}),
+                "Answer.",
+            ]
+        )
+
+        async def execute_tool(name, args):
+            return "Found 14 matches in 6 files"
+
+        runner = ToolLoopRunner(max_iterations=5, display_mode="clean")
+        _loop_runner_sync(runner, fake, execute_tool)
+
+        out = capsys.readouterr().out
+        reason_lines = [ln for ln in out.splitlines() if "[reason]" in ln]
+        # Second call's reason cites the evidence in words.
+        assert any("14 matches" in ln for ln in reason_lines)
+        dumps = [
+            ln for ln in reason_lines if "read(path=" in ln or "search(query=" in ln
+        ]
+        assert not dumps
+
     def test_quiet_suppresses_tool_and_result_stdout_but_keeps_model_payload(self):
         """QUIET hides [tool]/[result] from stdout, yet the full result is still
         fed to the model as a role:tool message and final text/history unchanged."""
@@ -2281,8 +2360,12 @@ class TestDisplayModes:
         assert final_text == "Answer."
 
     def test_intent_mode_is_parsed_and_shows_intent_before_tool(self, capsys):
-        """INTENT mode prints an [intent] block (narration + planned call) for the
-        LLM round BEFORE the tool executes, and the model still gets the payload."""
+        """INTENT mode prints an [intent] block (plain-language intent) for the
+        LLM round BEFORE the tool executes, and the model still gets the payload.
+
+        INTENT is human language only: the planned action is stated as a plain
+        ``intent:`` sentence, never as a tool name + argument dump, and no
+        ``[tool]`` echo line is printed at all."""
         from agent_core.config import AgentDisplayMode, _parse_display_mode
         from agent_core.llm.tool_loop import DisplayMode, ToolLoopRunner
 
@@ -2306,16 +2389,21 @@ class TestDisplayModes:
         assert runner.display_mode == DisplayMode.INTENT
         out = capsys.readouterr().out
         assert "[intent 1]" in out
-        assert "read(path=a.py)" in out
-        # Intent is printed before the tool executes.
-        assert out.index("[intent 1]") < out.index("[tool]")
+        # The planned call is stated in plain words, not as a tool dump.
+        assert "intent: to inspect a.py" in out
+        # INTENT never shows the tool name + arguments echo.
+        assert "read(path=a.py)" not in out
+        assert "[tool]" not in out
+        # Intent is printed before the result of the action.
+        assert out.index("[intent 1]") < out.index("[result]")
         tool_msg = next(m for m in messages if m["role"] == "tool")
         assert tool_msg["content"] == "full-result-content"
         assert final_text == "Answer."
 
     def test_intent_bare_tool_calls_get_short_why_lines(self, capsys):
         """A bare tool-call round (no narration — the common case) still
-        explains every planned call with a short ``why:`` line."""
+        explains every planned call with plain-language ``intent:`` and
+        ``why:`` lines — never a tool name + argument dump."""
         from agent_core.llm.tool_loop import ToolLoopRunner
 
         fake = _ScriptedLLM(
@@ -2333,8 +2421,10 @@ class TestDisplayModes:
 
         out = capsys.readouterr().out
         assert "[intent 1]" in out
-        assert "read(path=a.py)" in out
+        # Plain-language intent stated; tool dump never shown.
+        assert "intent: to inspect a.py" in out
         assert "why: to inspect a.py" in out
+        assert "read(path=a.py)" not in out
 
     def test_intent_narration_is_printed_in_full(self, capsys):
         """When the model DID write narration, it is the intent explanation
@@ -2824,11 +2914,22 @@ class TestLLMBadBehaviorDetection:
             agent = Agent(workspace=".")
             llm = RepeatingLLM()
             agent.llm = llm
+            # The stop notice is part of the display-mode contract: it is
+            # suppressed in QUIET. A real terminal session is not quiet, so
+            # pin CLEAN explicitly - the ambient AGENT_DISPLAY_MODE env var
+            # must not decide whether this user-visible line is printed.
+            # chat_nlp resolves the mode through _resolve_display_mode on
+            # every turn (it never reads agent.display_mode), so patch the
+            # resolver, not the attribute.
+            with patch(
+                "agent._resolve_display_mode",
+                return_value=AgentDisplayMode.CLEAN,
+            ):
 
-            async def go():
-                await agent.chat_nlp("analyze the project")
+                async def go():
+                    await agent.chat_nlp("analyze the project")
 
-            asyncio.run(go())
+                asyncio.run(go())
 
         # First run + one chained run that repeats the SAME answer -> stopped.
         assert llm.calls == 2

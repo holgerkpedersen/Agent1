@@ -16,6 +16,7 @@ hard import fails the suite instead of the user's install.
 from __future__ import annotations
 
 import ast
+import os
 from fnmatch import fnmatch
 import re
 import subprocess
@@ -27,6 +28,14 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
+# Regression: this suite lives directly in the repo root's ``tests`` directory.
+# A nested copy (tests/<pkg>/test_packaging_metadata.py) made parents[1] resolve
+# to an ancestor of the repo, so the scan below walked sibling trees - a whole
+# .venv-gguf site-packages - and reported environment artifacts as packaging
+# violations.  Fail loudly at collection instead of silently scanning the drive.
+assert (ROOT / "pyproject.toml").is_file(), (
+    f"test file is nested: {__file__!r} does not sit in <repo>/tests/"
+)
 PYPROJECT = ROOT / "pyproject.toml"
 REQUIREMENTS = ROOT / "requirements.txt"
 README = ROOT / "README.md"
@@ -49,6 +58,27 @@ _DIST_TO_IMPORT = {
 # Directories whose modules are not part of the installed distribution, so
 # their imports are not install requirements.
 _NON_PACKAGE_DIRS = {"tests", "scripts", "docs", ".github"}
+
+# Directories that only exist as local build/runtime artifacts (a virtualenv
+# created in-tree, caches, generated reports).  Regression: creating an
+# in-repo ``.venv`` made the recursive scan above walk ~15k site-packages
+# files, so every optional import of every installed library (torch, pip's
+# vendored distlib, PIL's ImageQt...) counted as an "undeclared" repo import
+# and this test failed for an environment reason, not a packaging one.
+_LOCAL_ARTIFACT_DIRS = {".venv", "venv", ".mypy_cache", ".ruff_cache", ".pytest_cache"}
+
+
+def _normalise(name: str) -> str:
+    """Collapse a distribution OR import name to one comparable spelling.
+
+    PEP 503 makes distribution names case-insensitive and treats ``-``, ``_``
+    and ``.`` as interchangeable, so ``huggingface-hub`` (the declared
+    distribution) and ``huggingface_hub`` (what Python actually imports) name
+    the SAME project.  Without this, a correctly declared dependency was
+    reported as an undeclared import purely because of the separator.
+    """
+    return name.lower().replace("_", "-").replace(".", "-")
+
 
 _REQ_LINE = re.compile(
     r"^\s*(?P<name>[A-Za-z0-9_.\-]+)\s*(?:\[[^\]]*\])?\s*(?P<spec>[<>=!~].*)?$"
@@ -86,9 +116,7 @@ def _build_backend() -> str:
     """The ``build-backend`` declared in ``pyproject.toml``."""
     with PYPROJECT.open("rb") as handle:
         data = tomllib.load(handle)
-    return data.get("build-system", {}).get(
-        "build-backend", "setuptools.build_meta"
-    )
+    return data.get("build-system", {}).get("build-backend", "setuptools.build_meta")
 
 
 def _module_importable(dotted: str) -> bool:
@@ -206,27 +234,90 @@ def test_requires_python_matches_ci_and_readme(pyproject: dict) -> None:
 
 
 def _top_level_imports() -> set[str]:
-    """Every top-level module imported by tracked Python source, via AST.
+    """Every module-level import performed by tracked Python source, via AST.
 
-    Whole-file AST parse (not a regex) so docstring text, comments and
-    ``from src.agent1`` strings in test fixtures are not counted as imports.
+    "Top-level" means a statement in the module body (including inside a
+    top-level ``try``/``if`` block), not merely a top-level *module* name:
+    an import nested in any function or class is lazy by definition and its
+    package is an optional extra, so counting it here is a false positive.
+    Regression: ``ast.walk`` descended everywhere, so the documented lazy
+    import at ``strata_download.py`` (``from huggingface_hub import ...``
+    inside ``_download_one``, declared as the ``strata-download`` extra) was
+    reported as an undeclared hard import - and requirements.txt correctly
+    omits it.  Whole-file AST parse (not a regex) so docstring text,
+    comments and quoted code in test fixtures are not counted as imports.
+
+    Pruned os.walk, not ``ROOT.rglob("*.py")``: the recursive glob follows
+    directory links, and this machine has sibling trees with broken venv
+    symlinks (a ``venv/bin/python`` link that raises WinError 1920 on stat),
+    so rglob either died mid-scan or walked ~15k site-packages files outside
+    the repo.  Pruning skips ``.git``, every dot-directory and every symlink
+    before descending, so only real repo source is parsed.
     """
     names: set[str] = set()
-    for path in ROOT.rglob("*.py"):
-        rel = path.relative_to(ROOT)
-        if rel.parts[0] in _NON_PACKAGE_DIRS:
-            continue
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-        except (SyntaxError, UnicodeDecodeError):  # pragma: no cover - defensive
-            continue
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    names.add(alias.name.split(".")[0])
-            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-                names.add(node.module.split(".")[0])
+    for dirpath, dirnames, filenames in os.walk(ROOT):
+        dirnames[:] = [
+            d
+            for d in dirnames
+            if not d.startswith(".")
+            and d not in _NON_PACKAGE_DIRS
+            and d not in _LOCAL_ARTIFACT_DIRS
+            and not os.path.islink(os.path.join(dirpath, d))
+        ]
+        for filename in filenames:
+            if not filename.endswith(".py"):
+                continue
+            path = Path(dirpath) / filename
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except (OSError, SyntaxError, UnicodeDecodeError):  # pragma: no cover
+                continue
+            for node in tree.body:
+                _collect_module_level_imports(node, names)
     return names
+
+
+def _collect_module_level_imports(node: ast.stmt, names: set[str]) -> None:
+    """Add top-level import names from *node*; never descend into defs.
+
+    Recurses only through compound statements that execute at import time
+    (``try``/``if``/``with``, and ``for``/``while``/``match`` whose bodies
+    run when the module loads).  Function, class, async-function and
+    lambda definitions are lazy: their imports run on first call, not at
+    import time, so they belong to extras, not hard requirements.
+    """
+    if isinstance(node, ast.Import):
+        for alias in node.names:
+            names.add(alias.name.split(".")[0])
+    elif isinstance(node, ast.ImportFrom):
+        if node.level == 0 and node.module:
+            names.add(node.module.split(".")[0])
+    elif isinstance(node, ast.Try):
+        for child in node.body:
+            _collect_module_level_imports(child, names)
+        for handler in node.handlers:
+            for child in handler.body:
+                _collect_module_level_imports(child, names)
+        for child in node.orelse:
+            _collect_module_level_imports(child, names)
+        for child in node.finalbody:
+            _collect_module_level_imports(child, names)
+    elif isinstance(node, (ast.If, ast.With, ast.AsyncWith)):
+        for child in node.body:
+            _collect_module_level_imports(child, names)
+        orelse = getattr(node, "orelse", None)
+        if orelse is not None:
+            for child in orelse:
+                _collect_module_level_imports(child, names)
+    elif isinstance(node, (ast.For, ast.AsyncFor)):
+        for child in node.body:
+            _collect_module_level_imports(child, names)
+        for child in node.orelse:
+            _collect_module_level_imports(child, names)
+    elif isinstance(node, ast.Match):  # pragma: no cover - py>=3.10 only
+        for case in node.cases:
+            for child in case.body:
+                _collect_module_level_imports(child, names)
 
 
 def test_every_hard_import_is_declared(pyproject: dict) -> None:
@@ -239,7 +330,11 @@ def test_every_hard_import_is_declared(pyproject: dict) -> None:
     declared = {_split_spec(d)[0] for d in pyproject["project"]["dependencies"]}
     for group in pyproject["project"].get("optional-dependencies", {}).values():
         declared |= {_split_spec(d)[0] for d in group}
-    importable = {_DIST_TO_IMPORT.get(name, name) for name in declared}
+    # Both sides are normalised: the declared side because PEP 503 makes the
+    # separators interchangeable, the import side because the AST records the
+    # module name verbatim.  A mapping entry still wins, since some imports
+    # differ in more than punctuation (pillow -> PIL).
+    importable = {_normalise(_DIST_TO_IMPORT.get(name, name)) for name in declared}
 
     local = {
         p.name for p in ROOT.iterdir() if p.is_dir() and (p / "__init__.py").exists()
@@ -253,10 +348,99 @@ def test_every_hard_import_is_declared(pyproject: dict) -> None:
         if name
         and name not in stdlib
         and name not in local
-        and name not in importable
+        and _normalise(name) not in importable
         and not name.startswith("_")
     )
     assert undeclared == [], f"imported but undeclared in pyproject: {undeclared}"
+
+
+def test_top_level_imports_ignores_lazy_imports() -> None:
+    """Only import-time imports count; function/class bodies are lazy.
+
+    Regression: the collector walked the whole AST, so a documented lazy
+    import (``huggingface_hub`` inside ``strata_download._download_one``)
+    was reported as an undeclared hard requirement.  The collector must
+    recurse through import-time compound statements (try/if/with/for) and
+    stop at def/class/async-def - a lambda body is lazy too.
+    """
+    src = (
+        "import os, json as j\n"
+        "from . import sibling\n"
+        "from pathlib import Path\n"
+        "try:\n"
+        "    import trying\n"
+        "except ImportError:\n"
+        "    import excepting\n"
+        "if True:\n"
+        "    import ifing\n"
+        "with open('x') as f:\n"
+        "    import withing\n"
+        "for i in range(1):\n"
+        "    import forring\n"
+        "def _lazy():\n"
+        "    from huggingface_hub import hf_hub_download\n"
+        "class C:\n"
+        "    import inside_class\n"
+        "async def alazy():\n"
+        "    import async_lazy\n"
+        "f = lambda: __import__('lambda_import')\n"
+    )
+    names: set[str] = set()
+    for node in ast.parse(src).body:
+        _collect_module_level_imports(node, names)
+    assert names == {
+        "os",
+        "json",
+        "pathlib",
+        "trying",
+        "excepting",
+        "ifing",
+        "withing",
+        "forring",
+    }, names
+
+
+def test_distribution_name_matches_its_import_name() -> None:
+    """A declared distribution must match the module name Python imports.
+
+    Regression: ``tests/test_strata_download.py`` imports ``huggingface_hub``
+    while pyproject declares the distribution as ``huggingface-hub``; the
+    check compared the two spellings literally, so a correctly declared
+    dependency was reported as an undeclared hard import on every clean CI
+    runner.  PEP 503 makes ``-``, ``_`` and ``.`` interchangeable, so both
+    sides must normalise before comparing - while an explicit mapping entry
+    still maps names that differ by more than punctuation (pillow -> PIL).
+    """
+    # The separator-only case, in both directions.
+    assert _normalise("huggingface_hub") == _normalise("huggingface-hub")
+    assert _normalise("HuggingFace.Hub") == _normalise("huggingface-hub")
+
+    # A real mapping whose names differ beyond punctuation still resolves.
+    assert _normalise(_DIST_TO_IMPORT["pillow"]) == _normalise("PIL")
+
+    # Distinct projects must never collapse into each other.
+    assert _normalise("huggingface-hub") != _normalise("sentence-transformers")
+
+
+def test_declared_dependencies_cover_the_strata_download_import() -> None:
+    """The real pair from the CI failure: the declaration is reachable.
+
+    Pins the actual repository state rather than a synthetic string, so
+    removing the ``huggingface-hub`` declaration (or breaking the
+    normalisation above) fails here with a readable message instead of in
+    ``test_every_hard_import_is_declared`` with only a module list.
+    """
+    with PYPROJECT.open("rb") as handle:
+        data = tomllib.load(handle)
+    declared = {_split_spec(d)[0] for d in data["project"]["dependencies"]}
+    for group in data["project"].get("optional-dependencies", {}).values():
+        declared |= {_split_spec(d)[0] for d in group}
+
+    normalised = {_normalise(_DIST_TO_IMPORT.get(n, n)) for n in declared}
+    assert _normalise("huggingface_hub") in normalised, (
+        "huggingface_hub (imported by tests/test_strata_download.py) is not a "
+        f"declared dependency: {sorted(declared)}"
+    )
 
 
 def _fnmatch(name: str, pattern: str) -> bool:
@@ -310,8 +494,17 @@ def test_wheel_contains_every_subpackage(tmp_path: Path) -> None:
     """
     wheel_dir = tmp_path / "wheel"
     result = subprocess.run(
-        [sys.executable, "-m", "pip", "wheel", str(ROOT), "--no-deps",
-         *_build_isolation_flags(), "-w", str(wheel_dir)],
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "wheel",
+            str(ROOT),
+            "--no-deps",
+            *_build_isolation_flags(),
+            "-w",
+            str(wheel_dir),
+        ],
         capture_output=True,
         text=True,
         timeout=300,
