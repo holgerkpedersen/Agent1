@@ -25,3 +25,8 @@ sentence-transformers>=2.2
 # tests/test_packaging_metadata.py builds a real wheel, and without setuptools
 # pip downloads a backend mid-test (network + BackendUnavailable on CI).
 setuptools>=61.0
+# Developer-only, not a runtime dependency: the live Hub checks at the bottom
+# of tests/test_strata_download.py `import requests`.  No first-party module
+# imports it and current huggingface-hub does not depend on it, so a clean
+# runner raised ModuleNotFoundError.  Declared in the [dev] extra.
+requests>=2.34.2

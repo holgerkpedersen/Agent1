@@ -102,6 +102,12 @@ dev = [
     # is importable without huggingface_hub (its use is a lazy import), and
     # the download tests mock hf_hub_download, so no network is needed.
     "huggingface-hub>=0.23",
+    # The live Hub checks at the bottom of tests/test_strata_download.py do
+    # `import requests` inside the test body.  No first-party module imports
+    # requests and current huggingface-hub no longer depends on it, so on a
+    # clean runner the import failed with ModuleNotFoundError.  Test-only, so
+    # it belongs here and not in [project.dependencies].
+    "requests>=2.34.2",
 ]
 
 [project.urls]

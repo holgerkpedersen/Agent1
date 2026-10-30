@@ -6,6 +6,22 @@
 
 **Files**: agent_core/commands/kg_cmd.py, agent_core/commands/help_cmd.py, scripts/seed_kg.py, tests/test_kg_command.py, tests/test_kg_seed.py, README.md, USAGE.md. Verified: `pytest tests/test_kg_command.py tests/test_kg_seed.py` → 22 passed; `pytest tests/test_memory_cmd.py::test_help_lists_every_registered_command` → 1 passed (pins the help registry mirror so `kg` cannot drift out of `help`).
 
+## 2026-10-30 - fix(packaging): declare `requests` as a dev dependency, not a runtime one
+
+**Change**: `pyproject.toml` moves `requests>=2.34.2` out of `[project.dependencies]` and into the `dev` extra; `requirements.txt` carries the same entry with the same floor (its comment now says developer-only). No first-party module imports `requests` — the single use is a function-level `import requests` inside the live Hub check `test_pinned_sizes_and_digests_match_the_hub` in `tests/test_strata_download.py`. Current `huggingface-hub` (2.1.1 here) no longer depends on `requests`, so that import needs its own declaration or it raises `ModuleNotFoundError` on a clean runner.
+
+**Reason**: the dependency is real but test-only, so listing it as a core runtime requirement would force every user of the published wheel to install a package no shipped module imports. The `dev` extra is what CI installs (`pip install -e .[dev]`), so the live check is satisfied there; `test_requirements_entries_are_declared_in_pyproject` accepts an extras entry as a known dependency, so the two-file mirror stays consistent.
+
+**Files**: pyproject.toml, requirements.txt, CHANGES.md. Verified: `pytest tests/test_packaging_metadata.py tests/test_strata_download.py -q --no-cov` -> 50 passed, including `test_requirements_covers_every_core_dependency`, `test_requirements_entries_are_declared_in_pyproject` and `test_core_and_requirements_versions_agree`, which pin the pyproject/requirements mirror in both directions.
+
+## 2026-10-30 - fix(tests): one normalisation rule for dependency names
+
+**Change**: `tests/test_packaging_metadata.py`'s `_split_spec()` no longer carries its own inline spelling rule. It returned `name.lower().replace("_", "-")`, which did **not** fold `.`, so a requirement written `foo.bar` stayed dotted on the declared side while the AST import side folded it to `foo-bar` through `_normalise()`. Two rules for one comparison meant a dependency declared with a dot was still reported as undeclared — the exact failure class the preceding `_normalise()` fix was added to remove. `_split_spec()` now returns `_normalise(match.group("name"))`, so requirement parsing and import matching compare with ONE rule. New regression test `test_requirement_parsing_uses_the_same_normalisation_as_imports()` pins it: three separator spellings of one project parse to the same name, the version specifier survives, a bare requirement parses, and an extras marker (`pytest-cov[toml]>=4`) is not part of the name.
+
+**Reason**: the previous commit normalised only the comparison, leaving the parser as a second source of truth. A helper that both parses requirements and answers "is this declared?" must not disagree with itself; collapsing the rule is what makes the CI fix hold for every spelling, not just the `huggingface_hub` one it was written for.
+
+**Files**: tests/test_packaging_metadata.py, CHANGES.md. Verified: `pytest tests/test_packaging_metadata.py` → 17 passed; `ruff check` clean on the edited file (py_compile + ruff reported by the editor on both edits).
+
 ## 2026-10-30 - fix(ci): stop reporting a declared dependency as undeclared
 
 **Change**: `tests/test_packaging_metadata.py` gained `_normalise()`, which collapses a distribution OR import name to one comparable spelling per PEP 503 (`-`, `_` and `.` are interchangeable; case-insensitive). `test_every_hard_import_is_declared` now normalises both sides before comparing, and two regression tests pin the behaviour: `test_distribution_name_matches_its_import_name` (separator-only pairs in both directions, a real mapping whose names differ beyond punctuation - `pillow` -> `PIL` - and a guard that distinct projects never collapse) and `test_declared_dependencies_cover_the_strata_download_import` (the real repository pair). `pyproject.toml` declares `huggingface-hub>=0.23` in the `dev` extra (so `pip install -e .[dev]` installs it on every CI runner) and in a new `strata-download` extra for users who only need GGUF downloads.

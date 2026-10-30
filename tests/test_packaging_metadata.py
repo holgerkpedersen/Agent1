@@ -86,12 +86,17 @@ _REQ_LINE = re.compile(
 
 
 def _split_spec(spec: str) -> tuple[str, str]:
-    """Return (name, version-specifier) for one requirement string."""
+    """Return (name, version-specifier) for one requirement string.
+
+    The name is normalised with :func:`_normalise`, so a requirement parsed
+    here and an import collected from the AST compare with ONE rule.  Keeping
+    a second, slightly different rule inline meant ``foo.bar`` stayed dotted
+    here while the import side folded it to ``foo-bar``.
+    """
     match = _REQ_LINE.match(spec)
     if match is None:
         return "", spec
-    name = match.group("name").lower().replace("_", "-")
-    return name, (match.group("spec") or "").strip()
+    return _normalise(match.group("name")), (match.group("spec") or "").strip()
 
 
 def _build_isolation_flags() -> list[str]:
@@ -420,6 +425,26 @@ def test_distribution_name_matches_its_import_name() -> None:
 
     # Distinct projects must never collapse into each other.
     assert _normalise("huggingface-hub") != _normalise("sentence-transformers")
+
+
+def test_requirement_parsing_uses_the_same_normalisation_as_imports() -> None:
+    """``_split_spec`` and the import comparison must share ONE rule.
+
+    Regression: ``_split_spec`` carried its own inline ``lower().replace("_",
+    "-")`` that did NOT fold ``.``, so a requirement written ``foo.bar``
+    stayed dotted on the declared side while the import side folded it to
+    ``foo-bar``.  A dependency declared with a dot was therefore reported as
+    undeclared - the same class of failure this module exists to prevent.
+    """
+    for spelling in ("huggingface_hub", "HuggingFace.Hub", "huggingface-hub"):
+        name, spec = _split_spec(f"{spelling}>=1.0")
+        assert name == _normalise(spelling), spelling
+        assert spec == ">=1.0", spec
+
+    # A bare requirement (no specifier) still parses, and an extras marker is
+    # not part of the name.
+    assert _split_spec("tzdata") == (_normalise("tzdata"), "")
+    assert _split_spec("pytest-cov[toml]>=4")[0] == _normalise("pytest-cov")
 
 
 def test_declared_dependencies_cover_the_strata_download_import() -> None:
