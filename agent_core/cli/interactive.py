@@ -316,15 +316,22 @@ def _build_chat_prompt(agent: "Agent", branch: str, now: datetime) -> str:
     return f"\n[{now:%Y-%m-%d %H:%M}] {branch} {prompt_color(mode_tag.rstrip())}"
 
 
+#: The startup session's effective workspace (set by :func:`main` before
+#: :func:`run_interactive` runs).  A session bound to its own git worktree
+#: lands there instead of the default workspace; empty keeps the default.
+_STARTUP_WORKSPACE: str = ""
+
+
 async def run_interactive() -> None:
     """Interactive mode - allows user to input commands."""
     from agent import Agent
 
-    agent = Agent(workspace=Agent.DEFAULT_WORKSPACE)
+    workspace = _STARTUP_WORKSPACE or Agent.DEFAULT_WORKSPACE
+    agent = Agent(workspace=workspace)
     banner = blue("=" * 50)
     print(banner)
     print(blue("Agent Interactive Mode with LM Studio"))
-    print(f"Workspace: {cyan(Agent.DEFAULT_WORKSPACE)}")
+    print(f"Workspace: {cyan(agent.workspace)}")
     print(f"Session:   {cyan(agent.session_id)}")
     try:
         from agent_core.session.context import peers
@@ -463,6 +470,7 @@ async def run_interactive() -> None:
 
 async def main() -> None:
     """Main entry point - runs interactive mode or the web dashboard."""
+    global _STARTUP_WORKSPACE
     mod = _agent_mod()
     mod._start_kanban_inbound()
     if "--serve" in sys.argv:
@@ -476,6 +484,8 @@ async def main() -> None:
     )
     if selection.should_exit:
         return
+    # The session's own worktree (when bound) wins over the default.
+    _STARTUP_WORKSPACE = selection.workspace
     try:
         if "--dashboard" in sys.argv:
             mod.start_dashboard_thread(mod._dashboard_port())

@@ -57,7 +57,14 @@ _NEGATIVE_CLAIM_RE = re.compile(
     r"|(?:untested|lacks?\s+(?:tests?|coverage|test\s+coverage)|missing\s+(?:tests?|coverage))"
 )
 _MODULE_REF_RE = re.compile(r"(?<![\w/])([\w./-]+\.py)(?![A-Za-z0-9_])")
-_SKIP_DIRS = {".git", "__pycache__", ".pytest_cache", "backups"}
+_SKIP_DIRS = {
+    ".git",
+    "__pycache__",
+    ".pytest_cache",
+    "backups",
+    ".sessions",
+    ".worktrees",
+}
 
 
 # ── Storage ────────────────────────────────────────────────────────────────

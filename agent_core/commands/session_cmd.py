@@ -1,9 +1,16 @@
-"""Session command - list, create, switch, rename, and delete chat sessions."""
+"""Session command - list, create, switch, rename, delete, and prune sessions.
+
+With the worktree layer enabled (``AGENT_SESSION_WORKTREES=1``) each named
+session owns its own git worktree/branch; this command surfaces the
+worktree state and the ``prune`` maintenance action.
+"""
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING
 
+from agent_core.session import worktrees
 from agent_core.session import (
     SessionError,
     SessionLocked,
@@ -23,7 +30,17 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from agent import Agent
 
 
-_MUTATING = {"new", "use", "switch", "rename", "delete"}
+_MUTATING = {
+    "new",
+    "use",
+    "switch",
+    "resume",
+    "rename",
+    "delete",
+    "remove",
+    "rm",
+    "prune",
+}
 
 
 class SessionCommand(Command):
@@ -36,8 +53,9 @@ class SessionCommand(Command):
     @property
     def help_text(self) -> str:
         return (
-            "session [list|current|info <id>|peers|new <id>|use <id>|"
-            "rename <old> <new>|delete <id>] - Manage chat sessions"
+            "session [list|current|info <id>|peers|new <id> [--base REF]|"
+            "use <id>|rename <old> <new>|delete <id> [--force]|prune] - "
+            "Manage chat sessions (named sessions can own a git worktree)"
         )
 
     async def execute(self, args: list[str], agent: "Agent") -> bool:
@@ -75,6 +93,9 @@ class SessionCommand(Command):
         if sub in ("delete", "remove", "rm"):
             self._delete(agent, rest)
             return True
+        if sub == "prune":
+            self._prune(agent)
+            return True
         print(f"  Unknown session subcommand '{sub}'.")
         print(f"  {self.help_text}")
         return True
@@ -95,13 +116,14 @@ class SessionCommand(Command):
                     meta.updated_at,
                     str(meta.turn_count),
                     meta.model or "-",
+                    meta.worktree or "-",
                     ",".join(marks) or "free",
                 )
             )
         if not rows:
             print("  No sessions.")
             return
-        header = ("ID", "UPDATED", "TURNS", "MODEL", "STATUS")
+        header = ("ID", "UPDATED", "TURNS", "MODEL", "WORKTREE", "STATUS")
         widths = [
             max(len(str(row[i])) for row in rows + [header])
             for i in range(len(header))
@@ -120,6 +142,11 @@ class SessionCommand(Command):
         print(f"  Session:   {meta.id}")
         print(f"  Title:     {meta.title}")
         print(f"  Workspace: {meta.workspace or agent.workspace}")
+        wt = meta.worktree
+        if wt:
+            missing = "" if os.path.isdir(wt) else "  [MISSING]"
+            branch = worktrees.current_branch(wt) if os.path.isdir(wt) else ""
+            print(f"  Worktree:  {wt}  [{branch}]{missing}")
         print(f"  Model:     {agent.llm.model_name}")
         print(f"  Mode:      {'plan' if agent.is_plan_mode() else 'build'}")
         print(f"  Updated:   {meta.updated_at}")
@@ -140,6 +167,14 @@ class SessionCommand(Command):
         print(f"  Session:   {meta.id}")
         print(f"  Title:     {meta.title}")
         print(f"  Workspace: {meta.workspace or '-'}")
+        wt = meta.worktree
+        if wt:
+            alive = os.path.isdir(wt)
+            branch = worktrees.current_branch(wt) if alive else ""
+            dirty = "  [MISSING]" if not alive else ""
+            print(f"  Worktree:  {wt}  [{branch}]{dirty}")
+            if alive:
+                print(f"  Dirty:     {worktrees.dirty_count(wt)} file(s)")
         print(f"  Model:     {meta.model or '-'}")
         print(f"  Provider:  {meta.provider or '-'}")
         print(f"  Mode:      {meta.mode}")
@@ -164,20 +199,56 @@ class SessionCommand(Command):
 
     def _new(self, agent: "Agent", args: list[str]) -> None:
         if not args:
-            print("  Usage: session new <id>")
+            print("  Usage: session new <id> [--base REF]")
             return
+        name = args[0]
+        base = "HEAD"
+        no_worktree = "--no-worktree" in args
+        if "--base" in args:
+            idx = args.index("--base")
+            if idx + 1 < len(args):
+                base = args[idx + 1]
+        sid = slugify(name)
+        ws = agent.workspace
+        worktree = ""
+        if worktrees.worktrees_enabled() and not no_worktree:
+            if not worktrees.is_git_repo(ws):
+                print(
+                    "  [session] workspace is not a git repo — the session "
+                    "shares the main checkout (no worktree)."
+                )
+            else:
+                try:
+                    worktree = str(
+                        worktrees.bind(sid, base_ref=base)
+                    )
+                except worktrees.WorktreeError as exc:
+                    print(f"  [session] Worktree bind failed: {exc}")
+                    return
+                ws = worktree
         try:
             meta = create_session(
-                args[0],
-                workspace=agent.workspace,
+                name,
+                workspace=ws,
+                worktree=worktree,
                 model=agent.llm.model_name,
                 provider=getattr(agent, "_session_provider_name", lambda: "")(),
             )
             agent.switch_session(meta.id)
         except (SessionError, SessionLocked) as exc:
             print(f"  {exc}")
+            if worktree:
+                try:
+                    worktrees.unbind(sid)
+                except worktrees.WorktreeError as exc2:
+                    print(f"  [session] worktree cleanup also failed: {exc2}")
             return
-        print(f"  Created and switched to session '{meta.id}'.")
+        extra = (
+            f" on branch {worktrees.branch_name(sid)} ({worktree})"
+            if worktree
+            else ""
+        )
+        print(f"  Created and switched to session '{meta.id}'{extra}.")
 
     def _use(self, agent: "Agent", args: list[str]) -> None:
         if not args:
@@ -212,7 +283,7 @@ class SessionCommand(Command):
 
     def _delete(self, agent: "Agent", args: list[str]) -> None:
         if not args:
-            print("  Usage: session delete <id>")
+            print("  Usage: session delete <id> [--force]")
             return
         target = args[0] if args[0] == "default" else slugify(args[0])
         if target == agent.session_id:
@@ -222,14 +293,36 @@ class SessionCommand(Command):
         if owner:
             print(f"  Session '{target}' is locked by pid {owner.get('pid')}.")
             return
-        if "--force" not in args:
-            confirm = input(f"Delete session '{target}' and all its state? (y/n): ")
+        force = "--force" in args
+        meta = None
+        try:
+            meta = load_meta(target)
+        except SessionError:
+            pass
+        wt = meta.worktree if meta is not None else ""
+        if not force:
+            wt_note = f" (and its worktree {wt})" if wt else ""
+            confirm = input(
+                f"Delete session '{target}' and all its state{wt_note}? (y/n): "
+            )
             if confirm.strip().lower() not in ("y", "yes"):
                 print("  Cancelled.")
                 return
         try:
-            delete_session(target)
+            delete_session(target, remove_worktree=True, force=force)
         except SessionError as exc:
             print(f"  {exc}")
             return
         print(f"  Deleted session '{target}'.")
+
+    def _prune(self, agent: "Agent") -> None:
+        """Report and remove dangling worktree registrations."""
+        try:
+            report = worktrees.prune()
+        except worktrees.WorktreeError as exc:
+            print(f"  [session] {exc}")
+            return
+        if report:
+            print(f"  Pruned worktrees:\n{report}")
+        else:
+            print("  No dangling worktrees to prune.")

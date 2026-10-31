@@ -52,6 +52,8 @@ _SKIP_DIRS = frozenset(
         ".venv",
         "node_modules",
         ".tox",
+        ".sessions",
+        ".worktrees",
     }
 )
 

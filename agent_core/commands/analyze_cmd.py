@@ -70,6 +70,8 @@ _ANALYZE_SKIP_DIRS = frozenset(
         ".docs",
         "backups",
         "reports",
+        ".sessions",
+        ".worktrees",
         "generated",
         "dist",
         "build",

@@ -29,6 +29,12 @@ _IGNORED_DIRS = {
     ".env",
     "node_modules",
     "backups",
+    # Session state (chat/memory per session) and per-session worktrees:
+    # .worktrees contains a FULL second checkout of the repo — walking it
+    # duplicates every match.
+    ".sessions",
+    ".worktrees",
+    "reports",
     "htmlcov",
     ".eggs",
     "dist",

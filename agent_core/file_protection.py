@@ -33,8 +33,14 @@ PROTECTED_FILENAMES: frozenset[str] = frozenset(
 )
 
 #: Path prefixes, matched case-insensitively against forward-slash rel paths,
-#: that are recursively protected under the workspace root.
-PROTECTED_PREFIXES: tuple[str, ...] = ("reports/",)
+#: that are recursively protected under the workspace root.  The session
+#: trees (.sessions state, per-session .worktrees checkouts) are runtime
+#: state — deleting them loses conversations and session work.
+PROTECTED_PREFIXES: tuple[str, ...] = (
+    "reports/",
+    ".sessions/",
+    ".worktrees/",
+)
 
 #: Plan file prefixes requiring protection (e.g. plan_executed_*.md)
 _PLAN_FILE_PREFIXES = ("plan_executed_", "plan_executing_")

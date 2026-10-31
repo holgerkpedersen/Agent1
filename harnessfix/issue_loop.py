@@ -51,6 +51,8 @@ _SKIP_DIRS = frozenset(
         ".pytest_cache",
         ".mypy_cache",
         "site-packages",
+        ".sessions",
+        ".worktrees",
     }
 )
 

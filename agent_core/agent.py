@@ -1388,10 +1388,28 @@ class AgentCore:
         except Exception:
             logger.debug("Could not save line history", exc_info=True)
 
-        meta = activate_session(target, workspace=self.workspace)
+        # The workspace follows the target session: its own worktree when
+        # one is bound and alive, else the shared workspace it has always
+        # used.  Resolved BEFORE activation so the lock owner records the
+        # workspace the session is actually on.
+        target_meta = load_meta(target)
+        ws = self.workspace
+        wt = getattr(target_meta, "worktree", "")
+        if wt and os.path.isdir(wt):
+            ws = os.path.abspath(to_windows_path(wt))
+        elif wt:
+            print(f"  [session] Worktree {wt} is missing; using {ws}.")
+
+        meta = activate_session(target, workspace=ws)
         self._session_meta = meta
         self._session_id = meta.id
         self._session_paths = current_paths()
+        if os.path.abspath(ws) != os.path.abspath(self.workspace):
+            self.workspace = os.path.abspath(ws)
+            self.fs = _agent_mod().FileSystem(self.workspace)
+            self.searcher = _agent_mod().FileSearcher(self.workspace)
+            self._full_run_gate = _agent_mod().FullRunGate(self.workspace)
+            self._nlp_workspace = None
         self._reset_session_state()
         self._chat_history = self._load_chat_history()
         self._turn_start_index = len(self._chat_history)

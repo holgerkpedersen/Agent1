@@ -181,6 +181,10 @@ turn_log.jsonl
 meta_policy.json
 perf_history.json
 .sessions/
+# Per-session git worktrees (AGENT_SESSION_WORKTREES): each named session's
+# own checkout — runtime state, never source.  The .git files inside are the
+# worktree's own; the container dir is ignored.
+.worktrees/
 
 # Tool caches
 .mypy_cache/

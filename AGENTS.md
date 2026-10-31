@@ -53,27 +53,45 @@ is being extended to audit its own file effects (self-improvement).
   enforced at schema level AND in `_execute_tool_call` (decision #077).
 - `agent_core/session/` — named chat sessions. One process-global ACTIVE session
   (`context.py`) owns conversation, memory, turn-log, model/provider and mode;
-  the workspace (`.decisions.json`, `.issues.json`, source, reports) stays
-  shared. `models.py`/`store.py` define `SessionPaths` and `.sessions/<id>/`;
-  `lock.py` takes an exclusive OS lock per session (same session cannot run in
-  two processes) and reports live peers; `cli.py` handles `--session`,
-  `--new-session`, `--list-sessions`. The `default` session aliases the legacy
-  repo-root `chat_history.json`/`agent_memory.json`/`turn_log.jsonl` (no
-  migration); `current_paths()` falls back to agent module globals so the test
-  suite's monkeypatched paths keep working. Named-session model choices live
+  the shared ledger/metadata layer (`.decisions.json`, `.issues.json`, reports)
+  stays in the main checkout. `models.py`/`store.py` define `SessionPaths` (meta
+  schema v2: `worktree` + `repo` paths) and `.sessions/<id>/`; `lock.py` takes
+  an exclusive OS lock per session (same session cannot run in two processes)
+  and reports live peers; `cli.py` handles `--session`, `--new-session`,
+  `--list-sessions`, `--base` and `--no-worktree`. The `default` session aliases
+  the legacy repo-root `chat_history.json`/`agent_memory.json`/`turn_log.jsonl`
+  (no migration); `current_paths()` falls back to agent module globals so the
+  test suite's monkeypatched paths keep working. Named-session model choices live
   in the session's `session.json`; `default` keeps global `model.json`/`.env`.
   `agent_core/commands/session_cmd.py` is the REPL surface
-  (`list/current/info/peers/new/use/rename/delete`; mutating subcommands are
-  blocked in plan mode). `Agent.switch_session` saves the old session, activates
-  the new one, reloads history/memory and applies its model; `turn_loop` stamps
-  the session id into trace and turn-log records. Session provider metadata is
-  taken from the LIVE provider (never `provider_for` with the settings default),
-  and startup repairs old snapshots that mislabeled a local model as
-  `opencode`; otherwise a restart sends e.g. `recursivesi/flint` to the hosted
-  API. `AgentCore.build_transport` returns `client._provider` (the provider
-  already built with the session override) instead of rebuilding from only the
-  model name. Concurrent sessions on one workspace are allowed with a
-  last-write-wins warning, never serialized.
+  (`list/current/info/peers/new/use/rename/delete/prune`; mutating subcommands
+  are blocked in plan mode). `Agent.switch_session` saves the old session,
+  activates the new one, reloads history/memory and applies its model, and
+  rebinds `workspace`/`fs`/`searcher`/`_full_run_gate` to the target session's
+  live tree; `turn_loop` stamps the session id into trace and turn-log records.
+  Session provider metadata is taken from the LIVE provider (never
+  `provider_for` with the settings default), and startup repairs old snapshots
+  that mislabeled a local model as `opencode`; otherwise a restart sends e.g.
+  `recursivesi/flint` to the hosted API. `AgentCore.build_transport` returns
+  `client._provider` (the provider already built with the session override)
+  instead of rebuilding from only the model name.
+- `agent_core/session/worktrees.py` — per-session git worktrees (decision #129),
+  opt-in via `AGENT_SESSION_WORKTREES=1`: a new named session is bound to
+  `<root>/<id>` (default `<repo>/.worktrees`, `AGENT_WORKTREE_ROOT` overrides)
+  on a fresh `session/<id>` branch from `--base` (default HEAD) before the
+  session is created, and the session's recorded workspace becomes the worktree
+  path, so the meta's workspace is the LIVE tree. `default` is never bound
+  (main checkout). `delete` unbinds before rmtree — dirty refuses without
+  `--force` (fail closed); `rename` moves worktree + branch first; a missing
+  worktree is recreated at startup, a non-git workspace degrades to shared.
+  Plumbing runs with cwd = the MAIN repo, never the worktree being
+  moved/removed (Windows locks its own cwd); `merge_environment` + timeouts +
+  3x retry on transient Windows `Permission denied` are built in. The
+  workspace-tree walkers (`file_searcher._IGNORED_DIRS`, `analyze_cmd`,
+  `analysis_verifier`, `decisions._SKIP_DIRS`, `issue_loop`) skip `.sessions`
+  and `.worktrees`, and `file_protection.PROTECTED_PREFIXES` protects both
+  trees. Concurrent sessions sharing one tree (e.g. `--no-worktree`) are
+  allowed with a last-write-wins warning, never serialized.
 - `agent_core/commands/speculate_cmd.py` — REPL `speculate`: N independent
   speculative branches run on the thread pool, each carrying the agent's LIVE
   system prompt (`_chat_history[0]` after `_refresh_system_message`) and a
