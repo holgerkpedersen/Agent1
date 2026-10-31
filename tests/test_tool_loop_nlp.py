@@ -6,6 +6,7 @@ LLM that emits native ``tool_calls`` and verify that the dispatcher runs
 the tools, feeds results back, and terminates on a plain-text answer.
 """
 
+import asyncio
 import json
 import os
 
@@ -1797,7 +1798,9 @@ class TestPersistentMemory:
             agent.llm = FakeLLM()
             agent._files_read = {"a.py", "b.py"}
             agent._working_memory = ["note"]
-            agent._knowledge_graph = {"nodes": ["n1"]}
+            agent._knowledge_graph = {
+                "facts": {"kg-command": {"value": "user's own text", "ts": "x"}}
+            }
             agent._build_semantic_index(["hello"], 0)
 
             async def run():
@@ -1809,7 +1812,9 @@ class TestPersistentMemory:
             saved = json.loads(memory_file.read_text(encoding="utf-8"))
             assert saved["files_read"] == ["a.py", "b.py"]
             assert saved["working_memory"] == ["note"]
-            assert saved["knowledge_graph"] == {"nodes": ["n1"]}
+            assert saved["knowledge_graph"] == {
+                "facts": {"kg-command": {"value": "user's own text", "ts": "x"}}
+            }
             assert "hello" in saved["semantic_index"]
             assert saved["history"] == []
 
@@ -2935,3 +2940,208 @@ class TestLLMBadBehaviorDetection:
         assert llm.calls == 2
         out = capsys.readouterr().out
         assert "repeated the same answer" in out
+
+
+class TestReasoningSummaryDisplay:
+    """A model that leaks ``<think>`` content is summarized, never printed."""
+
+    def test_quiet_replaces_leaked_reasoning_with_summary(self, capsys):
+        fake = _ScriptedLLM(
+            [
+                (
+                    "read",
+                    {"path": "a.py"},
+                    "<think>secret chain of thought</think>Checking the file.",
+                ),
+                "done",
+            ]
+        )
+        calls = []
+
+        async def summarize(reasoning, visible):
+            calls.append((reasoning, visible))
+            return "Inspecting a.py to verify the change."
+
+        async def execute_tool(name, args):
+            return "content"
+
+        runner = ToolLoopRunner(max_iterations=3, display_mode="quiet")
+        asyncio.run(
+            runner.run(
+                messages=[{"role": "user", "content": "go"}],
+                llm_chat_fn=_make_llm_chat_fn(fake),
+                execute_tool_fn=execute_tool,
+                tools=None,
+                reasoning_summary_fn=summarize,
+            )
+        )
+
+        out = capsys.readouterr().out
+        assert "secret chain of thought" not in out
+        assert "Inspecting a.py to verify the change." in out
+        assert calls == [("secret chain of thought", "Checking the file.")]
+
+    def test_intent_mode_also_summarizes_reasoning(self, capsys):
+        fake = _ScriptedLLM(
+            [
+                (
+                    "read",
+                    {"path": "a.py"},
+                    "<think>secret chain of thought</think>Checking the file.",
+                ),
+                "done",
+            ]
+        )
+
+        async def summarize(reasoning, visible):
+            return "Inspecting a.py to verify the change."
+
+        async def execute_tool(name, args):
+            return "content"
+
+        runner = ToolLoopRunner(max_iterations=3, display_mode="intent")
+        asyncio.run(
+            runner.run(
+                messages=[{"role": "user", "content": "go"}],
+                llm_chat_fn=_make_llm_chat_fn(fake),
+                execute_tool_fn=execute_tool,
+                tools=None,
+                reasoning_summary_fn=summarize,
+            )
+        )
+
+        out = capsys.readouterr().out
+        assert "secret chain of thought" not in out
+        assert "Inspecting a.py to verify the change." in out
+
+    def test_failed_summary_falls_back_to_visible_narration(self, capsys):
+        fake = _ScriptedLLM(
+            [
+                (
+                    "read",
+                    {"path": "a.py"},
+                    "<think>secret chain of thought</think>Checking the file.",
+                ),
+                "done",
+            ]
+        )
+
+        async def summarize(reasoning, visible):
+            return ""
+
+        async def execute_tool(name, args):
+            return "content"
+
+        runner = ToolLoopRunner(max_iterations=3, display_mode="quiet")
+        asyncio.run(
+            runner.run(
+                messages=[{"role": "user", "content": "go"}],
+                llm_chat_fn=_make_llm_chat_fn(fake),
+                execute_tool_fn=execute_tool,
+                tools=None,
+                reasoning_summary_fn=summarize,
+            )
+        )
+
+        out = capsys.readouterr().out
+        assert "secret chain of thought" not in out
+        assert "Checking the file." in out
+
+    def test_summary_is_cached_per_reasoning_text(self, capsys):
+        thinking = "<think>same reasoning</think>Visible."
+        fake = _ScriptedLLM(
+            [
+                ("read", {"path": "a.py"}, thinking),
+                ("read", {"path": "b.py"}, thinking),
+                "done",
+            ]
+        )
+        calls = []
+
+        async def summarize(reasoning, visible):
+            calls.append(reasoning)
+            return "Cached summary."
+
+        async def execute_tool(name, args):
+            return "content"
+
+        runner = ToolLoopRunner(max_iterations=4, display_mode="quiet")
+        asyncio.run(
+            runner.run(
+                messages=[{"role": "user", "content": "go"}],
+                llm_chat_fn=_make_llm_chat_fn(fake),
+                execute_tool_fn=execute_tool,
+                tools=None,
+                reasoning_summary_fn=summarize,
+            )
+        )
+
+        assert calls == ["same reasoning"]
+        assert capsys.readouterr().out.count("Cached summary.") == 2
+
+    def test_empty_think_tags_and_tool_artifacts_are_stripped(self, capsys):
+        fake = _ScriptedLLM(
+            [
+                (
+                    "read",
+                    {"path": "a.py"},
+                    "<think></think><think></think></arg_value>"
+                    "<think></think></think>",
+                ),
+                "done",
+            ]
+        )
+        calls = []
+
+        async def summarize(reasoning, visible):
+            calls.append(reasoning)
+            return "should not be used"
+
+        async def execute_tool(name, args):
+            return "content"
+
+        runner = ToolLoopRunner(max_iterations=3, display_mode="quiet")
+        asyncio.run(
+            runner.run(
+                messages=[{"role": "user", "content": "go"}],
+                llm_chat_fn=_make_llm_chat_fn(fake),
+                execute_tool_fn=execute_tool,
+                tools=None,
+                reasoning_summary_fn=summarize,
+            )
+        )
+
+        out = capsys.readouterr().out
+        assert "<think>" not in out
+        assert "</arg_value>" not in out
+        assert calls == []
+
+    def test_text_without_reasoning_never_calls_summarizer(self, capsys):
+        fake = _ScriptedLLM(
+            [
+                ("read", {"path": "a.py"}, "Plain narration."),
+                "done",
+            ]
+        )
+        calls = []
+
+        async def summarize(reasoning, visible):
+            calls.append(reasoning)
+            return "should not be used"
+
+        async def execute_tool(name, args):
+            return "content"
+
+        runner = ToolLoopRunner(max_iterations=3, display_mode="quiet")
+        asyncio.run(
+            runner.run(
+                messages=[{"role": "user", "content": "go"}],
+                llm_chat_fn=_make_llm_chat_fn(fake),
+                execute_tool_fn=execute_tool,
+                tools=None,
+                reasoning_summary_fn=summarize,
+            )
+        )
+
+        assert calls == []
+        assert "Plain narration." in capsys.readouterr().out

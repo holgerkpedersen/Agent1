@@ -25,6 +25,7 @@ from agent_core.colors import gray, green, magenta, red, yellow
 from agent_core.config import AgentDisplayMode
 from agent_core.history_compaction import _trim_chat_history
 from agent_core.llm.context_budget import provider_context_limit
+from agent_core.llm.provider import is_provider_error
 from agent_core.llm.tool_reply import parse_tool_reply
 from agent_core.modes import filter_tool_schemas
 from agent_core.run_utils import (
@@ -40,6 +41,15 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from agent_core.llm.tool_loop import ToolLoopRunner
 
 logger = logging.getLogger(__name__)
+
+_SUMMARY_SYSTEM = (
+    "You summarize an AI assistant's hidden chain-of-thought for a terminal "
+    "UI. Return exactly one short sentence (at most 20 words), in the same "
+    "language as the reasoning. Do not use tags, quotes, or preamble. "
+    "Capture what the assistant is doing and why, not every detail."
+)
+_SUMMARY_USER = "Visible narration:\n{visible}\n\nHidden reasoning:\n{reasoning}"
+_SUMMARY_INPUT_CAP = 12_000
 
 
 def _agent_mod() -> Any:
@@ -91,6 +101,25 @@ async def _run_chained_tool_loop(
             raw, msgs, repair_arguments=mod._repair_tool_arguments
         )
 
+    async def summarize_reasoning(reasoning: str, visible: str) -> str:
+        """One extra LLM call to condense leaked ``<think>`` reasoning."""
+        payload = _SUMMARY_USER.format(
+            visible=visible[:2_000],
+            reasoning=reasoning[:_SUMMARY_INPUT_CAP],
+        )
+        raw = await agent.llm.chat(
+            [
+                {"role": "system", "content": _SUMMARY_SYSTEM},
+                {"role": "user", "content": payload},
+            ],
+            tools=None,
+            max_tokens=192,
+            disable_thinking=True,
+        )
+        if not isinstance(raw, str) or is_provider_error(raw):
+            return ""
+        return raw
+
     final_text = ""
     final_messages = messages
     continuations = 0
@@ -104,6 +133,7 @@ async def _run_chained_tool_loop(
                     meta={
                         "model": agent.model_name,
                         "profile": getattr(agent.llm, "_profile_name", None) or "",
+                        "session": getattr(agent, "session_id", ""),
                     }
                 )
                 if mod.trace_enabled() and mod.TraceWriter is not None
@@ -132,6 +162,7 @@ async def _run_chained_tool_loop(
                 seen_calls=seen_calls,
                 effects_fn=getattr(agent, "_take_trace_effects"),
                 stream_fn=_resolve_stream_fn(agent.llm),
+                reasoning_summary_fn=summarize_reasoning,
             )
             agent._pending_effects = None
             agent._active_trace_writer = None
@@ -313,6 +344,7 @@ def _finish_turn(
         tail = str(getattr(agent, "_last_user_input", "") or "")[-200:]
         record = {
             "ts": datetime.now().isoformat(timespec="seconds"),
+            "session": getattr(agent, "session_id", ""),
             "user_input_tail": tail,
             "mutated_files": list(mutated_files or []),
             "llm_error": bool(llm_error),
@@ -345,6 +377,7 @@ def _finish_turn(
             append_event("turn", "quality", float(_quality))
     except Exception:
         logger.debug("Turn-outcome hooks failed (no-op)", exc_info=True)
+    getattr(agent, "_snapshot_session_meta", lambda **_: None)(turn=True)
     getattr(agent, "_save_chat_history")()
     getattr(agent, "_save_memory")()
     clean = re.sub("</?tool_call>", "", final_text)

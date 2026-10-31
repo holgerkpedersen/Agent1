@@ -67,6 +67,18 @@ def _concrete_llama_provider(provider: Any) -> Any:
     return provider
 
 
+def _live_provider_name(agent: Any) -> str:
+    """Provider actually serving the current model, when the Agent knows it."""
+    getter = getattr(agent, "_session_provider_name", None)
+    if not callable(getter):
+        return ""
+    try:
+        name = getter()
+    except Exception:
+        return ""
+    return name if isinstance(name, str) else ""
+
+
 class ModelCommand(Command):
     """Manage LLM models via the LM Studio REST API."""
 
@@ -381,16 +393,18 @@ class ModelCommand(Command):
         from agent_core.llm.provider import provider_for
         from agent_core.config import load_agent_settings
 
-        try:
-            settings = load_agent_settings()
-            from agent_core.constants import load_model_json
+        active_provider = _live_provider_name(agent)
+        if not active_provider:
+            try:
+                settings = load_agent_settings()
+                from agent_core.constants import load_model_json
 
-            persisted_provider = str(load_model_json().get("provider") or "")
-            active_provider = provider_for(
-                current, settings.llm_provider, persisted_provider
-            )
-        except Exception:
-            active_provider = "lmstudio"
+                persisted_provider = str(load_model_json().get("provider") or "")
+                active_provider = provider_for(
+                    current, settings.llm_provider, persisted_provider
+                )
+            except Exception:
+                active_provider = "lmstudio"
 
         # ---- opencode provider models ----
         # Use the agent's REAL opencode provider when it is one, so `model
@@ -1234,7 +1248,7 @@ class ModelCommand(Command):
 
             settings = load_agent_settings()
             persisted_provider = str(load_model_json().get("provider") or "")
-            current = provider_for(
+            current = _live_provider_name(agent) or provider_for(
                 agent.llm.model_name, settings.llm_provider, persisted_provider
             )
             print(f"  Provider: {current}  (model: {agent.llm.model_name})")
@@ -1419,18 +1433,20 @@ class ModelCommand(Command):
         user's chosen model with the LM Studio-loaded one.
         """
         current = agent.llm.model_name
-        try:
-            from agent_core.config import load_agent_settings
-            from agent_core.constants import load_model_json
-            from agent_core.llm.provider import provider_for
+        active_provider = _live_provider_name(agent)
+        if not active_provider:
+            try:
+                from agent_core.config import load_agent_settings
+                from agent_core.constants import load_model_json
+                from agent_core.llm.provider import provider_for
 
-            settings = load_agent_settings()
-            persisted_provider = str(load_model_json().get("provider") or "")
-            active_provider = provider_for(
-                current, settings.llm_provider, persisted_provider
-            )
-        except Exception:
-            active_provider = "lmstudio"
+                settings = load_agent_settings()
+                persisted_provider = str(load_model_json().get("provider") or "")
+                active_provider = provider_for(
+                    current, settings.llm_provider, persisted_provider
+                )
+            except Exception:
+                active_provider = "lmstudio"
         if active_provider != "lmstudio":
             print(
                 f"  {current} is an {active_provider} model — no LM Studio sync needed."
@@ -1700,7 +1716,7 @@ class ModelCommand(Command):
 
         settings = load_agent_settings()
         persisted_provider = str(load_model_json().get("provider") or "")
-        current_provider = provider_for(
+        current_provider = _live_provider_name(agent) or provider_for(
             agent.llm.model_name, settings.llm_provider, persisted_provider
         )
 

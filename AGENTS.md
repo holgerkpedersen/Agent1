@@ -51,6 +51,29 @@ is being extended to audit its own file effects (self-improvement).
   plan mode blocks it.
 - `agent_core/modes.py` — session modes (`build` default, `plan` read-only);
   enforced at schema level AND in `_execute_tool_call` (decision #077).
+- `agent_core/session/` — named chat sessions. One process-global ACTIVE session
+  (`context.py`) owns conversation, memory, turn-log, model/provider and mode;
+  the workspace (`.decisions.json`, `.issues.json`, source, reports) stays
+  shared. `models.py`/`store.py` define `SessionPaths` and `.sessions/<id>/`;
+  `lock.py` takes an exclusive OS lock per session (same session cannot run in
+  two processes) and reports live peers; `cli.py` handles `--session`,
+  `--new-session`, `--list-sessions`. The `default` session aliases the legacy
+  repo-root `chat_history.json`/`agent_memory.json`/`turn_log.jsonl` (no
+  migration); `current_paths()` falls back to agent module globals so the test
+  suite's monkeypatched paths keep working. Named-session model choices live
+  in the session's `session.json`; `default` keeps global `model.json`/`.env`.
+  `agent_core/commands/session_cmd.py` is the REPL surface
+  (`list/current/info/peers/new/use/rename/delete`; mutating subcommands are
+  blocked in plan mode). `Agent.switch_session` saves the old session, activates
+  the new one, reloads history/memory and applies its model; `turn_loop` stamps
+  the session id into trace and turn-log records. Session provider metadata is
+  taken from the LIVE provider (never `provider_for` with the settings default),
+  and startup repairs old snapshots that mislabeled a local model as
+  `opencode`; otherwise a restart sends e.g. `recursivesi/flint` to the hosted
+  API. `AgentCore.build_transport` returns `client._provider` (the provider
+  already built with the session override) instead of rebuilding from only the
+  model name. Concurrent sessions on one workspace are allowed with a
+  last-write-wins warning, never serialized.
 - `agent_core/commands/speculate_cmd.py` — REPL `speculate`: N independent
   speculative branches run on the thread pool, each carrying the agent's LIVE
   system prompt (`_chat_history[0]` after `_refresh_system_message`) and a
@@ -150,6 +173,11 @@ is being extended to audit its own file effects (self-improvement).
   asked to "read two files" no longer refuses with "I can only read one file
   at a time".
 - `agent_core/llm/tool_loop.py` — `ToolLoopRunner`: NLP tool-call execution loop.
+  QUIET/INTENT display detects `<think>` reasoning leaked into assistant content
+  and replaces it with ONE extra LLM summary call (`reasoning_summary_fn`,
+  wired in `turn_loop.py`); the raw reasoning is never printed. The summary is
+  cached per reasoning text, and an empty/error summary falls back to the
+  visible narration (or the tool-purpose phrase) rather than a truncated dump.
 - `agent_core/llm/lemonade_provider.py` — first-class AMD Lemonade (NPU)
   provider. Lemonade is AMD's OpenAI-compatible local server that runs LLMs on
   the Ryzen AI XDNA NPU (FastFlowLM / Ryzen AI LLM) or the iGPU; the agent talks

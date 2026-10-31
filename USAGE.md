@@ -23,9 +23,42 @@ Run: `python agent.py`
 | `optimize <file>`            | Find speed/memory/quality issues    |
 | `perf`                       | Command performance dashboard       |
 | `speculate "question"`       | Speculative branches, judge-scored, COMMIT/REFUSE |
+| `session <subcommand>`       | Manage isolated chat sessions       |
 | `quit` / `exit` / `q`        | Exit the REPL                       |
 
-Any text not matching a command is sent to the LLM as **natural language** with full conversation history. The conversation **persists across sessions** in `chat_history.json` (project root, git-ignored), so a new REPL run continues where the last one left off — use `clear` to reset it. The agent uses **native tool calling** — it receives schemas for `search`, `read`, `list_files`, `write`, `edit`, `run`, `git`, `diff`, `tests`, `fix`, and `analyze`, and must call a tool to act:
+Any text not matching a command is sent to the LLM as **natural language** with full conversation history. The conversation **persists across sessions** in `chat_history.json` (project root, git-ignored), so a new REPL run continues where the last one left off — use `clear` to reset it.
+
+### Named sessions
+
+A session isolates conversation history, agent memory, turn log, model/provider
+choice and session mode. The repository files the agent reads and writes
+(`.decisions.json`, `.issues.json`, reports, source) stay shared: two sessions on
+the same workspace see the same code, and a write in one is immediately visible
+to the other (last write wins; Agent1 prints a warning when another live session
+shares the workspace).
+
+```
+python agent.py --session feature-auth      # start or resume a named session
+python agent.py --new-session feature-auth  # create it explicitly (fails if it exists)
+python agent.py --list-sessions             # list known sessions and live peers
+python agent.py --session other             # switch at startup
+
+> session                    show the active session
+> session new scratch        create and switch to a new session
+> session use feature-auth   save the current session and switch to it
+> session peers              show other live Agent1 processes on this workspace
+> session rename old new     rename a non-active session
+> session delete scratch     delete a non-active, unlocked session
+```
+
+The legacy repo-root `chat_history.json`, `agent_memory.json` and
+`turn_log.jsonl` are the `default` session, so existing installations need no
+migration. Named sessions live under `.sessions/<id>/` (git-ignored). A named
+session remembers its own model and provider in its `session.json`; `default`
+keeps the historical global `model.json` / `.env` behavior. `clear` only clears
+the active session. The `session` command is read-only in plan mode except for
+`list`, `current`, `info` and `peers`. A session holds an exclusive lock, so
+the same session cannot be opened by two processes at once. The agent uses **native tool calling** — it receives schemas for `search`, `read`, `list_files`, `write`, `edit`, `run`, `git`, `diff`, `tests`, `fix`, and `analyze`, and must call a tool to act:
 
 ```
 > Make a brainstorm on this repo

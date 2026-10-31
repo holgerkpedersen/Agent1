@@ -154,17 +154,49 @@ def _build_dashboard(collector: "MetricsCollector", port: int) -> tuple[Any, Any
     return server_holder, alert_system
 
 
+def _dashboard_port_is_explicit() -> bool:
+    """True when the user passed ``--port`` (disable automatic fallback)."""
+    argv = sys.argv[1:]
+    return any(a == "--port" or a.startswith("--port=") for a in argv)
+
+
 def start_dashboard_thread(port: int = 8081) -> Optional["ThreadingHTTPServer"]:
-    """Serve the TTTHEME dashboard on a daemon thread from this process."""
-    server_holder, alert_system = _build_dashboard(get_metrics_collector(), port)
-    httpd = cast(
-        "ThreadingHTTPServer",
-        server_holder.start(
-            alert_rules=alert_system.list_rules(),
-            evaluate_alerts=alert_system.evaluate,
-            refresh=server_holder.get_refresh(),
-        ),
+    """Serve the TTTHEME dashboard on a daemon thread from this process.
+
+    When the port came from the default (no explicit ``--port``) and 8081 is
+    already taken by another Agent1 instance, try the next ports so two
+    side-by-side sessions can each run a dashboard.
+    """
+    candidates = (
+        [port]
+        if _dashboard_port_is_explicit()
+        else list(range(port, port + 20))
     )
+    last_error: OSError | None = None
+    httpd: Optional["ThreadingHTTPServer"] = None
+    actual_port = port
+    for candidate in candidates:
+        server_holder, alert_system = _build_dashboard(
+            get_metrics_collector(), candidate
+        )
+        try:
+            httpd = cast(
+                "ThreadingHTTPServer",
+                server_holder.start(
+                    alert_rules=alert_system.list_rules(),
+                    evaluate_alerts=alert_system.evaluate,
+                    refresh=server_holder.get_refresh(),
+                ),
+            )
+        except OSError as exc:
+            last_error = exc
+            continue
+        actual_port = candidate
+        break
+    if httpd is None:
+        if last_error is not None:
+            raise last_error
+        return None
 
     def _serve() -> None:
         try:
@@ -173,7 +205,7 @@ def start_dashboard_thread(port: int = 8081) -> Optional["ThreadingHTTPServer"]:
             logger.warning("Silenced exception in start_dashboard_thread")
 
     threading.Thread(target=_serve, name="agent1-dashboard", daemon=True).start()
-    print(f"  Dashboard: http://localhost:{port}  (Ctrl+C to stop)")
+    print(f"  Dashboard: http://localhost:{actual_port}  (Ctrl+C to stop)")
     return httpd
 
 

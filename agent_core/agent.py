@@ -316,6 +316,13 @@ from agent_core.memory.persistence import (
     _save_memory,
     _record_llm_experience,
 )
+from agent_core.modes import MODE_PLAN
+from agent_core.session.context import (
+    active_session,
+    current_paths,
+    current_session_id,
+    update_active_meta,
+)
 
 
 if TYPE_CHECKING:
@@ -442,7 +449,15 @@ class AgentCore:
         self.workspace = os.path.abspath(
             _agent_mod().to_windows_path(workspace or self.DEFAULT_WORKSPACE)
         )
-        self.model_name = _agent_mod().resolve_model(model_name)
+        self._session_meta = active_session()
+        self._session_id = current_session_id()
+        self._session_paths = current_paths()
+        session_model = (
+            model_name
+            or (self._session_meta.model if self._session_meta is not None else "")
+            or None
+        )
+        self.model_name = _agent_mod().resolve_model(session_model)
         self._semantic_index: dict[str, set[int]] = defaultdict(set)
         self._files_read: set[str] = set()
         self._file_mtimes: dict[str, float] = {}
@@ -470,10 +485,23 @@ class AgentCore:
         self._subagents: "dict[str, SubAgent]" = {}
         self._delegate_counter: int = 0
         self._nlp_workspace: str | None = None
+        self._shared_workspace_warned: bool = False
         self.mode: str = MODE_BUILD
+        if (
+            self._session_meta is not None
+            and self._session_meta.mode in (MODE_BUILD, MODE_PLAN)
+        ):
+            self.mode = self._session_meta.mode
         self._load_memory()
         self._ensure_original_goal()
-        self.llm = _agent_mod().LLMClient(model_name=self.model_name)
+        _session_provider = self._validated_session_provider(
+            self.model_name,
+            self._session_meta.provider if self._session_meta is not None else "",
+        )
+        _client_kwargs: dict[str, Any] = {"model_name": self.model_name}
+        if _session_provider:
+            _client_kwargs["provider_override"] = _session_provider
+        self.llm = _agent_mod().LLMClient(**_client_kwargs)
         try:
             _seamed = self.build_transport(self.llm)
             if _seamed is not self.llm._provider:
@@ -524,20 +552,15 @@ class AgentCore:
         """Build the transport (provider) that drives this agent's LLM client.
 
         Public construction seam: returns the provider object that becomes
-        ``client._provider`` — the object whose ``chat(messages, tools, ...)``
+        ``client._provider`` - the object whose ``chat(messages, tools, ...)``
         answers every turn of a tool loop.  Callers may patch or replace it
         (e.g. agentic_bench injects offline fake transports in tests) without
-        touching private attributes; the default builds the production provider
-        from settings and the resolved model name.
+        touching private attributes.  The default returns the provider already
+        built by ``LLMClient`` so an explicit session/provider override is not
+        discarded; rebuilding from only the model name silently sent local
+        models to the settings-default cloud provider.
         """
-        from agent_core.config import load_agent_settings
-        from agent_core.llm.provider import build_provider
-
-        try:
-            settings = load_agent_settings()
-        except Exception:
-            settings = None
-        return build_provider(settings, client.model_name)
+        return client._provider
 
     def spawn_subagent(
         self, name: str, workspace: str | None = None, role: str | None = None
@@ -655,6 +678,10 @@ class AgentCore:
         rejection = check_tool_allowed(name, self.mode)
         if rejection:
             return rejection
+        from agent_core.modes import PLAN_MODE_TOOLS
+
+        if name not in PLAN_MODE_TOOLS:
+            self._warn_shared_workspace_once()
         handler = self._nlp_tool_handlers().get(name)
         if handler is None:
             return (
@@ -1196,6 +1223,192 @@ class AgentCore:
 
     def clear_history(self) -> None:
         clear_history(self)
+
+    @property
+    def session_id(self) -> str:
+        """The active session id (``default`` when the layer is not engaged)."""
+        return current_session_id()
+
+    @staticmethod
+    def _validated_session_provider(model_name: str, provider: str) -> str:
+        """Reject a stale/corrupt session provider that cannot serve *model_name*.
+
+        Older snapshots recorded the settings default (``opencode``) for a bare
+        local model, so the next startup sent the local model to the hosted API
+        and the failover chain answered with the wrong provider.  Local models
+        may be LM Studio or the llama-server backend (``llama/...`` - llama.cpp
+        and Strata share that route and port 8080), so derive the intended
+        provider from the model routing table instead of assuming LM Studio.
+        Only an ``opencode`` override that contradicts a known non-opencode
+        route is repaired.
+        """
+        if provider == "opencode":
+            from agent_core.llm.provider import provider_for
+
+            routed = provider_for(model_name, "lmstudio", None)
+            if routed != "opencode":
+                return routed
+        return provider
+
+    def _session_provider_name(self) -> str:
+        """The provider actually serving the current model.
+
+        Do NOT ask ``provider_for`` with the settings default: a bare local
+        model id has no routing prefix, so that would record the default
+        (often ``opencode``) and a later session restart would send the local
+        model to the hosted API.  The live
+        provider object is authoritative; for a failover wrapper, use the
+        first (primary) provider or the one carrying the selected model.
+        """
+        try:
+            from agent_core.llm.provider import _provider_label
+
+            provider = getattr(self.llm, "_provider", None)
+            if provider is None:
+                return ""
+            wrapped = getattr(provider, "providers", None)
+            if wrapped:
+                for item in wrapped:
+                    if getattr(item, "model_name", None) == self.model_name:
+                        return _provider_label(item)
+                return _provider_label(wrapped[0])
+            return _provider_label(provider)
+        except Exception:
+            return ""
+
+    def _snapshot_session_meta(self, *, turn: bool = False) -> None:
+        """Persist the live model/mode into the active session's metadata."""
+        if self._session_meta is None:
+            return
+        try:
+            turns = self._session_meta.turn_count + (1 if turn else 0)
+            if self._session_id == "default":
+                update_active_meta(
+                    mode=self.mode, workspace=self.workspace, turn_count=turns
+                )
+            else:
+                update_active_meta(
+                    model=self.model_name,
+                    provider=self._session_provider_name(),
+                    mode=self.mode,
+                    workspace=self.workspace,
+                    turn_count=turns,
+                )
+            self._session_meta = active_session()
+        except Exception:
+            logger.debug("Could not snapshot session metadata", exc_info=True)
+
+    def _warn_shared_workspace_once(self) -> None:
+        """Warn once when another live session shares this workspace."""
+        if self._shared_workspace_warned:
+            return
+        self._shared_workspace_warned = True
+        try:
+            from agent_core.session.context import peers
+
+            found = peers()
+            if not found:
+                return
+            names = ", ".join(str(p.get("session") or "?") for p in found)
+            _yellow = _agent_mod().yellow
+            print(
+                _yellow(
+                    f"  [session] {len(found)} other live session(s) on this "
+                    f"workspace: {names}. File edits are shared; last write wins."
+                )
+            )
+        except Exception:
+            logger.debug("Peer-session warning failed", exc_info=True)
+
+    def _apply_session_model(self, model_name: str, provider: str = "") -> None:
+        """Rebuild the LLM provider for a session's recorded model."""
+        if not model_name:
+            return
+        from agent_core.config import load_agent_settings
+        from agent_core.llm.provider import build_provider
+
+        settings = load_agent_settings()
+        self.llm._provider = build_provider(
+            settings, model_name, provider_override=provider or None
+        )
+        self.llm.model_name = model_name
+        self.model_name = model_name
+
+    def _reset_session_state(self) -> None:
+        """Clear all in-memory conversation/memory state before a reload."""
+        self._history = []
+        if hasattr(self, "_conversation"):
+            self._conversation.clear()
+        self._turn_start_index = 0
+        self._turn_run_id = None
+        self._read_streak = 0
+        self._delegating = False
+        self._active_subagents.clear()
+        self._subagents.clear()
+        self._delegate_counter = 0
+        self._pending_effects = None
+        self._original_goal = ""
+        self._goal_from_restore = False
+        self._prior_chat_history = []
+        self._files_read.clear()
+        self._file_mtimes.clear()
+        self._knowledge_graph.clear()
+        self._working_memory.clear()
+        self._semantic_index.clear()
+
+    def switch_session(self, session_id: str) -> "Any":
+        """Persist the current session and resume another one in place."""
+        from agent_core.session import (
+            activate_session,
+            active_session,
+            current_paths,
+            current_session_id,
+            load_meta,
+            slugify,
+        )
+        from agent_core.line_editing import save_history as _save_line_history
+
+        target = (
+            session_id if session_id == "default" else slugify(session_id)
+        )
+        if self._session_meta is not None and target == current_session_id():
+            return active_session()
+
+        self._snapshot_session_meta()
+        self._save_chat_history()
+        self._save_memory()
+        try:
+            from agent_core.llm.learning import save_weights
+
+            save_weights()
+        except Exception:
+            logger.debug("Could not save meta-policy weights", exc_info=True)
+        try:
+            _save_line_history(workspace=self.workspace)
+        except Exception:
+            logger.debug("Could not save line history", exc_info=True)
+
+        meta = activate_session(target, workspace=self.workspace)
+        self._session_meta = meta
+        self._session_id = meta.id
+        self._session_paths = current_paths()
+        self._reset_session_state()
+        self._chat_history = self._load_chat_history()
+        self._turn_start_index = len(self._chat_history)
+        self._load_memory()
+        self._ensure_original_goal()
+        if meta.mode in (MODE_BUILD, MODE_PLAN):
+            self.mode = meta.mode
+        if meta.model:
+            self._apply_session_model(
+                meta.model,
+                self._validated_session_provider(meta.model, meta.provider),
+            )
+        else:
+            from agent_core.constants import resolve_model
+
+            self._apply_session_model(resolve_model(None))
+        return load_meta(target)
 
     def _decision_constraints_block(self) -> str:
         return _decision_constraints_block(self)

@@ -90,6 +90,26 @@ class TestStrictScannerBlocksNonAllowListedBinaries:
     def test_blocked(self, cmd: str) -> None:
         assert find_run_shell_pattern(cmd) is not None, cmd
 
+    @pytest.mark.parametrize(
+        ("cmd", "module"),
+        [
+            ("ruff check agent_core", "ruff"),
+            ("mypy agent.py", "mypy"),
+            ("black .", "black"),
+        ],
+    )
+    def test_python_tool_binary_hints_at_module_form(
+        self, cmd: str, module: str
+    ) -> None:
+        reason = find_run_shell_pattern(cmd)
+        assert reason is not None, cmd
+        assert f"python -m {module}" in reason
+
+    def test_package_manager_binary_gets_no_module_hint(self) -> None:
+        reason = find_run_shell_pattern("pip install foo")
+        assert reason is not None
+        assert "python -m pip" not in reason
+
 
 class TestStrictScannerKeepsNormalWork:
     """The agent's real command shapes must still run — this is the

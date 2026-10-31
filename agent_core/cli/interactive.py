@@ -238,6 +238,9 @@ def _register_commands(registry: CommandRegistry) -> None:
     from agent_core.commands.help_cmd import HelpCommand
 
     registry.register(HelpCommand())
+    from agent_core.commands.session_cmd import SessionCommand
+
+    registry.register(SessionCommand())
 
 
 def _build_registry() -> CommandRegistry:
@@ -245,6 +248,18 @@ def _build_registry() -> CommandRegistry:
     registry = CommandRegistry()
     _register_commands(registry)
     return registry
+
+
+def _persist_session_state(agent: "Agent") -> None:
+    """Persist the active session's metadata/history on every exit path."""
+    try:
+        getattr(agent, "_snapshot_session_meta", lambda **_: None)()
+    except Exception:
+        logger.debug("Session metadata snapshot failed", exc_info=True)
+    try:
+        agent._save_chat_history()
+    except Exception:
+        logger.debug("Chat history save failed", exc_info=True)
 
 
 def _warn_uncommitted(agent: "Agent") -> None:
@@ -310,6 +325,26 @@ async def run_interactive() -> None:
     print(banner)
     print(blue("Agent Interactive Mode with LM Studio"))
     print(f"Workspace: {cyan(Agent.DEFAULT_WORKSPACE)}")
+    print(f"Session:   {cyan(agent.session_id)}")
+    try:
+        from agent_core.session.context import peers
+
+        _peers = peers()
+    except Exception:
+        _peers = []
+    if _peers:
+        names = ", ".join(str(p.get("session") or "?") for p in _peers)
+        print(
+            yellow(
+                f"[session] {len(_peers)} other live session(s) on this "
+                f"workspace: {names}"
+            )
+        )
+        print(
+            yellow(
+                "[session] File edits are shared across sessions; last write wins."
+            )
+        )
     model_label = agent.llm.model_name
     profile_part = (
         f"  |  Profile: {agent.llm._profile_name}" if agent.llm._profile_name else ""
@@ -359,6 +394,7 @@ async def run_interactive() -> None:
             print(_build_chat_prompt(agent, branch, datetime.now()))
             user_input = _interruptible_input(CHAT_INPUT_PROMPT)
             if user_input is None:
+                _persist_session_state(agent)
                 agent._save_memory()
                 save_meta_policy_weights()
                 _save_line_history(workspace=getattr(agent, "workspace", None))
@@ -367,6 +403,7 @@ async def run_interactive() -> None:
             if not user_input:
                 continue
             if user_input.lower() in ["quit", "exit", "q"]:
+                _persist_session_state(agent)
                 agent._save_memory()
                 save_meta_policy_weights()
                 _save_line_history(workspace=getattr(agent, "workspace", None))
@@ -416,6 +453,7 @@ async def run_interactive() -> None:
         except EOFError:
             if not sys.stdin.isatty():
                 print(yellow("\n[stdin] Input stream ended — shutting down."))
+            _persist_session_state(agent)
             agent._save_memory()
             save_meta_policy_weights()
             _save_line_history(workspace=getattr(agent, "workspace", None))
@@ -430,9 +468,20 @@ async def main() -> None:
     if "--serve" in sys.argv:
         mod.run_dashboard_server()
         return
-    if "--dashboard" in sys.argv:
-        mod.start_dashboard_thread(mod._dashboard_port())
-    await mod.run_interactive()
+    from agent_core.session.cli import parse_and_activate
+    from agent_core.session.context import deactivate_session
+
+    selection = parse_and_activate(
+        sys.argv[1:], workspace=mod.Agent.DEFAULT_WORKSPACE
+    )
+    if selection.should_exit:
+        return
+    try:
+        if "--dashboard" in sys.argv:
+            mod.start_dashboard_thread(mod._dashboard_port())
+        await mod.run_interactive()
+    finally:
+        deactivate_session()
 
 
 def cli() -> None:

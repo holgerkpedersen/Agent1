@@ -446,6 +446,15 @@ def persist_model_choice(model_name: str, provider: str | None = None) -> None:
     from agent_core.llm.provider import provider_for
 
     effective_provider = provider or provider_for(model_name)
+    try:
+        from agent_core.session.context import active_session, update_active_meta
+
+        meta = active_session()
+        if meta is not None and meta.id != "default":
+            update_active_meta(model=model_name, provider=effective_provider)
+            return
+    except Exception:
+        logger.debug("Session-aware model persistence unavailable", exc_info=True)
     data = load_model_json()
     data["model"] = model_name
     data["provider"] = effective_provider

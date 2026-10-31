@@ -41,6 +41,7 @@ class LLMClient:
         self,
         model_name: str | None = None,
         api_key: str | None = None,
+        provider_override: str | None = None,
     ) -> None:
         from agent_core.config import load_agent_settings
         from agent_core.constants import resolve_model
@@ -52,7 +53,12 @@ class LLMClient:
             settings = load_agent_settings()
         except Exception:
             settings = None
-        self._provider: LLMProvider = build_provider(settings, self._model_name)
+        if provider_override:
+            self._provider: LLMProvider = build_provider(
+                settings, self._model_name, provider_override=provider_override
+            )
+        else:
+            self._provider = build_provider(settings, self._model_name)
         self._profile_name: str | None = None
         #: True once the user pins a profile this session (``model profile
         #: use``) or one is restored from model.json — suppresses the

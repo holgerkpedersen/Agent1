@@ -48,6 +48,7 @@ class ModeCommand(Command):
         requested = args[0].strip().lower()
         if requested in ("plan", "build"):
             agent.set_mode(requested)
+            getattr(agent, "_snapshot_session_meta", lambda: None)()
             if requested == "plan":
                 print(
                     "Mode set to PLAN — read-only. Mutating tools "

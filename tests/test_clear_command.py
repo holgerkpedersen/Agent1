@@ -61,6 +61,8 @@ async def test_clear_stats_does_not_mutate_state(capsys) -> None:
     assert "Memory state:" in out
     assert "chat history:       3 messages" in out
     assert "stale files:        1 (changed externally)" in out
+    assert "knowledge graph:" in out
+    assert "0 sections" in out
     assert agent.clear_catches == 0, "stats must not clear memory"
 
 

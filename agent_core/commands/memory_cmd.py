@@ -50,9 +50,9 @@ def _memory_db_path() -> str:
     ``AGENT_MEMORY_JSON_PATH`` global at call time, so reading it the same way
     keeps the two in lockstep (tests redirect that global to a temp dir).
     """
-    import agent as agent_module
+    from agent_core.session.context import current_paths
 
-    return str(agent_module.AGENT_MEMORY_JSON_PATH).replace(".json", ".db")
+    return current_paths().memory_db_path
 
 
 def _empty_summary() -> dict[str, Any]:

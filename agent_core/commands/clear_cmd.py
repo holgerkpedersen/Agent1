@@ -32,7 +32,7 @@ class ClearCommand(Command):
             print(f"  stale files:        {stats['stale_files']} (changed externally)")
         print(f"  working memory:     {stats['working_memory']} items")
         print(f"  semantic index:     {stats['semantic_index']} terms")
-        print(f"  knowledge graph:    {stats['knowledge_graph']} entries")
+        print(f"  knowledge graph:    {stats['knowledge_graph']} sections")
 
         if stats_only:
             return True

@@ -22,6 +22,7 @@ from agent_core.bootstrap import LOOP_NOTE_TAG_KEY
 from agent_core.colors import yellow
 from agent_core.history_compaction import _project_chat_history, _strip_image_blocks
 from agent_core.json_utils import _read_json_quarantining
+from agent_core.session.context import current_paths
 from agent_core.suppress_log import _suppress_and_log
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -93,11 +94,16 @@ def clear_history(agent: "Agent") -> None:
     agent._knowledge_graph.clear()
     agent._working_memory.clear()
     agent._semantic_index.clear()
+    paths = current_paths()
     try:
-        os.remove(_agent_mod().CHAT_HISTORY_JSON_PATH)
-        os.remove(_agent_mod().AGENT_MEMORY_JSON_PATH)
+        os.remove(paths.chat_history_path)
+        os.remove(paths.agent_memory_path)
     except OSError as e:
         logger.warning("Could not remove persisted state files: %s", e)
+    try:
+        os.remove(paths.prior_history_path)
+    except OSError:
+        pass
     try:
         agent._full_run_gate.reset()
     except Exception:
@@ -112,7 +118,7 @@ def _load_chat_history(agent: "Agent") -> list[dict[str, Any]]:
     instead of forgetting it.  A corrupt file is quarantined (see
     :func:`_read_json_quarantining`) instead of being silently dropped.
     """
-    data = _read_json_quarantining(_agent_mod().CHAT_HISTORY_JSON_PATH, "chat history")
+    data = _read_json_quarantining(current_paths().chat_history_path, "chat history")
     if not isinstance(data, list):
         return []
     messages = [
@@ -155,7 +161,7 @@ def _save_chat_history(agent: "Agent") -> None:
         ensure_ascii=False,
         indent=2,
     )
-    chat_path = _agent_mod().CHAT_HISTORY_JSON_PATH
+    chat_path = current_paths().chat_history_path
     tmp_path = chat_path + ".tmp"
     try:
         with open(tmp_path, "w", encoding="utf-8") as f:
@@ -175,7 +181,7 @@ def _load_memory(agent: "Agent") -> None:
     empty defaults, so the bytes stay inspectable instead of being
     clobbered by the next save.
     """
-    data = _read_json_quarantining(_agent_mod().AGENT_MEMORY_JSON_PATH, "agent memory")
+    data = _read_json_quarantining(current_paths().agent_memory_path, "agent memory")
     if not isinstance(data, dict):
         return
     files = data.get("files_read")
@@ -215,7 +221,7 @@ def _save_memory(agent: "Agent") -> None:
         "history": agent._history,
         "original_goal": agent._original_goal,
     }
-    memory_path = _agent_mod().AGENT_MEMORY_JSON_PATH
+    memory_path = current_paths().agent_memory_path
     tmp_path = memory_path + ".tmp"
     try:
         with open(tmp_path, "w", encoding="utf-8") as f:
@@ -301,7 +307,7 @@ def _record_llm_experience(
         prompt_hash = (
             prompt_sha256(decision_prompt) if decision_prompt is not None else None
         )
-        db_path = _agent_mod().AGENT_MEMORY_JSON_PATH.replace(".json", ".db")
+        db_path = current_paths().memory_db_path
         conn = sqlite3.connect(db_path, timeout=5.0)
         try:
             ensure_attribution_schema(conn)

@@ -3,8 +3,10 @@
 from __future__ import annotations
 import asyncio
 import enum
+import hashlib
 import json
 import os
+import re
 import sys
 import time
 from typing import Any, Awaitable, Callable
@@ -789,6 +791,16 @@ class ToolLoopRunner:
         self.final_answer_streamed: bool = False
         #: Set by :meth:`run`; the optional streaming path for the final answer.
         self._stream_fn: Callable[[list[dict[str, Any]]], Awaitable[str]] | None = None
+        #: Set by :meth:`run`; optional ``(reasoning, visible) -> summary``
+        #: callback used when a model leaks a ``<think>`` block into content.
+        #: The summary replaces the raw reasoning on screen; without a callback
+        #: the visible narration is shown and the reasoning block is dropped.
+        self._reasoning_summary_fn: (
+            Callable[[str, str], Awaitable[str]] | None
+        ) = None
+        #: Cache one summary per reasoning text so retries/repeats do not pay
+        #: the extra LLM call again.
+        self._reasoning_summaries: dict[str, str] = {}
 
     async def run(
         self,
@@ -803,6 +815,9 @@ class ToolLoopRunner:
         trace: TraceSink | None = None,
         effects_fn: Callable[[str, dict[str, Any]], list[str]] | None = None,
         stream_fn: Callable[[list[dict[str, Any]]], Awaitable[str]] | None = None,
+        reasoning_summary_fn: (
+            Callable[[str, str], Awaitable[str]] | None
+        ) = None,
     ) -> tuple[str, list[dict[str, Any]]]:
         """Run conversation with automatic tool calling loop.
 
@@ -831,6 +846,11 @@ class ToolLoopRunner:
                         Fails open: an exception, empty text or ``(no output)``
                         falls back to the blocking call, because a broken stream
                         must never swallow the answer (decision #034).
+            reasoning_summary_fn: Optional async
+                        ``(reasoning, visible_narration) -> summary`` used to
+                        replace a leaked ``<think>`` block on screen.  Without
+                        it the reasoning is dropped and only visible narration
+                        is shown; a failed/empty summary falls back the same way.
 
         Returns:
             Tuple of (final_text, updated_messages)
@@ -843,6 +863,7 @@ class ToolLoopRunner:
         self._trace = self._trace if trace is None else trace
         self._effects_fn = self._effects_fn if effects_fn is None else effects_fn
         self._stream_fn = stream_fn
+        self._reasoning_summary_fn = reasoning_summary_fn
         try:
             return await self._run_traced(
                 messages, llm_chat_fn, execute_tool_fn, tools, seen_calls
@@ -856,6 +877,39 @@ class ToolLoopRunner:
         """Emit one trace event when a sink is attached; never raises."""
         if self._trace is not None:
             self._trace.emit({"kind": kind, "layer": layer, **fields})
+
+    async def _display_narration(self, text: str) -> str:
+        """Replace leaked ``<think>`` reasoning with a short LLM summary.
+
+        Some local models (observed: ``recursivesi/flint``) put their full
+        chain-of-thought inside the assistant *content* as a ``<think>``
+        block.  Printing it in QUIET/INTENT would flood the console with
+        thousands of words per round.  When a ``reasoning_summary_fn`` is
+        wired, one extra LLM call condenses the reasoning; if that call fails
+        or yields nothing, the reasoning is simply dropped and only the
+        visible narration survives.  Text without a reasoning block is
+        returned untouched, so existing display behavior is unchanged.
+        """
+        reasoning, visible = _split_reasoning(text)
+        if not reasoning:
+            # A block made only of empty tags (``<think></think>``) still has
+            # to lose those tags; otherwise QUIET prints the malformed markup.
+            if _THINK_OPEN_RE.search(text) or _TOOL_ARTIFACT_RE.search(text):
+                return visible
+            return text
+        if self._reasoning_summary_fn is not None:
+            key = hashlib.sha256(reasoning.encode("utf-8")).hexdigest()
+            summary = self._reasoning_summaries.get(key)
+            if summary is None:
+                try:
+                    raw = await self._reasoning_summary_fn(reasoning, visible)
+                except Exception:
+                    raw = ""
+                summary = _clean_summary(raw)
+                self._reasoning_summaries[key] = summary
+            if summary:
+                return summary
+        return visible
 
     def _collect_effects(self, tool_name: str, args: dict[str, Any]) -> list[str]:
         """Ask the caller which files this tool call affected.
@@ -1106,14 +1160,16 @@ class ToolLoopRunner:
             #: user can follow the agent's plan round by round.  ``prev_result``
             #: is the proof from the previous step; each planned call's ``why:``
             #: line ties the next action back to that proof.
-            if self.display_mode == DisplayMode.INTENT:
-                _print_intent(iteration, prev_text, tool_calls, prev_result)
-            elif self.display_mode == DisplayMode.QUIET:
-                # QUIET shows the OVERALL intent of the round — a single
-                # compact line per planned call (narration + tool names).
-                # No arguments, no [tool]/[result] echoes: the calls and
-                # their results stay invisible.
-                _print_intent_quiet(iteration, prev_text, tool_calls)
+            if self.display_mode in (DisplayMode.INTENT, DisplayMode.QUIET):
+                display_text = await self._display_narration(prev_text)
+                if self.display_mode == DisplayMode.INTENT:
+                    _print_intent(iteration, display_text, tool_calls, prev_result)
+                else:
+                    # QUIET shows the OVERALL intent of the round - a single
+                    # compact line per planned call (narration + tool names).
+                    # No arguments, no [tool]/[result] echoes: the calls and
+                    # their results stay invisible.
+                    _print_intent_quiet(iteration, display_text, tool_calls)
 
             # Seed this batch's duplicate detection with the FULL key set of
             # the previous batch: any key re-issued in consecutive batches is
@@ -1826,11 +1882,13 @@ def _print_intent(
     """INTENT display: print one block per LLM round before its tool calls run.
 
     The block is HUMAN LANGUAGE ONLY: the model's own narration (printed in
-    FULL — never truncated), a one-line ``proof:`` of what the previous
-    result verified, and one plain-language ``why:`` sentence per planned
-    action.  Tool names, argument payloads and raw commands never reach the
-    screen — the end user sees WHAT the agent intends to do and WHY, never
-    which tool implements it.  Results are summarized (not dumped) so intent
+    FULL — never truncated, unless a ``<think>`` reasoning block was leaked;
+    that is summarized before this function sees the text), a one-line
+    ``proof:`` of what the previous result verified, and one plain-language
+    ``why:`` sentence per planned action.  Tool names, argument payloads and
+    raw commands never reach the screen — the end user sees WHAT the agent
+    intends to do and WHY, never which tool implements it.  Results are
+    summarized (not dumped) so intent
     stays more visible than output.
     """
     print(f"  {magenta(f'[intent {iteration + 1}]')}")
@@ -1915,6 +1973,55 @@ def _quiet_safe_args(name: str, args: dict[str, Any]) -> dict[str, Any]:
     stays.
     """
     return {k: v for k, v in args.items() if k not in _COMMAND_KEYS}
+
+
+_THINK_BLOCK_RE = re.compile(
+    r"<think(?:ing)?\b[^>]*>.*?</think(?:ing)?\s*>",
+    re.IGNORECASE | re.DOTALL,
+)
+_THINK_OPEN_RE = re.compile(r"<think(?:ing)?\b[^>]*>", re.IGNORECASE)
+_THINK_CLOSE_RE = re.compile(r"</think(?:ing)?\s*>", re.IGNORECASE)
+_TOOL_ARTIFACT_RE = re.compile(
+    r"</?(?:arg_value|parameter|function|tool_call|tool_calls|invoke)\b[^>]*>",
+    re.IGNORECASE,
+)
+
+
+def _split_reasoning(text: str) -> tuple[str, str]:
+    """Split ``<think>`` reasoning from visible narration.
+
+    Returns ``(reasoning, visible)``.  Handles multiple closed blocks and an
+    unterminated block (a truncated stream), which is treated as reasoning to
+    the end of the text.  Text without a think tag returns ``("", text)``.
+    """
+    if not text:
+        return "", ""
+    blocks = _THINK_BLOCK_RE.findall(text)
+    visible = _THINK_BLOCK_RE.sub(" ", text)
+    open_match = _THINK_OPEN_RE.search(visible)
+    if open_match is not None:
+        tail = visible[open_match.start() :]
+        tail = _THINK_CLOSE_RE.sub(" ", tail)
+        blocks.append(tail)
+        visible = visible[: open_match.start()]
+    reasoning = "\n".join(
+        _THINK_CLOSE_RE.sub("", _THINK_OPEN_RE.sub("", block)).strip()
+        for block in blocks
+        if block.strip()
+    )
+    visible = _TOOL_ARTIFACT_RE.sub(" ", visible)
+    return reasoning.strip(), " ".join(visible.split()).strip()
+
+
+def _clean_summary(raw: Any) -> str:
+    """Normalize a summarizer reply; never echo reasoning tags."""
+    if not isinstance(raw, str):
+        return ""
+    text = _THINK_BLOCK_RE.sub(" ", raw)
+    text = _THINK_OPEN_RE.sub(" ", text)
+    text = _THINK_CLOSE_RE.sub(" ", text)
+    text = _TOOL_ARTIFACT_RE.sub(" ", text)
+    return " ".join(text.split()).strip()
 
 
 def _narration_text(content: Any) -> str:

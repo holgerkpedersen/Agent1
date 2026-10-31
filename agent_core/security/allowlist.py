@@ -553,7 +553,10 @@ def find_run_shell_pattern(cmd_str: str) -> str | None:
         # binary; `./prog` was already refused by the Invoke- patterns.
         binary = _basename(invocation)
         if not is_run_shell_allowed(binary):
-            return f"command '{binary}' is not in the run allow-list"
+            return (
+                f"command '{binary}' is not in the run allow-list"
+                + _module_invocation_hint(binary)
+            )
 
     # 3. Command substitution (same quoted-blanked copy as check 2).
     if "$(" in stripped:
@@ -616,6 +619,24 @@ def _package_manager_reason(module: str) -> str:
         f"package manager via -m ({module}) "
         "(supply chain: runs the package's build code)"
     )
+
+
+def _module_invocation_hint(binary: str) -> str:
+    """Actionable alternative for a bare Python tool binary (e.g. ``ruff``).
+
+    ``ruff``, ``mypy``, ``black`` and friends are not binaries in the strict
+    allow-list, but their ``python -m <name>`` form is explicitly allowed.
+    Telling the model the exact replacement in the refusal stops it from
+    retrying the same bare command or guessing at another spelling.
+    """
+    name = _normalize(binary)
+    if (
+        name in RUN_SHELL_MODULE_ALLOWLIST
+        and not name.endswith(".*")
+        and name not in RUN_SHELL_PACKAGE_MANAGERS
+    ):
+        return f" (use 'python -m {name} ...' instead)"
+    return ""
 
 
 def _module_is_allowed(module: str) -> bool:

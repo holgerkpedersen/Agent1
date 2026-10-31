@@ -245,6 +245,14 @@ def _isolate_from_real_tree_and_beacons(
     import harnessfix.issues as issues_module
 
     monkeypatch.setattr(issues_module, "ISSUES_PATH", issues_ledger_sandbox)
+    # Session layer: reset any active session from a previous test, point the
+    # session root at this test's temp dir, and release the lock on teardown.
+    import agent_core.session.context as session_context
+
+    session_context.reset()
+    monkeypatch.setenv("AGENT_SESSION_ROOT", str(tmp_path / "sessions"))
+    yield
+    session_context.reset()
 
 
 #: The DEVELOPER's persisted model state — never the test run's.  A test that

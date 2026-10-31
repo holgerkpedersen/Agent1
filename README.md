@@ -229,6 +229,25 @@ Plan mode — read-only tools active (search, read, list_files, diff, web_search
 Build mode — full toolset restored.
 ```
 
+### Named sessions
+
+Run several Agent1 instances side by side without sharing conversation or
+memory:
+
+```bash
+python agent.py --session feature-auth
+python agent.py --session bugfix-123
+python agent.py --list-sessions
+```
+
+Each session keeps its own chat history, memory, turn log, model/provider and
+mode under `.sessions/<id>/` (git-ignored). The workspace itself stays shared:
+both sessions see the same files and edits, with a warning when another live
+session is using the workspace. The repo-root state files remain the `default`
+session, so existing setups need no migration. Inside the REPL use
+`session list`, `session new <id>`, `session use <id>`, `session peers` and
+`session info`.
+
 ---
 
 ## Web Dashboard

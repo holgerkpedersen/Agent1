@@ -2701,5 +2701,95 @@
     "resolved_by": null,
     "status": "active",
     "category": "correctness"
+  },
+  {
+    "id": "126",
+    "date": "2026-10-31T00:00:00+00:00",
+    "title": "Named sessions isolate conversation state on a shared workspace",
+    "context": "Agent1 had exactly one conversation: chat_history.json, agent_memory.json, turn_log.jsonl and the selected model lived at the repo root. Two REPL processes therefore overwrote each other's history and model choice. The user wants several Agent1 instances running side by side on the same repository without sharing conversation or memory.",
+    "decision": "Introduce a process-global ACTIVE session (agent_core/session/context.py). A session owns conversation history, agent memory, turn log, model/provider and mode, stored under .sessions/<id>/; repository knowledge (.decisions.json, .issues.json, .habits.json, reports, source) stays shared. The 'default' session aliases the historical repo-root files, so no migration is performed and legacy behavior is preserved. current_paths() falls back to the agent module globals that the test suite monkeypatches. Each session takes an exclusive OS lock, so the same session cannot run in two processes; different sessions on one workspace are allowed and print a last-write-wins warning rather than blocking mutating tools. Named-session model choices live in session.json; 'default' keeps model.json/.env. The REPL exposes session list|current|info|peers|new|use|rename|delete, with mutating subcommands blocked in plan mode; startup supports --session, --new-session and --list-sessions.",
+    "rationale": "Conversation state must be isolated or parallel instances corrupt each other's context, but duplicating repository state would make decisions and issues diverge between sessions. The legacy alias avoids a migration and keeps every existing test and user setup working. Last-write-wins plus a warning was chosen over serializing mutating tools because the workspace is intentionally shared and git checkpoints remain the recovery mechanism; blocking would make parallel sessions unusable. File-level session locks prevent the one genuinely unsafe case (two processes driving the same conversation) while allowing the intended parallel use.",
+    "affected_files": [
+      "agent_core/session/",
+      "agent_core/commands/session_cmd.py",
+      "agent_core/agent.py",
+      "agent_core/memory/persistence.py",
+      "agent_core/run_utils.py",
+      "agent_core/llm/learning.py",
+      "agent_core/llm/client.py",
+      "agent_core/prompts/context_blocks.py",
+      "agent_core/commands/memory_cmd.py",
+      "agent_core/line_editing.py",
+      "agent_core/cli/interactive.py",
+      "agent_core/turn_loop.py",
+      "agent_dashboard.py",
+      "conftest.py",
+      "tests/test_session_layer.py",
+      "tests/test_session_cli.py",
+      "tests/test_session_cmd.py",
+      "tests/test_session_model.py",
+      "tests/test_session_switch.py"
+    ],
+    "tags": [
+      "sessions",
+      "persistence",
+      "concurrency",
+      "backward-compatibility"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "architecture"
+  },
+  {
+    "id": "127",
+    "date": "2026-10-31T00:00:00+00:00",
+    "title": "Summarize leaked model reasoning on screen with one extra LLM call",
+    "context": "recursivesi/flint on LM Studio was observed returning its full chain-of-thought inside assistant content as <think>...</think> blocks (reports/traces/d723...jsonl). QUIET display treated that content as narration and printed thousands of words per tool round. Disabling thinking at the catalog level would discard reasoning quality the user wants to keep; truncating the narration would show a cut-off message.",
+    "decision": "In QUIET/INTENT display, split <think>...</think> reasoning from visible narration and replace the reasoning with a one-sentence summary produced by ONE extra LLM call (reasoning_summary_fn, wired in turn_loop.py, max_tokens=192, disable_thinking=True). Cache the summary by reasoning text. If the extra call fails or returns empty, show the visible narration; if that is also empty, fall back to the existing deterministic tool-purpose phrase. Never print the raw reasoning block. The callback is optional, so ToolLoopRunner tests and callers without a summarizer keep the stripping fallback; text without a reasoning block is returned untouched.",
+    "rationale": "The user explicitly chose a real summary over a cut-off message and accepted the extra call. Keeping the reasoning in the model context preserves quality while protecting the terminal from a flood of hidden-chain-of-thought text. summarize_fn is injected rather than hardcoded so tool_loop stays independent of the agent/provider and tests can supply a cheap fake. Caching avoids paying for identical reasoning on retries and chained runs. Fail-open to visible narration (or the tool phrase) avoids turning a non-essential display optimization into a lost tool round, matching the existing display fallback philosophy.",
+    "affected_files": [
+      "agent_core/llm/tool_loop.py",
+      "agent_core/turn_loop.py",
+      "tests/test_tool_loop_nlp.py",
+      "tests/test_text_tool_calls.py",
+      "AGENTS.md",
+      "CHANGES.md"
+    ],
+    "tags": [
+      "display",
+      "reasoning",
+      "local-models",
+      "privacy"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "ux"
+  },
+  {
+    "id": "128",
+    "date": "2026-10-31T00:00:00+00:00",
+    "title": "Session provider metadata comes from the live provider, and old bad snapshots self-heal",
+    "context": "A named session using a local LM Studio model persisted provider=opencode. On restart Agent.__init__ passed provider_override=opencode, so the local model was sent to the hosted opencode API (HTTP 400) and then failed over to OpenRouter. Root cause had two halves: Agent._session_provider_name asked provider_for(model, settings.llm_provider, None), recording the settings default for a bare local model; and AgentCore.build_transport rebuilt the provider from only client.model_name, discarding the provider_override that LLMClient had correctly used. A local model may also be llama.cpp or Strata, both routed as llama/.",
+    "decision": "Session provider metadata MUST be derived from the live provider object: use _provider_label on self.llm._provider, unwrapping FailoverProvider to the wrapped provider whose model_name matches the selected model (falling back to the first/primary provider). Never ask provider_for with the settings default for this purpose. Agent startup additionally validates old metadata: when provider=opencode contradicts the model's known route, replace it with the routed provider (provider_for with a local default). This routes bare LM Studio names to lmstudio and llama/ names (llama.cpp or Strata) to llama, with no model-specific hardcoding. AgentCore.build_transport's default MUST return client._provider instead of rebuilding: rebuilding from the model name alone discards an explicit session/provider override. Apply the same validation when switching sessions.",
+    "rationale": "The live provider is the only authoritative record of which backend actually serves the model; the settings default describes the cloud-first failover preference, not the current local selection. The startup repair uses the routing table, not a slash heuristic, so llama.cpp/Strata models are not misrouted to LM Studio. Keeping the provider built by LLMClient in the build_transport seam is necessary because that object already encodes the model, provider override and failover order; rebuilding it silently reverted to the cloud default. The repair is narrow enough that legitimate opencode models keep their provider while existing corrupt session.json files become usable without manual edits.",
+    "affected_files": [
+      "agent_core/agent.py",
+      "tests/test_session_model.py",
+      "tests/test_session_switch.py",
+      "AGENTS.md",
+      "CHANGES.md"
+    ],
+    "tags": [
+      "sessions",
+      "provider-routing",
+      "lmstudio",
+      "correctness"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "correctness"
   }
 ]

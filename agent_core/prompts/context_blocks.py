@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from typing import TYPE_CHECKING, Any
 
 from agent_core.colors import yellow
@@ -37,6 +36,7 @@ from agent_core.skills import (
     match_skills_for_input,
     skill_hint_block,
 )
+from agent_core.session.context import current_paths
 from agent_core.types import _GOAL_RELATED_THRESHOLD
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -334,10 +334,7 @@ def _suspend_history_for_new_task(agent: "Agent") -> None:
     agent._prior_chat_history = body
     agent._chat_history = system
     agent._turn_start_index = len(agent._chat_history)
-    prior_path = os.path.join(
-        os.path.dirname(_agent_mod().CHAT_HISTORY_JSON_PATH) or ".",
-        "chat_history_prior.json",
-    )
+    prior_path = str(current_paths().prior_history_path)
     try:
         with open(prior_path, "w", encoding="utf-8") as f:
             json.dump(body, f, ensure_ascii=False, indent=2)

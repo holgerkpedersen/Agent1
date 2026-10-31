@@ -56,7 +56,15 @@ def _readline() -> Any | None:
 
 
 def history_path(workspace: str | Path | None = None) -> Path | None:
-    """Return the history file path for ``workspace`` (None when unknown)."""
+    """Return the recall-history path for the active session/workspace."""
+    from agent_core.session.context import (
+        current_paths,
+        current_session_id,
+        is_active,
+    )
+
+    if is_active() and current_session_id() != "default":
+        return current_paths().line_history_path
     if workspace is None:
         workspace = _state.get("workspace")
     if not workspace:

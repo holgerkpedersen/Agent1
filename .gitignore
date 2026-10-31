@@ -180,6 +180,7 @@ reports/benchmark_*.json
 turn_log.jsonl
 meta_policy.json
 perf_history.json
+.sessions/
 
 # Tool caches
 .mypy_cache/

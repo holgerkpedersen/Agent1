@@ -35,7 +35,6 @@ import os
 from datetime import datetime
 from typing import Any
 
-import agent_core.constants as _constants
 from agent_core.llm.config import TASK_PROFILE_MAP
 from agent_core.llm.llm_types import ProfileType
 from agent_core.llm.meta_policy import MetaPolicyEvolver
@@ -90,11 +89,10 @@ _turns_since_evolve = 0
 
 
 def _state_path() -> str:
-    """``meta_policy.json`` next to ``chat_history.json`` (call-time resolve)."""
-    return os.path.join(
-        os.path.dirname(_constants.CHAT_HISTORY_JSON_PATH),
-        "meta_policy.json",
-    )
+    """``meta_policy.json`` next to the active session's chat history."""
+    from agent_core.session.context import current_paths
+
+    return str(current_paths().meta_policy_path)
 
 
 def load_weights(*, force: bool = False) -> None:

@@ -311,6 +311,39 @@ class TestTurnLoopWiring:
         assert agent.tool_calls == []
         assert loop.tool_calls_made == 0
 
+    def test_leaked_reasoning_is_summarized_by_an_extra_llm_call(
+        self, capsys
+    ) -> None:
+        from agent_core.config import AgentDisplayMode
+        from agent_core.turn_loop import _run_chained_tool_loop
+
+        raw = (
+            "<think>secret reasoning that must not be printed</think>"
+            "Let me search for the class.\n" + OBSERVED
+        )
+        llm = _ScriptedLLM([raw, "Searching for the class definition.", "Done."])
+        agent = _FakeAgent(llm)
+        final_text, _, llm_error, loop = asyncio.run(
+            _run_chained_tool_loop(
+                agent,  # type: ignore[arg-type]
+                user_input="where is class Command defined?",
+                messages=[{"role": "user", "content": "where?"}],
+                display_mode=AgentDisplayMode.QUIET,
+                seen_calls={},
+            )
+        )
+
+        assert llm_error is None
+        assert final_text == "Done."
+        assert agent.tool_calls == [
+            ("search", {"query": "class Command", "path": "agent_core"})
+        ]
+        assert loop.tool_calls_made == 1
+        out = capsys.readouterr().out
+        assert "secret reasoning that must not be printed" not in out
+        assert "Searching for the class definition." in out
+        assert len(llm.requests) == 3
+
 
 class TestParallelWiring:
     def test_parallel_chat_fn_recovers_text_form_call(self) -> None:

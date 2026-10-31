@@ -389,7 +389,7 @@ class TestPersistence:
 
 
 class TestDashboardAPI:
-    def test_autonomous_status_includes_wiki(self, tmp_path):
+    def test_autonomous_status_includes_wiki(self, tmp_path, monkeypatch):
         """The dashboard API endpoint must include wiki stats (fail-open)."""
         traces = tmp_path / "traces"
         traces.mkdir()
@@ -398,8 +398,15 @@ class TestDashboardAPI:
 
         from agent_core.monitoring import dashboard_api
 
-        # Redirect the handler's base dir to our temp root.
-        dashboard_api.DashboardAPIHandler._base_dir = str(tmp_path)
+        # Redirect the handler's base dir to our temp root.  This MUST go
+        # through monkeypatch: a bare class-attribute assignment is never
+        # undone, so the deleted tmp dir stayed the base dir for every later
+        # dashboard test in the same session and they all served 404
+        # (tests/test_dashboard_assets.py, tests/test_mcp_dashboard.py,
+        # tests/test_dashboard_histogram_chart.py).
+        monkeypatch.setattr(
+            dashboard_api.DashboardAPIHandler, "_base_dir", str(tmp_path)
+        )
 
         from harnessfix.wiki import consolidate, wiki_stats
 
@@ -420,11 +427,13 @@ class TestDashboardAPI:
         # When wiki exists under the base dir, page_count should be populated.
         assert result["wiki"].get("page_count", 0) >= 1
 
-    def test_autonomous_status_wiki_empty_when_no_wiki(self, tmp_path):
+    def test_autonomous_status_wiki_empty_when_no_wiki(self, tmp_path, monkeypatch):
         """Wiki stats must degrade gracefully when no wiki file exists."""
         from agent_core.monitoring import dashboard_api
 
-        dashboard_api.DashboardAPIHandler._base_dir = str(tmp_path)
+        monkeypatch.setattr(
+            dashboard_api.DashboardAPIHandler, "_base_dir", str(tmp_path)
+        )
 
         stub = dashboard_api.DashboardAPIHandler.__new__(
             dashboard_api.DashboardAPIHandler
@@ -432,6 +441,29 @@ class TestDashboardAPI:
         result = stub._autonomous_status()
         assert "wiki" in result
         assert isinstance(result["wiki"], dict)
+
+    def test_base_dir_restored_after_wiki_tests(self):
+        """Regression: the dashboard base dir must not leak between tests.
+
+        Both tests above used to set ``DashboardAPIHandler._base_dir`` with a
+        bare class-attribute assignment, which no fixture ever undoes.  The
+        redirect then survived into every later dashboard test of the same
+        session, so the server served from a tmp directory that has no
+        ``static/`` tree: 7 tests across ``test_dashboard_assets.py``,
+        ``test_mcp_dashboard.py`` and ``test_dashboard_histogram_chart.py``
+        failed with 404 (``index.html``/``mcp.html`` not found).  This method
+        runs last in the class (definition order), so it observes whatever
+        the two tests above left behind.
+        """
+        import os
+
+        from agent_core.monitoring import dashboard_api
+
+        base = dashboard_api.DashboardAPIHandler._base_dir
+        assert os.path.isfile(os.path.join(base, "static", "index.html")), (
+            f"_base_dir leaked to {base!r} - use monkeypatch.setattr, "
+            "not a bare class-attribute assignment"
+        )
 
 
 class TestSandbox:

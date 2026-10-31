@@ -213,7 +213,10 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "segment must start with an allow-listed binary, and nested "
                 "shell -Command, Invoke-Expression, python -c, dot-sourcing "
                 "and ./script execution are refused; blocked commands tell you "
-                "so — do not retry them. The operator sets "
+                "so — do not retry them. Run Python tooling through the "
+                "interpreter (`python -m pytest`, `python -m ruff`, "
+                "`python -m mypy`); bare linter/formatter binaries such as "
+                "`ruff` are refused. The operator sets "
                 "AGENT_RUN_SANDBOX=dev for unsandboxed runs."
             ),
             "parameters": {

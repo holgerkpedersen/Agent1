@@ -308,8 +308,13 @@ def append_turn_log(record: dict[str, Any]) -> None:
         import json
         import os
         from agent_core import constants as _constants_module
+        from agent_core.session.context import active_session, current_paths
 
-        path = _constants_module.TURN_LOG_PATH
+        path = (
+            current_paths().turn_log_path
+            if active_session() is not None
+            else _constants_module.TURN_LOG_PATH
+        )
         parent = os.path.dirname(path)
         if parent:
             os.makedirs(parent, exist_ok=True)
