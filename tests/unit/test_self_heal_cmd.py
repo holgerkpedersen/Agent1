@@ -156,3 +156,54 @@ class TestSelfHeal:
         cmd._revert_all()
         assert "return x\n" in prod.read_text(encoding="utf-8")
         assert cmd.backups == {}
+
+
+class TestSelfHealRefusesNonPythonTarget:
+    """``self_heal`` is a pytest ENTRY POINT: decision #124 applies to it too.
+
+    A plan/document target would make ``self_heal`` run pytest on a file it
+    cannot collect from, read exit code 5 as a green suite, and report
+    "nothing to heal" -- a false verification signal.
+    """
+
+    def _agent(self):
+        async def chat(messages, **kwargs):
+            raise AssertionError("self_heal must not ask the LLM to heal a document")
+
+        return SimpleNamespace(llm=SimpleNamespace(chat=chat))
+
+    def test_plan_document_is_refused_without_running_pytest(self, monkeypatch):
+        ran: list[str] = []
+        monkeypatch.setattr(
+            SelfHealCommand,
+            "_run_pytest",
+            staticmethod(lambda target: ran.append(target) or (0, "5 passed")),
+        )
+        ok = asyncio.run(
+            SelfHealCommand().execute(["docs/PLAN.md"], self._agent())
+        )
+        assert ran == [], "pytest must not run against a non-Python file"
+        assert ok is True
+
+    def test_refusal_names_the_target_and_a_valid_replacement(self, capsys):
+        cmd = SelfHealCommand()
+        cmd._run_pytest = lambda target: (0, "5 passed")  # must not be called
+        target = "PROSPECTOR_PLAN.md"
+        assert cmd.refuse_non_python_target(target) is True
+        out = capsys.readouterr().out
+        assert target in out
+        assert ".py" in out
+        assert "audit_invariants.py" in out
+
+    def test_real_directory_target_still_heals(self, tmp_path, monkeypatch):
+        ran: list[str] = []
+        monkeypatch.setattr(
+            SelfHealCommand,
+            "_run_pytest",
+            staticmethod(lambda target: ran.append(target) or (0, "5 passed")),
+        )
+        ok = asyncio.run(
+            SelfHealCommand().execute([str(tmp_path)], self._agent())
+        )
+        assert ok is True
+        assert ran == [str(tmp_path)], "a directory target must still run pytest"

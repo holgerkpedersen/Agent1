@@ -2653,5 +2653,53 @@
     "resolved_by": null,
     "status": "active",
     "category": ""
+  },
+  {
+    "id": "124",
+    "date": "2026-10-23T00:00:00+00:00",
+    "title": "Never aim pytest at a non-Python file",
+    "context": "A plan document (PROSPECTOR_PLAN.md) was used as a pytest target. pytest collects no tests from a .md/.json/.txt/.toml/.yml/.gitignore path, so it exits 5 (no tests ran) and that result reads like verification although nothing ran. The rule lived only in code comments, so schemas and prompts did not state it. It was then enforced only in the run and tests tools, while the self_heal command was a third, unguarded pytest entry point: `self_heal docs/PLAN.md` ran pytest on the document, read exit 5 as a green suite and printed 'Suite already green - nothing to heal'.",
+    "decision": "A pytest invocation MUST target a Python file or a test directory, never a non-Python file (a plan, document, data or config file). Every pytest entry point enforces this BEFORE a subprocess starts: (1) the run tool, including pytest inside a compound command; (2) the tests tool, on its path argument; (3) the self_heal command, on its path argument. The three share one classifier, agent_core/pytest_cmd_policy.py (pytest_non_python_target for command strings, non_python_path_refusal for a resolved path, NON_PYTHON_TARGET_REFUSAL for the wording), so a new entry point MUST call it and never re-implement the check. Refused targets are files pytest cannot collect a test from: docs/PLAN.md, PROSPECTOR_PLAN.md, .decisions.json, pyproject.toml, README.md, reports/run.json. The refusal names the refused target, states the rule and gives a valid replacement (python -m pytest tests/...py). Allowed and unchanged: any path ending .py, directory targets (tests, tests/unit, .), --ignore= and K=V assignments, flag-only selectors (--lf, --testmon), reading a plan document as context, and non-pytest commands on documents (type/read). There is no override flag: a document is verified by tests/test paths or by scripts/audit_invariants.py, never by pytest.",
+    "rationale": "A green-only-in-appearance pytest exit on a document is a false verification signal for the agent and for a human reader of the plan. Refusing at the tool boundary makes the rule enforced rather than advisory, and stopping before spawn keeps the failure cheap and self-correcting for the model. One shared classifier keeps the wording and the predicate identical across entry points, so the rule cannot drift or be ambiguously satisfied by guarding one tool only.",
+    "affected_files": [
+      "agent_core/pytest_cmd_policy.py",
+      "agent_core/handlers/nlp_tools.py",
+      "agent_core/tool_schemas.py",
+      "agent_core/commands/self_heal_cmd.py",
+      "tests/test_pytest_non_python_targets.py",
+      "tests/unit/test_self_heal_cmd.py"
+    ],
+    "tags": [
+      "testing",
+      "pytest",
+      "tool-policy",
+      "ambiguity"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "correctness"
+  },
+  {
+    "id": "125",
+    "date": "2026-10-31T00:00:00+00:00",
+    "title": "Corpus cache identity is content-based, never mtime-only",
+    "context": "ModuleSimilarity caches the TF-IDF corpus per workspace in _CORPUS_CACHE, keyed on max(mtime) of the production .py files. That key is not unique: Windows file times have a coarse resolution (~15.6 ms), so a corpus file rewritten inside the same tick as the previous build keeps a byte-identical mtime and the stale corpus is served. Observed first-hand: two writes 0.4 ms apart both stamped 1793413013.3682978. It surfaced as an intermittent full-suite failure in tests/test_module_similarity.py::TestCorpus::test_corpus_rebuilt_after_change (passes in isolation, failed once in a 4373-test run).",
+    "decision": "The corpus cache key MUST identify content, not just timestamps: _corpus_stamp() returns (file count, newest mtime, blake2b-16 digest over sorted (rel path, size, bytes)). Cache reuse is allowed only when the full stamp matches; ANY difference rebuilds the corpus. A future cache in this module must use the content-aware stamp and MUST NOT reintroduce a max-mtime-only key. The digest is chosen over looser heuristics deliberately: same-tick rewrites are thereby always detected, while an untouched tree still reuses the cache (no rebuild churn), and the cost is one pass over the files the previous corpus build already read. st_mtime_ns is NOT used as the fix - it carries no extra guarantee against a write landing in the same tick.",
+    "rationale": "A cache that can serve a stale corpus silently degrades duplicate detection in implement_cmd (the one real consumer), and it produced a real intermittent test failure. Keying on content makes the cache correct by construction on every platform instead of relying on filesystem timestamp resolution, which no caller can control. The regression test pins the mtime with os.utime so the collision is deterministic - no sleeps and no timing-dependent flakiness - and a companion test asserts the cache is still reused when nothing changed, so the fix cannot be 'solved' by disabling the cache.",
+    "affected_files": [
+      "agent_core/utils/module_similarity.py",
+      "tests/test_module_similarity.py"
+    ],
+    "tags": [
+      "caching",
+      "correctness",
+      "cross-platform",
+      "flaky-tests"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "correctness"
   }
 ]

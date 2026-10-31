@@ -10,6 +10,7 @@ reports exactly which signal fired and with what evidence.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -73,9 +74,47 @@ def _walk_production_py(ws: str) -> list[tuple[str, str]]:
     return out
 
 
-#: Corpus cache keyed by workspace; valid while the max mtime of the corpus
-#: files is unchanged — deterministic reuse, identical precision.
-_CORPUS_CACHE: dict[str, tuple[float, "_Corpus"]] = {}
+#: Identity of the corpus files: ``(file count, newest mtime, content digest)``.
+_CorpusStamp = tuple[int, float, bytes]
+
+
+def _corpus_stamp(files: list[tuple[str, str]]) -> _CorpusStamp:
+    """Content-aware identity of the corpus *files*.
+
+    The cache must be reused while nothing changed and rebuilt when anything
+    did.  A max-mtime stamp alone is NOT sufficient: Windows file times sit on
+    a coarse clock tick, so a corpus file rewritten inside the same tick as the
+    previous construction keeps a byte-identical mtime and a stale corpus is
+    served (reproduced: two writes 0.4 ms apart both stamped
+    ``1793413013.3682978``).  A digest over (rel path, size, content) is immune
+    to that - a same-tick rewrite changes the digest, an untouched tree does
+    not - so cache reuse stays deterministic without losing the speed-up that
+    the expensive tokenisation/TF-IDF build would cost.
+    """
+    digest = hashlib.blake2b(digest_size=16)
+    newest = 0.0
+    for rel, fp in sorted(files):
+        try:
+            stat = os.stat(fp)
+        except OSError:  # pragma: no cover - file vanished during the walk
+            continue
+        newest = max(newest, stat.st_mtime)
+        digest.update(rel.encode("utf-8", "replace"))
+        digest.update(b"\0")
+        digest.update(str(stat.st_size).encode("ascii"))
+        digest.update(b"\0")
+        try:
+            with open(fp, "rb") as fh:
+                digest.update(fh.read())
+        except OSError:  # pragma: no cover - unreadable file
+            digest.update(b"?")
+        digest.update(b"\0")
+    return (len(files), newest, digest.digest())
+
+
+#: Corpus cache keyed by workspace; valid while the content stamp of the corpus
+#: files is unchanged - deterministic reuse, identical precision.
+_CORPUS_CACHE: dict[str, tuple[_CorpusStamp, "_Corpus"]] = {}
 
 _STOPWORDS = frozenset(
     {
@@ -388,7 +427,7 @@ class ModuleSimilarity:
     def __init__(self, ws: str) -> None:
         self.ws = ws
         files = _walk_production_py(ws)
-        stamp = max((os.path.getmtime(fp) for _, fp in files), default=0.0)
+        stamp = _corpus_stamp(files)
         cached = _CORPUS_CACHE.get(ws)
         if cached is not None and cached[0] == stamp:
             self.corpus = cached[1]

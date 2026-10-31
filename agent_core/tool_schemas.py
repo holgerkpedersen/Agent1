@@ -200,6 +200,9 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "exit codes are shown as [EXIT CODE: N] at the end of the "
                 "output — do NOT try to capture them via shell pipelines or "
                 "Python (sys.exitcode is only set at interpreter exit). "
+                "A pytest target must be a .py file or a test directory, "
+                "NEVER a plan or document (.md/.json/.toml/.txt): non-Python "
+                "targets are REFUSED before any process starts. "
                 "TESTING RULE: a WHOLE-SUITE pytest run (no test path) is "
                 "refused unless a real source file changed, and is limited to "
                 "one per session — run it ONCE at the END of the work. Use "
@@ -397,7 +400,13 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "tests",
-            "description": "Run tests (pytest or unittest) on a file or directory.",
+            "description": (
+                "Run tests (pytest or unittest) on a PYTHON test file or "
+                "directory. A non-Python path (a plan or document "
+                ".md/.json/.toml/.txt) is REFUSED without running anything: "
+                "pytest collects no tests from it, so its exit code would be "
+                "meaningless. Name a *.py file or a test directory instead."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {

@@ -28,7 +28,11 @@ from typing import TYPE_CHECKING, Any, Callable
 from agent_core.shell_utils import (
     run_subprocess_captured as _shell_run_subprocess_captured,
 )
-from agent_core.pytest_cmd_policy import pytest_flag_conflict as _pytest_flag_conflict
+from agent_core.pytest_cmd_policy import (
+    non_python_path_refusal,
+    non_python_pytest_target_refusal as _non_python_pytest_target_refusal,
+    pytest_flag_conflict as _pytest_flag_conflict,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from agent import Agent
@@ -1027,6 +1031,14 @@ async def _nlp_run(agent: "Agent", args: dict[str, Any]) -> str:
         return "Error: run requires a command."
     is_pytest = _is_pytest_command(cmd_to_run)
     is_full_run = _is_full_pytest_command(cmd_to_run)
+    if is_pytest:
+        # A plan/document/data file is never a test target: pytest collects
+        # nothing from it, so "no tests ran" (exit 5) would read as if the
+        # file had been verified (decision #124).  Refuse BEFORE any process
+        # starts, with the valid replacement named in the message.
+        target_refusal = _non_python_pytest_target_refusal(cmd_to_run)
+        if target_refusal:
+            return target_refusal
     if is_full_run:
         # A full run costs ~2 min and must be EARNED (a real source file
         # changed) and RARE (one per session by default) - so it happens at
@@ -1327,6 +1339,15 @@ async def _nlp_tests(agent: "Agent", args: dict[str, Any]) -> str:
     """Run pytest/unittest on *path* (bounded by the measured suite budget)."""
     test_path = _agent_attr(agent, "_resolve_nlp_path")(str(args.get("path") or "."))
     framework = str(args.get("framework") or "pytest")
+    # Same rule as the run tool (decision #124): no test runner is ever
+    # pointed at a plan, document, data or config file - it collects nothing
+    # from it, so a green-looking "no tests ran" would verify nothing.
+    requested = str(args.get("path") or test_path)
+    target_refusal = non_python_path_refusal(requested) or non_python_path_refusal(
+        test_path
+    )
+    if target_refusal:
+        return target_refusal
     #: The full suite takes ~15 minutes here (measured 861.5s), not the
     #: 2.5 minutes this used to assume - 300s killed whole-suite runs.
     timeout = 300

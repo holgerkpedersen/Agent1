@@ -22,6 +22,8 @@ import sys
 
 from .base import Command, read_choice, stop_requested
 
+from agent_core.pytest_cmd_policy import non_python_path_refusal
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -47,6 +49,21 @@ class SelfHealCommand(Command):
             "self_heal [path] [--rounds N] [--yes] - "
             "patch failing tests and re-run until green"
         )
+
+    def refuse_non_python_target(self, target: str) -> bool:
+        """Print the decision #124 refusal for *target*; True when refused.
+
+        ``self_heal`` is a pytest entry point, so the rule that a test runner
+        never targets a plan, document, data or config file applies here too.
+        Without this guard ``pytest docs/PLAN.md`` exits 5 ("no tests ran"),
+        which the heal loop would read as an already-green suite.
+        """
+        refusal = non_python_path_refusal(target)
+        if not refusal:
+            return False
+        print(refusal)
+        print("[self_heal] Refused before running pytest (decision #124).")
+        return True
 
     @staticmethod
     def _run_pytest(target: str) -> tuple[int, str]:
@@ -177,6 +194,12 @@ class SelfHealCommand(Command):
                 continue
             target = args[i]
             i += 1
+
+        # Decision #124: a test runner never targets a plan, document, data or
+        # config file.  Checked BEFORE pytest starts so a "no tests ran"
+        # (exit 5) can never be read as an already-green suite.
+        if self.refuse_non_python_target(target or "."):
+            return True
 
         print(f"[self_heal] Running pytest on {target or '.'} ...")
         rc, output = self._run_pytest(target)

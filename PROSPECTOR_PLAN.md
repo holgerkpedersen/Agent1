@@ -107,9 +107,9 @@ else is reused.
 MCP server `graphkg` delivers tools via the existing manager; gate and seen are
 new modules in `agent_core/prospector/`, which only activate in dedicated
 prospector runs (opt-in command/profile). ToolLoopRunner, NLP_TOOL_SCHEMAS and
-existing tool routes stay bit-identical — verified by the 209 existing test files
-in `tests/` running green before and after (CI requirement: full pytest + ruff +
-mypy before commit/push).
+existing tool routes stay bit-identical — verified by the existing test suite in
+`tests/` running green before and after (CI requirement: the repository's
+standard CI checks run before every commit/push).
 
 **B. Deterministic verification, no judge.** The gate is set membership against
 the tools' own returned edges. A model cannot "make up" a verified answer: it

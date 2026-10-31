@@ -274,6 +274,203 @@ def _pytest_segments_tokens(command: str | Sequence[str]) -> list[list[str]]:
     return segments
 
 
+# ── Non-Python test targets (decision #124) ─────────────────────────────────
+#
+# History (2026-10-31): a documentation turn ended with
+# ``run(command="python -m pytest docs/PROSPECTOR_PLAN.md -q")`` - pytest aimed
+# at a Markdown PLAN document.  pytest collects nothing from a ``.md`` file, so
+# the run printed "no tests ran" (exit code 5) and the transcript then looked
+# as if the plan had been "tested".  A plan is verified by its content and by
+# structural checks, never by a test runner, so that command is refused before
+# any process starts.
+
+#: File suffixes pytest/unittest cannot collect a test from.
+_NON_PYTHON_TARGET_SUFFIXES = frozenset(
+    {
+        ".md",
+        ".rst",
+        ".txt",
+        ".json",
+        ".jsonl",
+        ".toml",
+        ".cfg",
+        ".ini",
+        ".yml",
+        ".yaml",
+        ".xml",
+        ".csv",
+        ".tsv",
+        ".log",
+        ".html",
+        ".css",
+        ".js",
+        ".ts",
+        ".ps1",
+        ".bat",
+        ".cmd",
+        ".sh",
+        ".sql",
+        ".ipynb",
+    }
+)
+
+#: Extensionless (or dot-prefixed) files that are documentation/config too.
+_NON_PYTHON_TARGET_NAMES = frozenset(
+    {
+        ".gitignore",
+        ".gitattributes",
+        ".env",
+        ".decisions.json",
+        "agents",
+        "readme",
+        "license",
+        "licence",
+        "changelog",
+        "changes",
+        "contributing",
+        "usage",
+        "makefile",
+        "dockerfile",
+    }
+)
+
+#: Refusal returned when a test runner is pointed at a non-Python file.
+#: The placeholders are ``{target}`` only; everything else is literal so the
+#: message cannot drift from the rule it states.
+NON_PYTHON_TARGET_REFUSAL = (
+    "Error: {target} is not a Python test target - pytest and unittest cannot "
+    "collect tests from it. Do not run a test runner against a plan, document, "
+    "data or config file: a green 'no tests ran' proves nothing about it "
+    "(decision #124).\n"
+    "Use a real test file instead, for example "
+    "`python -m pytest tests/test_x.py -q --no-cov`, or verify a non-Python "
+    "file with a structural check such as "
+    "`python scripts/audit_invariants.py`."
+)
+
+
+def _is_non_python_test_target(token: str) -> bool:
+    """True when *token* names a file a test runner cannot collect from.
+
+    Only FILES are judged (a name carrying a known non-Python suffix, a
+    well-known doc/config name, or a dotfile), so a legitimate directory or
+    dotted word (``tests/v1.0``, ``tests.test_x``) is never mistaken for one.
+    """
+    name = token.strip().strip("\"'`").replace("\\", "/").rstrip("/")
+    if not name or name in (".", "..") or name.endswith("/"):
+        return False
+    if "::" in name:  # node id: the file part is what pytest collects
+        name = name.split("::", 1)[0]
+    base = name.rsplit("/", 1)[-1].strip().lower()
+    if not base:
+        return False
+    if base in _NON_PYTHON_TARGET_NAMES:
+        return True
+    if base.startswith(".") and base.count(".") == 1:  # dotfile: .gitignore
+        return True
+    suffix = base[base.rfind(".") :] if "." in base else ""
+    return suffix in _NON_PYTHON_TARGET_SUFFIXES
+
+
+#: Segment heads that can actually start a test-runner invocation, so a
+#: wrapper such as ``echo pytest plan.md`` is never read as a pytest run.
+_INVOCATION_HEADS = frozenset(
+    {"python", "python2", "python3", "py", "pytest", "py.test"}
+)
+
+#: Interpreter modules that run tests; the positionals after them are targets.
+_TEST_MODULES = frozenset({"pytest", "py.test", "unittest"})
+
+
+def _pytest_target_tokens(command: str | Sequence[str]) -> list[list[str]]:
+    """Positional TARGET tokens of every segment that really invokes a runner.
+
+    Stricter than :func:`_pytest_segments_tokens` on purpose: this feeds a
+    REFUSAL, so a segment must start with an interpreter/test-runner head
+    before its positionals count as targets.  ``echo pytest plan.md`` and
+    ``git status && python -m pytest -q`` therefore yield no targets, while
+    ``python -m pytest docs/PLAN.md`` yields ``docs/PLAN.md``.
+    """
+    targets: list[list[str]] = []
+    for segment in re.split(r"&&|\|\||[;|]", _as_command(command)):
+        try:
+            tokens = shlex.split(segment, posix=True)
+        except ValueError:
+            tokens = segment.split()
+        # Trim wrappers/prompts before the head: leading K=V assignments and
+        # the Windows ``set``/``call``/``&`` prefixes.
+        while tokens and ("=" in tokens[0] or tokens[0] in ("set", "call", "&")):
+            tokens = tokens[1:]
+        if not tokens:
+            continue
+        head = tokens[0].lower()
+        if head not in _INVOCATION_HEADS:
+            continue
+        if head in ("pytest", "py.test"):
+            body = tokens[1:]
+        elif len(tokens) > 2 and tokens[1] in ("-m", "-M"):
+            module = tokens[2].strip("\"'").lower()
+            if module not in _TEST_MODULES:
+                continue
+            body = tokens[3:]
+        else:
+            continue
+        collected: list[str] = []
+        skip_next = False
+        for token in body:
+            if skip_next:
+                skip_next = False
+                continue
+            if token in _PYTEST_SUBSET_FLAGS:
+                continue
+            if token in _PYTEST_VALUE_FLAGS:
+                skip_next = True  # the value is an option value, not a path
+                continue
+            if token.startswith("-") or "=" in token:
+                continue  # option, `--opt=value` or a K=V assignment
+            if re.match(r"^\d*>&?\S*$", token):  # 2>&1, >nul
+                continue
+            collected.append(token)
+        if collected:
+            targets.append(collected)
+    return targets
+
+
+def pytest_non_python_target(command: str | Sequence[str]) -> str:
+    """First non-Python pytest TARGET in *command*, or ``""``.
+
+    A target is a positional argument of a real pytest/unittest invocation -
+    never an option value (``-k``/``-m``/``-p``/``--ignore``), never a ``K=V``
+    assignment and never part of another command in a compound line.
+    """
+    for target_list in _pytest_target_tokens(command):
+        for token in target_list:
+            if _is_non_python_test_target(token):
+                return token
+    return ""
+
+
+def non_python_pytest_target_refusal(command: str | Sequence[str]) -> str:
+    """Refusal message for a pytest invocation aimed at a non-Python file."""
+    target = pytest_non_python_target(command)
+    if not target:
+        return ""
+    return NON_PYTHON_TARGET_REFUSAL.format(target=target)
+
+
+def non_python_path_refusal(path: str) -> str:
+    """Refusal message for a test runner aimed at a bare PATH, else ``""``.
+
+    Path-level twin of :func:`non_python_pytest_target_refusal`, for callers
+    that already hold a resolved path instead of a command line (the ``tests``
+    tool and the ``self_heal`` command).  Same predicate, same message, so the
+    rule cannot drift between entry points (decision #124).
+    """
+    if not path or not _is_non_python_test_target(str(path)):
+        return ""
+    return NON_PYTHON_TARGET_REFUSAL.format(target=path)
+
+
 def _testmon_cacheprovider_conflict(tokens: list[str]) -> str | None:
     """Detect ``--testmon`` + ``-p no:cacheprovider`` (pytest-testmon crash).
 

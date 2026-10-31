@@ -5,6 +5,8 @@ unrelated planned modules must not, and test/benchmark modules never enter the
 corpus.
 """
 
+import os
+
 import pytest
 
 from agent_core.utils.module_similarity import (
@@ -87,6 +89,47 @@ class TestCorpus:
         )
         sim2 = ModuleSimilarity(str(ws))
         assert sim1.corpus is not sim2.corpus
+
+    def test_corpus_rebuilt_when_mtime_is_unchanged(self, ws):
+        """A rewrite inside one file-time tick must still invalidate the cache.
+
+        Regression (observed as an intermittent full-suite failure): the corpus
+        cache keyed on ``max(mtime)`` only.  Windows file times sit on a coarse
+        clock tick, so rewriting a corpus file soon after the previous build
+        leaves an IDENTICAL mtime and the stale corpus was served.  Measured
+        first-hand: two writes 0.4 ms apart both stamped
+        ``1793413013.3682978``.
+
+        The mtime is pinned here with ``os.utime`` so the collision is
+        deterministic instead of timing-dependent - no sleep, no flakiness.
+        """
+        target = ws / "agent_core" / "security" / "allowlist.py"
+        original = os.stat(target)
+        sim1 = ModuleSimilarity(str(ws))
+
+        target.write_text(
+            '"""Shell command allow-list v2 with hardening."""\nSAFE = {"ls"}\n',
+            encoding="utf-8",
+        )
+        # Same tick: restore the exact old timestamps after the content change.
+        os.utime(target, ns=(original.st_atime_ns, original.st_mtime_ns))
+        assert os.stat(target).st_mtime == original.st_mtime, "stamp not pinned"
+
+        sim2 = ModuleSimilarity(str(ws))
+        assert sim1.corpus is not sim2.corpus, "stale corpus served for changed bytes"
+
+    def test_corpus_cache_survives_a_touched_but_identical_file(self, ws):
+        """Identical content and stamp must keep reusing the cache (no churn).
+
+        Guards the other direction: the fix must not turn every construction
+        into a rebuild, which is what the cache exists to prevent.
+        """
+        target = ws / "agent_core" / "security" / "allowlist.py"
+        original = os.stat(target)
+        sim1 = ModuleSimilarity(str(ws))
+        os.utime(target, ns=(original.st_atime_ns, original.st_mtime_ns))
+        sim2 = ModuleSimilarity(str(ws))
+        assert sim1.corpus is sim2.corpus
 
 
 class TestTruePairs:
