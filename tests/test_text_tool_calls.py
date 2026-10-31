@@ -156,6 +156,46 @@ class TestRecoverTextToolCalls:
         raw = "The class lives in agent_core/commands/base.py:12."
         assert recover_text_tool_calls(raw) == (raw, [])
 
+    def test_bare_zero_arg_call_is_recovered(self) -> None:
+        """The live failure: the whole answer was ``<function=tests>\\n</function>``.
+
+        ``tests`` declares ``required: []`` (path defaults to the current
+        directory), so the no-parameter block is a complete, executable call —
+        it must be recovered and run, not printed as the final answer.
+        """
+        text, calls = recover_text_tool_calls("<function=tests>\n</function>")
+        assert text == ""
+        assert len(calls) == 1
+        assert calls[0]["function"]["name"] == "tests"
+        assert _args(calls[0]) == {}
+
+    def test_bare_zero_arg_block_for_required_param_tool_stays_text(self) -> None:
+        """``search`` requires ``query``: an argument-less bare block is not a call."""
+        raw = "<function=search>\n</function>"
+        text, calls = recover_text_tool_calls(raw)
+        assert text == raw
+        assert calls == []
+
+    def test_bare_zero_arg_block_for_unknown_tool_stays_text(self) -> None:
+        raw = "<function=mystery>\n</function>"
+        text, calls = recover_text_tool_calls(raw)
+        assert text == raw
+        assert calls == []
+
+    def test_wrapped_empty_function_block_is_recovered(self) -> None:
+        text, calls = recover_text_tool_calls(
+            "<tool_call><function=tests></function></tool_call>"
+        )
+        assert text == ""
+        assert len(calls) == 1
+        assert _args(calls[0]) == {}
+
+    def test_prose_body_without_parameter_tags_stays_text(self) -> None:
+        raw = "example: <function=tests> run the tests </function>"
+        text, calls = recover_text_tool_calls(raw)
+        assert text == raw
+        assert calls == []
+
 
 class _ScriptedLLM:
     """Provider double: returns scripted replies, records requests."""

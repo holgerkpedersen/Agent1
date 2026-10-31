@@ -25,6 +25,12 @@ block as the final answer instead of running it.  :func:`recover_text_tool_calls
 maps the common cross-harness tool names (``grep`` -> ``search``, ...) and
 their argument names so the recovered call is executable.
 
+A second live failure: the entire plan-mode answer was the zero-argument call
+``<function=tests>\\n</function>`` — a bare block with no parameters.  Such a
+block is a complete call only when the declared tool requires no parameters
+(the schema's ``required`` list is empty); every other argument-less block is
+prose about the syntax and stays text.
+
 Only complete, unambiguous blocks are recovered; malformed or unrelated text
 is returned untouched.
 """
@@ -93,7 +99,27 @@ def _build_param_types() -> dict[str, dict[str, str]]:
     return types
 
 
+def _build_param_required() -> dict[str, set[str]]:
+    """``{tool: set(required parameter names)}`` from the advertised schemas.
+
+    A bare ``<function=name></function>`` with NO parameters is only a real
+    call when the (alias-mapped) tool declares no required parameters; every
+    other no-arg block is prose *about* the syntax and must stay text.
+    """
+    required: dict[str, set[str]] = {}
+    for schema in NLP_TOOL_SCHEMAS:
+        function = schema.get("function") or {}
+        name = str(function.get("name") or "")
+        if not name:
+            continue
+        parameters = function.get("parameters") or {}
+        required[name] = {str(r) for r in (parameters.get("required") or [])}
+    return required
+
+
 _PARAM_TYPES = _build_param_types()
+
+_PARAM_REQUIRED = _build_param_required()
 
 
 def _canonical_name(name: str) -> str:
@@ -144,11 +170,23 @@ def _parameter_args(tool_name: str, body: str) -> dict[str, Any]:
 
 
 def _function_args(tool_name: str, body: str) -> dict[str, Any] | None:
-    """Arguments of one ``<function>`` body: parameter tags or a JSON object."""
+    """Arguments of one ``<function>`` body: parameter tags, JSON, or nothing.
+
+    An empty body is a legitimate ZERO-ARGUMENT call only for a declared
+    tool that requires no parameters (the live failure: the model emitted
+    ``<function=tests>\\n</function>`` as its entire answer).  A non-empty
+    body that is neither parameters nor a JSON object stays text.
+    """
     if _PARAMETER_RE.search(body):
         return _parameter_args(tool_name, body)
+    text = body.strip()
+    if not text:
+        canonical = _canonical_name(tool_name).lower()
+        if canonical in _PARAM_REQUIRED and not _PARAM_REQUIRED[canonical]:
+            return {}
+        return None
     try:
-        parsed = json.loads(body.strip())
+        parsed = json.loads(text)
     except (json.JSONDecodeError, TypeError):
         return None
     return parsed if isinstance(parsed, dict) else None
@@ -276,11 +314,13 @@ def recover_text_tool_calls(
             calls.append(_build_call(name, args, len(calls)))
 
     if not calls:
-        # Bare ``<function=...>`` blocks (no ``<tool_call>`` wrapper).  Require
-        # at least one parameter tag so prose *about* the syntax is not run.
+        # Bare ``<function=...>`` blocks (no ``<tool_call>`` wrapper).  A block
+        # with prose inside stays text (documentation *about* the syntax is
+        # not a call); a whitespace-only body is the zero-argument form and
+        # _function_args decides whether the declared tool accepts it.
         for function in _FUNCTION_RE.finditer(text):
             body = function.group("body")
-            if not _PARAMETER_RE.search(body):
+            if body.strip() and not _PARAMETER_RE.search(body):
                 continue
             name = function.group("name")
             args = _function_args(name, body)
