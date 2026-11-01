@@ -29,6 +29,7 @@ each one fails for the specific reason named in its docstring.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -468,4 +469,64 @@ class TestLegacyScriptsUseBridgePaths:
         )
         assert "enumerate(messages, start=1)" in text, (
             "seq must be renumbered from each line's position after an insert"
+        )
+
+
+# ---------------------------------------------------------------------------
+# 6. Guarded writes must survive transient Windows sharing violations
+# ---------------------------------------------------------------------------
+
+
+class TestGuardedWriteRetries:
+    """The id-map / board writes must retry a transient ``[WinError 32]``.
+
+    The recurring dead-letter signature was::
+
+        PermissionError: [WinError 32] The process cannot access the file
+        because of other opened handles
+
+    raised out of the atomic tmp + ``os.replace`` write.  The guarded write
+    now retries transient Windows sharing / lock violations with backoff instead
+    of letting the failure escape to the queue retry loop (which dead-letters
+    after ``MAX_RETRIES``.
+    """
+
+    def test_save_id_map_retries_transient_windows_sharing_violation(
+        self, tmp_path, monkeypatch
+    ):
+        import harnessfix.kanban_bridge as kb
+
+        monkeypatch.setattr(kb, "DEAD_LETTER_DIR", tmp_path / "dead-letter")
+        kb.link_ids("iss-1", "card-1")
+        assert kb.CARD_ID_MAP_PATH.exists()
+
+        real_replace = os.replace
+        calls = {"n": 0}
+
+        def flaky_replace(src, dst):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise OSError(32, "The process cannot access the file", str(dst))
+            return real_replace(src, dst)
+
+        monkeypatch.setattr(kb.os, "replace", flaky_replace)
+        monkeypatch.setattr(kb.time, "sleep", lambda *_: None)
+
+        kb.link_ids("iss-2", "card-2")
+
+        assert calls["n"] == 2, "the transient violation must be retried exactly once"
+        assert kb.resolve_id("iss-2") == "card-2"
+
+    def test_save_id_map_does_not_leave_a_tmp_sidecar_behind(
+        self, tmp_path, monkeypatch
+    ):
+        import harnessfix.kanban_bridge as kb
+
+        monkeypatch.setattr(kb, "DEAD_LETTER_DIR", tmp_path / "dead-letter")
+        monkeypatch.setattr(kb, "CARD_ID_MAP_PATH", tmp_path / ".card_id_map.json")
+
+        kb.link_ids("iss-1", "card-1")
+        leftovers = list(tmp_path.glob("*.tmp"))
+        assert leftovers == [], (
+            f"id-map write must not leave a tmp sidecar: {leftovers}"
         )

@@ -41,6 +41,7 @@ Message format (one JSON object per line)::
 from __future__ import annotations
 
 import atexit
+import errno
 import json
 import logging
 import os
@@ -48,11 +49,32 @@ import shutil
 import sys
 import threading
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
+
+#: Transient OS error codes worth retrying inside a guarded atomic write.
+#: ``ERROR_SHARING_VIOLATION`` (32) is the recurring Windows failure where an
+#: atomic rename onto a destination that is momentarily held by another handle
+#: raises ``PermissionError: [WinError 32]``.
+_TRANSIENT_ERRNOS = frozenset({errno.EACCES, errno.EAGAIN, 32, 33})
+
+#: Retry policy for transient failures inside the guarded writes above.
+_ATOMIC_WRITE_ATTEMPTS = 5
+_ATOMIC_WRITE_BACKOFF_SECONDS = 0.05
+
+
+def _is_transient_os_error(exc: BaseException) -> bool:
+    """True for transient Windows sharing / lock violations (retryable)."""
+    if not isinstance(exc, OSError):
+        return False
+    codes = {getattr(exc, "errno", None), getattr(exc, "winerror", None)}
+    return any(
+        code is not None and int(code) in _TRANSIENT_ERRNOS for code in codes
+    )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -303,15 +325,27 @@ def _load_id_map() -> dict[str, str]:
 
 def _save_id_map(mapping: dict[str, str]) -> None:
     """Atomically save the issue↔card bidirectional mapping."""
-    tmp = CARD_ID_MAP_PATH.with_suffix(CARD_ID_MAP_PATH.suffix + ".tmp")
+    tmp = CARD_ID_MAP_PATH.with_name(f"{CARD_ID_MAP_PATH.name}.{uuid.uuid4().hex}.tmp")
     tmp.write_text(
         json.dumps(mapping, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
-    try:
-        tmp.replace(CARD_ID_MAP_PATH)
-    except OSError:
-        shutil.copy2(str(tmp), str(CARD_ID_MAP_PATH))
+    last_exc: Optional[BaseException] | None = None
+    for attempt in range(_ATOMIC_WRITE_ATTEMPTS):
+        try:
+            tmp.replace(CARD_ID_MAP_PATH)
+            return
+        except OSError as exc:
+            last_exc = exc
+            if not _is_transient_os_error(exc) or attempt == _ATOMIC_WRITE_ATTEMPTS - 1:
+                break
+            time.sleep(_ATOMIC_WRITE_BACKOFF_SECONDS * (2**attempt))
+    # Retries exhausted (or a permanent error): fall back to a direct copy of
+    # the sidecar before surfacing the failure.
+    shutil.copy2(str(tmp), str(CARD_ID_MAP_PATH))
+    if last_exc is not None and _is_transient_os_error(last_exc):
+        raise last_exc
+    return
 
 
 def link_ids(

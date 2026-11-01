@@ -407,7 +407,7 @@ async def run_interactive() -> None:
                 _save_line_history(workspace=getattr(agent, "workspace", None))
                 _warn_uncommitted(agent)
                 break
-            if not user_input:
+            if not user_input or not user_input.strip():
                 continue
             if user_input.lower() in ["quit", "exit", "q"]:
                 _persist_session_state(agent)

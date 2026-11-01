@@ -185,5 +185,22 @@
     "repair_ref": null,
     "created_at": "2026-10-09T15:33:20+00:00",
     "resolved_at": null
+  },
+  {
+    "id": "iss-context-budget-agent_core_llm_tool_loop_py_614",
+    "title": "Context-budget RuntimeError: prompt cannot fit the context budget of 150000 chars even after shrinking",
+    "category": "context-budget",
+    "severity": "high",
+    "locations": [
+      "agent_core/llm/tool_loop.py:614"
+    ],
+    "status": "open",
+    "autonomy_level": 1,
+    "evidence": "RuntimeError: prompt cannot fit the context budget of 150000 chars even after shrinking (system prompt + task prompt + newest exchange alone are over it)",
+    "suggested_approach": "Investigate why the fully-shrunk message list still exceeds the 150000-char context budget; check system prompt + task prompt sizes and add proactive truncation before the loop instead of relying solely on the shrink fallback.",
+    "decision_ref": null,
+    "repair_ref": null,
+    "created_at": "2026-11-01T13:29:45+00:00",
+    "resolved_at": null
   }
 ]
