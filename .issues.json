@@ -219,5 +219,22 @@
     "repair_ref": "harnessfix/kanban_bridge.py:_lookup_issue_for",
     "created_at": "2026-11-01T19:09:32+00:00",
     "resolved_at": "2026-11-01T21:25:00+00:00"
+  },
+  {
+    "id": "iss-general-kanban_3ce94eeab70f4b468c59c45848020709",
+    "title": "Shell behavior",
+    "category": "general",
+    "severity": "low",
+    "locations": [
+      "kanban:3ce94eeab70f4b468c59c45848020709"
+    ],
+    "status": "open",
+    "autonomy_level": 1,
+    "evidence": "",
+    "suggested_approach": "",
+    "decision_ref": null,
+    "repair_ref": null,
+    "created_at": "2026-11-01T21:54:54+00:00",
+    "resolved_at": null
   }
 ]
