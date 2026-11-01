@@ -95,11 +95,13 @@ sequenceDiagram
     P->>Q: poll (every 5 s): read from offset.txt
     P->>B: process_inbound → _process_single_message(msg)
     B->>B: card_move → resolve_id(card_guid, .card_id_map.json)<br/>→ issue id; frame_title → FRAME_TO_STATUS → "open"
-    alt mapping/issue found
+    alt mapping resolves and the issue is in the ledger
         B->>I: load_issues(); existing["status"] = "open"; save_issues()
         B-->>P: True (applied)
         P->>Q: advance offset.txt past the line
-    else no matching issue
+    else card untracked — no map entry (board-local card)
+        B-->>P: True consumed as a quiet no-op<br/>(permanent miss — retries can never help)
+    else mapped but issue absent from ledger
         B-->>P: False → _record_failure: retry_count+1,<br/>re-append at tail; ≥3 fails → dead_letters/
     end
 ```
@@ -176,10 +178,15 @@ flowchart LR
 ```
 
 The mapping is bidirectional: `mapping[issue_id] = card_id` **and** `mapping[card_id] = issue_id`.
-Every inbound handler looks up the card guid via the map; if it resolves to nothing, the
-message logs "no matching issue" and fails (retry/dead-letter). This is why a card that was
-never *created through the bridge* (added directly on the Kanban board) has no mapping entry —
-and why earlier versions with one-directional maps silently broke all follow-up updates.
+Every inbound handler resolves the card guid via `_lookup_issue_for` (map lookup, then ledger
+lookup). A card that was never *created through the bridge* (added directly on the Kanban board)
+has no mapping entry: it is **untracked**, so an update/move/delete for it can never resolve — a
+*permanent* condition. Such messages are consumed as quiet no-ops (info log, message applied):
+retrying a permanent miss three times only churns the queue toward dead-letter. A *mapped* lookup
+whose issue is absent from the ledger stays a real anomaly: warning + failure → retry →
+dead-letter. One-directional maps in earlier versions silently broke all follow-up updates of
+bridged cards — bidirectional storage closed that; untracked-card noise (issue "Error when moving
+a Kanban Card") closed the rest.
 
 ## 7. Message lifecycle (queue state machine per message)
 

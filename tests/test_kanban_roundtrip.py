@@ -210,3 +210,102 @@ def test_move_to_finished_resolves_the_issue(shared_queue, tmp_path, monkeypatch
         f"move to Finished left status={issue['status']!r} (expected 'resolved')"
     )
     assert issue["resolved_at"], "a resolved issue must carry resolved_at"
+
+
+# --- Untracked cards: permanent misses are not failures -------------------------
+#
+# A card created directly on the Kanban board was never bridged to an Agent1
+# issue, so it has no entry in .card_id_map.json.  Its update/move/delete
+# messages can therefore NEVER resolve — a permanent condition.  The bridge
+# used to treat every miss the same: warning + False, which re-queued each
+# message three times toward dead-letter (the churn behind issue
+# "Error when moving a Kanban Card").  A permanent, benign miss is consumed
+# as a quiet no-op; only mapped-but-missing stays a loud anomaly.
+
+_UNTRACKED = "02e7042697b64b34af4fb78adf387a27"  # the real-world card guid
+
+
+def _drain_inbound(shared_queue, msg: dict) -> int:
+    """Enqueue one inbound message, process it once, return applied count."""
+    kb.enqueue(msg, shared_queue / "queue-kanban-to-agent1")
+    return kb.process_inbound(shared_queue / "queue-kanban-to-agent1")
+
+
+@pytest.mark.parametrize(
+    "op,payload",
+    [
+        ("card_update", {"title": "edited on the board"}),
+        ("card_move", {"frame_title": "On-going"}),
+        ("card_delete", {}),
+    ],
+    ids=["update", "move", "delete"],
+)
+def test_untracked_card_op_is_a_quiet_noop(
+    shared_queue, tmp_path, monkeypatch, op, payload
+):
+    """A follow-up for a never-bridged card is consumed, not churned."""
+    applied = _drain_inbound(
+        shared_queue, {"op": op, "source_id": _UNTRACKED, "payload": payload}
+    )
+    assert applied == 1, f"{op}: untracked card must be consumed as a no-op"
+
+    queue_dir = shared_queue / "queue-kanban-to-agent1"
+    lines = [
+        ln
+        for ln in (queue_dir / "messages.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if ln.strip()
+    ]
+    assert len(lines) == 1, f"{op}: message was re-queued for retry: {lines}"
+
+    dead_dir = shared_queue / "dead-letter"
+    dead = list(dead_dir.glob("**/*")) if dead_dir.exists() else []
+    assert dead == [], f"{op}: untracked-card message dead-lettered: {dead}"
+
+
+def test_mapped_card_move_still_resolves_the_issue(shared_queue, tmp_path, monkeypatch):
+    """The no-op path must not swallow tracked cards — the move still lands."""
+    store, card_id, client = _app_with_card(monkeypatch, tmp_path)
+
+    assert kb.process_inbound() == 1
+    issue_id = kb.resolve_id(card_id)
+    assert issue_id
+
+    finished = Frame(id=uuid.uuid4().hex, title="Finished")
+    store.add_frame(finished)
+    resp = client.post(
+        f"/api/cards/{card_id}/move",
+        json={"frame_id": finished.id},
+        headers={"X-Requested-With": "XMLHttpRequest"},
+    )
+    assert resp.status_code == 200, resp.get_data(as_text=True)
+
+    assert kb.process_inbound() == 1
+    issue = issue_store.find_by_id(issue_store.load_issues(), issue_id)
+    assert issue is not None and issue["status"] == "resolved"
+
+
+def test_mapped_but_missing_issue_is_a_loud_failure(
+    shared_queue, tmp_path, monkeypatch
+):
+    """A mapping whose issue vanished from the ledger is a real anomaly: it
+    must keep failing loudly (warning + retry), never be silently consumed."""
+    store, card_id, _ = _app_with_card(monkeypatch, tmp_path)
+    assert kb.process_inbound() == 1
+    issue_id = kb.resolve_id(card_id)
+    assert issue_id
+
+    # Sabotage the ledger: the mapping now points at an absent issue.
+    issues = issue_store.load_issues()
+    issues[:] = [i for i in issues if i["id"] != issue_id]
+    issue_store.save_issues(issues)
+
+    applied = _drain_inbound(
+        shared_queue,
+        {"op": "card_move", "source_id": card_id, "payload": {"frame_title": "Issues"}},
+    )
+    assert applied == 0, (
+        "mapped-but-missing is a genuine anomaly — it must not be consumed "
+        "as a quiet no-op"
+    )

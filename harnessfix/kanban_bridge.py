@@ -455,6 +455,31 @@ FRAME_TO_STATUS = {
 # --- Apply functions (Agent1 processes Kanban inbound messages) ----------------
 
 
+def _lookup_issue_for(
+    source_id: str,
+) -> tuple[dict[str, Any] | None, str | None, list[dict[str, Any]]]:
+    """Resolve an inbound card message's ``source_id`` against the ledger.
+
+    Returns ``(existing, resolved_id, issues)``.  ``resolved_id`` is ``None``
+    when ``.card_id_map.json`` holds no entry for the card: it was created
+    directly on the Kanban board and never bridged to an Agent1 issue, so a
+    follow-up update/move/delete can never resolve to anything.  That is a
+    *permanent* condition — no retry can add a mapping that will never arrive
+    — so callers consume such messages as quiet no-ops instead of churning
+    them through retries toward dead-letter.  A resolved id the ledger does not
+    have is the real anomaly: mapped-but-missing means broken state, worth a
+    warning and a retry (the persisted-create fix makes that rare).
+    """
+    from . import issues as issue_store  # lazy import to avoid cycles
+
+    resolved = resolve_id(source_id, _load_id_map())
+    issues = issue_store.load_issues()
+    existing = issue_store.find_by_id(
+        issues, resolved if resolved is not None else source_id
+    )
+    return existing, resolved, issues
+
+
 def _apply_card_create(payload: dict[str, Any]) -> bool:
     """Create an Agent1 issue from a Kanban card CREATE message."""
     from . import issues as issue_store  # lazy import to avoid cycles
@@ -494,19 +519,26 @@ def _apply_card_update(payload: dict[str, Any]) -> bool:
     from . import issues as issue_store  # lazy import
 
     source_id = payload.get("source_id", "")
-    mapping = _load_id_map()
 
     if not source_id:
         return False
 
     # Resolve the issue ID via the card's source_id (Kanban card id)
-    issue_id = resolve_id(source_id, mapping) or source_id
-    issues = issue_store.load_issues()
-    existing = issue_store.find_by_id(issues, issue_id)
+    existing, resolved, issues = _lookup_issue_for(source_id)
+    issue_id = resolved if resolved is not None else source_id
 
     if not existing:
+        if resolved is None:
+            logger.info(
+                "card_update: %s is not tracked by the bridge — nothing to apply",
+                source_id,
+            )
+            return True
         logger.warning(
-            "card_update: no matching issue for %s (source=%s)", issue_id, source_id
+            "card_update: mapped to issue %s that is absent from the ledger "
+            "(source=%s)",
+            issue_id,
+            source_id,
         )
         return False
 
@@ -572,20 +604,26 @@ def _apply_card_move(payload: dict[str, Any]) -> bool:
     from . import issues as issue_store  # lazy import
 
     source_id = payload.get("source_id", "")
-    mapping = _load_id_map()
 
     if not source_id:
         return False
 
-    issue_id = resolve_id(source_id, mapping) or source_id
+    existing, resolved, issues = _lookup_issue_for(source_id)
+    issue_id = resolved if resolved is not None else source_id
     status = _resolve_frame_status(payload)
 
-    issues = issue_store.load_issues()
-    existing = issue_store.find_by_id(issues, issue_id)
-
     if not existing:
+        if resolved is None:
+            logger.info(
+                "card_move: %s is not tracked by the bridge — nothing to apply",
+                source_id,
+            )
+            return True
         logger.warning(
-            "card_move: no matching issue for %s (source=%s)", issue_id, source_id
+            "card_move: mapped to issue %s that is absent from the ledger "
+            "(source=%s)",
+            issue_id,
+            source_id,
         )
         return False
 
@@ -604,18 +642,25 @@ def _apply_card_delete(payload: dict[str, Any]) -> bool:
     from . import issues as issue_store  # lazy import
 
     source_id = payload.get("source_id", "")
-    mapping = _load_id_map()
 
     if not source_id:
         return False
 
-    issue_id = resolve_id(source_id, mapping) or source_id
-    issues = issue_store.load_issues()
-    existing = issue_store.find_by_id(issues, issue_id)
+    existing, resolved, issues = _lookup_issue_for(source_id)
+    issue_id = resolved if resolved is not None else source_id
 
     if not existing:
+        if resolved is None:
+            logger.info(
+                "card_delete: %s is not tracked by the bridge — nothing to apply",
+                source_id,
+            )
+            return True
         logger.warning(
-            "card_delete: no matching issue for %s (source=%s)", issue_id, source_id
+            "card_delete: mapped to issue %s that is absent from the ledger "
+            "(source=%s)",
+            issue_id,
+            source_id,
         )
         return False
 
