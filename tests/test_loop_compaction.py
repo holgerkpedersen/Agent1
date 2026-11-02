@@ -18,9 +18,12 @@ from agent_core.llm.tool_loop import (
     GUARD_COMPACT,
     ToolLoopRunner,
     _compact_messages,
+    _shrink_to_budget,
     _split_for_compaction,
     _summarize_payload,
+    _trim_message_to_keep,
     _total_chars,
+    _SHRINK_HEAD_KEEP,
     _SUMMARIZE_MAX_CHARS,
     _IN_LOOP_CHAR_BUDGET,
 )
@@ -553,6 +556,107 @@ class TestShrinkFallback:
         msgs = self._newest_giant_history(size=100)
         with pytest.raises(RuntimeError, match="cannot fit"):
             _compact_messages(msgs, 80, 100, None)
+
+    # --- Phase 3 (final resort): the FIXED head is trimmed, not fatal -----
+    # Regression for the 2026-11-01 autonomous run: an issue list dumped
+    # verbatim into the task-prompt message left nothing shrinkable — every
+    # eligible body message was already under ``_SHRINK_MIN_CHARS`` and there
+    # was no newer exchange to stub.  The head (system prompt + first user
+    # message) used to be untouchable, so ``_shrink_to_budget`` raised
+    # ``RuntimeError: prompt cannot fit the context budget of 150000 chars``
+    # and the whole run ended in ``generate_failed``.  Phase 3 now truncates
+    # their CONTENTS to a bounded keep size (roles/ids untouched, nothing
+    # dropped) so an over-budget task prompt degrades gracefully.
+
+    def test_fat_task_prompt_degrades_instead_of_killing_the_run(self):
+        msgs = [
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "task " + "t" * 300_000},
+        ]
+        out, changed = _shrink_to_budget(msgs, 20_000)
+        assert changed is True
+        assert [m["role"] for m in out] == ["system", "user"]
+        content = out[1]["content"]
+        # keep size + the marker suffix ("...[truncated N chars to fit
+        # context]", whose length grows with the digit count of the cut).
+        assert len(content) <= _SHRINK_HEAD_KEEP + 64
+        assert content.startswith("task " + "t" * 200)  # head kept, tail cut
+        assert "[truncated" in content  # the cut is marked, not silent
+
+    def test_fat_system_prompt_degrades_instead_of_killing_the_run(self):
+        msgs = [
+            {"role": "system", "content": "s" * 300_000},
+            {"role": "user", "content": "task"},
+        ]
+        out, changed = _shrink_to_budget(msgs, 20_000)
+        assert changed is True
+        assert [m["role"] for m in out] == ["system", "user"]
+        assert len(out[0]["content"]) <= _SHRINK_HEAD_KEEP + 64
+
+    def test_head_trim_keeps_roles_and_tool_pairing(self):
+        msgs = self._newest_giant_history()
+        msgs[1]["content"] = "task " + "u" * 300_000  # fat task prompt
+        out, _changed = _shrink_to_budget(msgs, 20_000)
+        assert [m["role"] for m in out] == [m["role"] for m in msgs]
+        announced = {
+            str(tc.get("id"))
+            for m in out
+            if m.get("role") == "assistant"
+            for tc in (m.get("tool_calls") or [])
+        }
+        answered = {str(m.get("tool_call_id")) for m in out if m.get("role") == "tool"}
+        assert announced == answered == {"t0"}
+
+    def test_head_trim_survives_the_real_compaction_path(self):
+        # Same guarantee through the public entry point used by the loop.
+        msgs = [
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "task " + "t" * 400_000},
+        ]
+        out, note = _compact_messages(msgs, 80, 20_000, None)
+        assert _total_chars(out) <= 20_500
+        assert "[truncated" in str(out[1].get("content"))
+
+    def test_budget_below_the_head_keep_stays_fatal(self):
+        # The documented limit: a budget smaller than the per-message keep
+        # size is still an absurd configuration and must fail loudly.
+        msgs = self._newest_giant_history(size=100)
+        with pytest.raises(RuntimeError, match="cannot fit"):
+            _shrink_to_budget(msgs, 5)
+
+
+class TestTrimMessageToKeep:
+    """Unit coverage for the Phase 3 helper (the head-trim primitive)."""
+
+    def test_none_content_returns_the_same_object(self):
+        msg = {"role": "assistant", "content": None}
+        assert _trim_message_to_keep(msg, 4_000) is msg
+
+    def test_short_content_returns_the_same_object(self):
+        msg = {"role": "user", "content": "short"}
+        assert _trim_message_to_keep(msg, 4_000) is msg
+
+    def test_long_content_is_cut_and_marked_ids_survive(self):
+        msg = {
+            "role": "assistant",
+            "content": "a" * 10_000,
+            "tool_calls": [{"id": "t9", "function": {"name": "run"}}],
+        }
+        out = _trim_message_to_keep(msg, 1_000)
+        assert out is not msg
+        assert out["role"] == "assistant"
+        assert out["tool_calls"] == msg["tool_calls"]  # pairing keys untouched
+        assert len(out["content"]) <= 1_040
+        assert "[truncated" in out["content"]
+
+    def test_multimodal_content_is_replaced_by_a_marker(self):
+        msg = {
+            "role": "user",
+            "content": [{"type": "text", "text": "x" * 5_000}],
+        }
+        out = _trim_message_to_keep(msg, 10)
+        assert isinstance(out["content"], str)
+        assert "[truncated multimodal content" in out["content"]
 
 
 class TestBudgetGuaranteeInRun:

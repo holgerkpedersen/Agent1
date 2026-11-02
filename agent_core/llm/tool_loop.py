@@ -262,7 +262,7 @@ GUARD_COMPACT = "in_loop_compact"
 #: ``LMSTUDIO_CHAT_TIMEOUT`` socket cap during prefill).  A single huge
 #: read/write message can still dwarf the count cap, so a char budget backs it.
 _IN_LOOP_MAX_MESSAGES = 80
-#: ~150k chars ≈ ~37k tokens — leaves plenty of headroom under the 600k
+#: ~250k chars ≈ ~62k tokens — leaves plenty of headroom under the 600k
 #: context window for the system prompt, the live tool calls, and generation.
 #: When the model's REAL context window is known (``context_limit_tokens``,
 #: extracted from the provider — e.g. LM Studio's native /models
@@ -272,7 +272,7 @@ _IN_LOOP_MAX_MESSAGES = 80
 #: anti-bloat default (a 1M-token window must not legitimise megabyte
 #: prompts that make every iteration's prefill crawl into the socket
 #: timeout).
-_IN_LOOP_CHAR_BUDGET = 150_000
+_IN_LOOP_CHAR_BUDGET = 250_000
 
 #: Injected as a "user" message (strict chat templates reject mid-conversation
 #: system roles) when a closed prefix is compacted away.  Tells the model the
@@ -321,6 +321,15 @@ _SHRINK_MIN_CHARS = 1_000
 #: what the model is answering from right now — truncating them is a final
 #: fallback, never a first move).
 _SHRINK_NEWEST_KEEP = 2_000
+
+#: Final-resort keep size for the FIXED part (the leading system prompt and
+#: the leading task-prompt user message).  They used to be untouchable, which
+#: made a fat task prompt — e.g. an autonomous issue list dumped verbatim —
+#: an instant hard failure: nothing left to shrink, so the loop raised
+#: ``RuntimeError`` and the whole run died with ``generate_failed``.  A long
+#: prompt is now truncated (marked, roles/ids intact) instead of killing the
+#: run; only a budget smaller than this keep size stays fatal.
+_SHRINK_HEAD_KEEP = 4_000
 
 
 def _message_size(message: dict[str, Any]) -> int:
@@ -528,6 +537,22 @@ def _shrink_content(content: Any, keep: int) -> Any:
     return content
 
 
+def _trim_message_to_keep(message: dict[str, Any], keep: int) -> dict[str, Any]:
+    """Return *message* with its ``content`` truncated to roughly *keep* chars.
+
+    Only the content bytes shrink: role, ids and tool-call pairing keys are
+    copied through untouched, so the chat-template contract holds by
+    construction.  Returns the same object when there is nothing to trim.
+    """
+    content = message.get("content")
+    if content is None:
+        return message
+    shrunk = _shrink_content(content, keep)
+    if shrunk == content:
+        return message
+    return {**message, "content": shrunk}
+
+
 def _shrink_to_budget(
     messages: list[dict[str, Any]],
     char_budget: int,
@@ -542,15 +567,17 @@ def _shrink_to_budget(
     * nothing is ever DROPPED — same message count, same roles, same
       ``tool_call_id``s, so the chat-template pairing contract holds by
       construction;
-    * the leading system prompt, the first user message, and (until the last
-      resort) the newest exchange (last assistant + everything after it) are
-      never touched;
     * older oversized messages are stubbed first, oldest-first; oversized
-      tool-call arguments are replaced with a valid-JSON placeholder.
+      tool-call arguments are replaced with a valid-JSON placeholder;
+    * the leading system prompt and the leading task-prompt user message are
+      preserved in full unless every other move has been spent — only then
+      (Phase 3) are their contents truncated to ``_SHRINK_HEAD_KEEP``, marked,
+      so an over-budget task prompt degrades gracefully instead of killing
+      the run.
 
     Returns ``(messages, changed)``.  Raises ``RuntimeError`` only when even
-    the fully-shrunk list cannot fit (absurd budget, or a system prompt
-    alone over budget) — a clear failure instead of a guaranteed HTTP 400.
+    the fully-shrunk list cannot fit (an absurd budget smaller than the
+    per-message keep size) — a clear failure instead of a guaranteed HTTP 400.
     """
     msgs = list(messages)
     if _total_chars(msgs) <= char_budget:
@@ -608,6 +635,26 @@ def _shrink_to_budget(
             }
         if stripped != body[i]:
             body[i] = stripped
+            changed = True
+
+    # Phase 3 (final resort): the FIXED part — leading system prompt and the
+    # leading task-prompt user message.  Truncate their contents to a bounded
+    # keep size (roles/ids untouched, nothing dropped).  Before this phase a
+    # fat task prompt was an instant hard failure that killed the whole
+    # autonomous run; now it degrades to a marked summary instead.
+    for i in range(len(head)):
+        if _total() <= char_budget:
+            return head + body, changed
+        trimmed = _trim_message_to_keep(head[i], _SHRINK_HEAD_KEEP)
+        if trimmed != head[i]:
+            head[i] = trimmed
+            changed = True
+    if first_user is not None and first_user < len(body):
+        if _total() <= char_budget:
+            return head + body, changed
+        trimmed = _trim_message_to_keep(body[first_user], _SHRINK_HEAD_KEEP)
+        if trimmed != body[first_user]:
+            body[first_user] = trimmed
             changed = True
 
     if _total() > char_budget:

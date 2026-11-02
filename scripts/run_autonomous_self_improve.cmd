@@ -51,13 +51,13 @@ cd /d "%REPO_ROOT%" || (
 )
 
 rem NOTE on --model: it routes fix-generation AND the benchmark gate to a LIVE
-rem LLM API (qwen/qwen3.8-27b via LM Studio). If that server is NOT running the
+rem LLM API (swift-1.5-qwen3.8-flash-next via LM Studio). If that server is NOT running the
 rem run will fail/hang at the benchmark gate. It does NOT change the outcome
 rem here: the catalog repairs are already applied, so the run ends in
 rem no_repair_catalogued. Drop --model (or add --no-benchmark) for the
 rem offline-only gate when the server is down.
 echo [%date% %time%] [launcher] starting autonomous self-improve >> "%LOG_FILE%"
-"%PYTHON_EXE%" "%DRIVER%" --auto --max-iterations 5 --traces "%REPO_ROOT%\reports\traces" --model qwen/qwen3.8-27b --profile deep-analysis >> "%LOG_FILE%" 2>&1
+"%PYTHON_EXE%" "%DRIVER%" --auto --max-iterations 5 --traces "%REPO_ROOT%\reports\traces" --model swift-1.5-qwen3.8-flash-next --profile deep-analysis >> "%LOG_FILE%" 2>&1
 set "RC=%ERRORLEVEL%"
 echo [%date% %time%] [launcher] finished with exit code %RC% >> "%LOG_FILE%"
 
