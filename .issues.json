@@ -245,14 +245,14 @@
     "locations": [
       "kanban:287ab40ccdf84bf892049541be86014b"
     ],
-    "status": "planned",
+    "status": "resolved",
     "autonomy_level": 1,
     "evidence": "",
     "suggested_approach": "",
     "decision_ref": null,
     "repair_ref": null,
     "created_at": "2026-11-02T10:40:46+00:00",
-    "resolved_at": null
+    "resolved_at": "2026-11-02T12:45:38+00:00"
   },
   {
     "id": "iss-general-kanban_deb4445272a74800af91885ddcba454d",
@@ -269,6 +269,23 @@
     "decision_ref": null,
     "repair_ref": null,
     "created_at": "2026-11-02T12:41:43+00:00",
+    "resolved_at": null
+  },
+  {
+    "id": "iss-general-kanban_059375f7c246475dac5585be3ba90afe",
+    "title": "Communicating current shell.",
+    "category": "general",
+    "severity": "low",
+    "locations": [
+      "kanban:059375f7c246475dac5585be3ba90afe"
+    ],
+    "status": "open",
+    "autonomy_level": 1,
+    "evidence": "",
+    "suggested_approach": "",
+    "decision_ref": null,
+    "repair_ref": null,
+    "created_at": "2026-11-02T12:50:50+00:00",
     "resolved_at": null
   }
 ]
