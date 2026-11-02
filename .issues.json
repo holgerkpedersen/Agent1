@@ -171,7 +171,7 @@
   },
   {
     "id": "iss-general-kanban_f01a7cb8fb514e7d8e48f8d224b66d24",
-    "title": "clear command",
+    "title": "Agent1 clear command",
     "category": "general",
     "severity": "low",
     "locations": [
@@ -252,6 +252,23 @@
     "decision_ref": null,
     "repair_ref": null,
     "created_at": "2026-11-02T10:40:46+00:00",
+    "resolved_at": null
+  },
+  {
+    "id": "iss-general-kanban_deb4445272a74800af91885ddcba454d",
+    "title": "Agent1 sometimes change to another language.",
+    "category": "general",
+    "severity": "low",
+    "locations": [
+      "kanban:deb4445272a74800af91885ddcba454d"
+    ],
+    "status": "open",
+    "autonomy_level": 1,
+    "evidence": "",
+    "suggested_approach": "",
+    "decision_ref": null,
+    "repair_ref": null,
+    "created_at": "2026-11-02T12:41:43+00:00",
     "resolved_at": null
   }
 ]
