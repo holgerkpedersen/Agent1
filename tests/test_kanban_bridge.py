@@ -753,6 +753,11 @@ class TestResolveFrameStatus:
     The Kanban side now sends ``frame_title`` alongside ``frame_id``; these
     tests pin the reader's half of that contract, including the fallback that
     keeps pre-fix messages (id only) from crashing.
+
+    A column that resolves to nothing is reported as ``None`` ("this move
+    carries no status"), NOT ``"open"``.  The old ``"open"`` fallback did not
+    merely keep those messages from crashing — it rewrote the issue status, so
+    moving a card into any unrecognised column reopened a resolved issue.
     """
 
     def test_title_resolves_to_its_status(self):
@@ -775,14 +780,14 @@ class TestResolveFrameStatus:
             )
             assert got == status, f"{title!r} must map to {status!r}, got {got!r}"
 
-    def test_opaque_id_alone_falls_back_to_open(self):
-        """Pre-fix messages carry only the uuid; they must not crash."""
+    def test_opaque_id_alone_resolves_to_no_status(self):
+        """Pre-fix messages carry only the uuid; they must not crash *or* reset."""
         import harnessfix.kanban_bridge as kb
 
         assert (
             kb._resolve_frame_status({"payload": {"frame_id": "6f1c-uuid-not-a-title"}})
-            == "open"
-        )
+            is None
+        ), "an unresolvable column carries no status — it must not become 'open'"
 
     def test_empty_title_does_not_shadow_the_id(self):
         """An empty ``frame_title`` must not stop a usable id being tried."""
@@ -805,10 +810,11 @@ class TestResolveFrameStatus:
             == "in-progress"
         )
 
-    def test_unknown_title_is_open(self):
+    def test_unknown_title_resolves_to_no_status(self):
+        """A renamed/custom column supplies no status; it must not reopen."""
         import harnessfix.kanban_bridge as kb
 
         assert (
             kb._resolve_frame_status({"payload": {"frame_title": "Not A Column"}})
-            == "open"
+            is None
         )

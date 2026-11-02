@@ -455,20 +455,48 @@ FRAME_TO_STATUS = {
 # --- Apply functions (Agent1 processes Kanban inbound messages) ----------------
 
 
+def _find_issue_by_card_location(
+    issues: list[dict[str, Any]], card_id: str
+) -> dict[str, Any] | None:
+    """Find the issue whose ``locations`` carry ``kanban:<card_id>``.
+
+    ``_apply_card_create`` always records the originating card this way, so
+    the ledger holds the card↔issue link independently of
+    ``.card_id_map.json``.  The map is a *cache* of that link and it does get
+    lost: in the live data it holds 357 keys, 280 of them card guids, and only
+    32 of those name a card that is still on the board (248 are stale); and
+    ``f01a7cb8…`` has an issue in the ledger with no map entry at all.
+    Falling back to the location lets such a card move again instead of being
+    classified as never-bridged.
+    """
+    wanted = f"kanban:{card_id}"
+    for issue in issues:
+        for location in issue.get("locations") or []:
+            if isinstance(location, str) and location == wanted:
+                return issue
+    return None
+
+
 def _lookup_issue_for(
     source_id: str,
 ) -> tuple[dict[str, Any] | None, str | None, list[dict[str, Any]]]:
     """Resolve an inbound card message's ``source_id`` against the ledger.
 
     Returns ``(existing, resolved_id, issues)``.  ``resolved_id`` is ``None``
-    when ``.card_id_map.json`` holds no entry for the card: it was created
-    directly on the Kanban board and never bridged to an Agent1 issue, so a
-    follow-up update/move/delete can never resolve to anything.  That is a
-    *permanent* condition — no retry can add a mapping that will never arrive
-    — so callers consume such messages as quiet no-ops instead of churning
-    them through retries toward dead-letter.  A resolved id the ledger does not
-    have is the real anomaly: mapped-but-missing means broken state, worth a
-    warning and a retry (the persisted-create fix makes that rare).
+    when neither ``.card_id_map.json`` nor the ledger's ``kanban:<card_id>``
+    locations link the card to an issue: it was created directly on the Kanban
+    board and never bridged to an Agent1 issue, so a follow-up
+    update/move/delete can never resolve to anything.  That is a *permanent*
+    condition — no retry can add a mapping that will never arrive — so callers
+    consume such messages as quiet no-ops instead of churning them through
+    retries toward dead-letter.  A resolved id the ledger does not have is the
+    real anomaly: mapped-but-missing means broken state, worth a warning and a
+    retry (the persisted-create fix makes that rare).
+
+    A hit through the location fallback also **heals** ``.card_id_map.json``:
+    the pair was recoverable, so it is written back.  Without that the next
+    message for the same card would pay for the same full-ledger scan, and the
+    map would keep drifting from the ledger it mirrors.
     """
     from . import issues as issue_store  # lazy import to avoid cycles
 
@@ -477,6 +505,16 @@ def _lookup_issue_for(
     existing = issue_store.find_by_id(
         issues, resolved if resolved is not None else source_id
     )
+    if existing is None:
+        recovered = _find_issue_by_card_location(issues, source_id)
+        if recovered is not None:
+            logger.info(
+                "Recovered lost card↔issue link %s → %s from issue locations",
+                source_id,
+                recovered["id"],
+            )
+            link_ids(recovered["id"], source_id)
+            return recovered, recovered["id"], issues
     return existing, resolved, issues
 
 
@@ -582,21 +620,32 @@ def _apply_card_update(payload: dict[str, Any]) -> bool:
     return True
 
 
-def _resolve_frame_status(payload: dict[str, Any]) -> str:
-    """Map a card_move payload to an issue status.
+def _resolve_frame_status(payload: dict[str, Any]) -> str | None:
+    """Map a card_move payload to an issue status, or ``None`` for no opinion.
 
     The Kanban side sends the column *title* ("Finished") alongside the opaque
     frame id.  ``FRAME_TO_STATUS`` is keyed by title, so resolving the id alone
-    could never hit: every move fell back to "open", silently rewriting a
-    resolved issue back to open.  The id is still accepted for messages that
-    were enqueued before the title was added.
+    could never hit: every move fell back to a status and silently rewrote the
+    issue.  The id is still accepted for messages that were enqueued before
+    the title was added.
+
+    ``None`` is the answer for a column that is not in the table (renamed or
+    custom column, or a pre-fix message carrying only an opaque ``frame_id``).
+    Returning ``"open"`` there — the old behaviour — meant a move to an unknown
+    column reopened a resolved issue, so "Finished" followed by anything
+    unrecognised silently undid the resolution.  Callers must treat ``None`` as
+    "the move carries no status" and leave the record alone.
     """
     inner = payload.get("payload", payload) or {}
     for key in ("frame_title", "frame_id"):
         value = inner.get(key, "")
         if value and value in FRAME_TO_STATUS:
             return FRAME_TO_STATUS[value]
-    return "open"
+    logger.info(
+        "card_move: payload names no known column (%r) — carrying no status",
+        inner.get("frame_title") or inner.get("frame_id") or "",
+    )
+    return None
 
 
 def _apply_card_move(payload: dict[str, Any]) -> bool:
@@ -627,7 +676,23 @@ def _apply_card_move(payload: dict[str, Any]) -> bool:
         )
         return False
 
-    old_status = existing["status"]
+    if status is None:
+        # The column is unknown, so the move supplies no status.  Consume it:
+        # there was no issue-level change to apply, and failing here would
+        # dead-letter a message whose only problem is a column title the table
+        # does not know.
+        logger.info(
+            "card_move: %s names no known column — status of %s left unchanged",
+            source_id,
+            issue_id,
+        )
+        return True
+
+    # ``.get`` rather than ``[``: a ledger record written before the status
+    # field existed (or by the flags="repair" path) has no ``status`` key, and
+    # subscripting raised KeyError — which surfaced as a retry and then a dead
+    # letter instead of an applied move.
+    old_status = existing.get("status", "open")
     existing["status"] = status
     if status in ("resolved", "wontfix") and old_status not in ("resolved", "wontfix"):
         existing["resolved_at"] = issue_store._now()

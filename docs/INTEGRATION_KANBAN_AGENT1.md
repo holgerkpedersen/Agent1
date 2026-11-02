@@ -94,12 +94,15 @@ sequenceDiagram
     Note over Q: seq advanced in seq.txt
     P->>Q: poll (every 5 s): read from offset.txt
     P->>B: process_inbound → _process_single_message(msg)
-    B->>B: card_move → resolve_id(card_guid, .card_id_map.json)<br/>→ issue id; frame_title → FRAME_TO_STATUS → "open"
-    alt mapping resolves and the issue is in the ledger
-        B->>I: load_issues(); existing["status"] = "open"; save_issues()
+    B->>B: card_move → _lookup_issue_for(card_guid):<br/>resolve_id(.card_id_map.json) → issue id,<br/>else match locations "kanban:&lt;card_guid&gt;"<br/>(a hit writes the pair back into the map)
+    B->>B: frame_title → FRAME_TO_STATUS → status<br/>(unknown column → None, no status opinion)
+    alt the issue is in the ledger and the column is known
+        B->>I: load_issues(); existing["status"] = status; save_issues()
         B-->>P: True (applied)
         P->>Q: advance offset.txt past the line
-    else card untracked — no map entry (board-local card)
+    else issue found but the column is not in FRAME_TO_STATUS
+        B-->>P: True consumed — status left unchanged<br/>(an unknown column must not reset the issue)
+    else card untracked — no map entry AND no kanban: location
         B-->>P: True consumed as a quiet no-op<br/>(permanent miss — retries can never help)
     else mapped but issue absent from ledger
         B-->>P: False → _record_failure: retry_count+1,<br/>re-append at tail; ≥3 fails → dead_letters/
@@ -172,15 +175,20 @@ flowchart LR
         W["_apply_card_create: make_issue(...)<br/>→ save → link_ids(issue_id, card_id)"]
     end
     subgraph READ["Read by"]
-        R1["card_update / card_move / card_delete:<br/>resolve_id(source_id=card_guid) → issue id"]
+        R1["card_update / card_move / card_delete:<br/>_lookup_issue_for(card_guid):<br/>resolve_id(map) → issue id, else match<br/>issue locations 'kanban:&lt;card_guid&gt;'"]
     end
     WRITE --> MAPFILE --> READ
 ```
 
 The mapping is bidirectional: `mapping[issue_id] = card_id` **and** `mapping[card_id] = issue_id`.
-Every inbound handler resolves the card guid via `_lookup_issue_for` (map lookup, then ledger
-lookup). A card that was never *created through the bridge* (added directly on the Kanban board)
-has no mapping entry: it is **untracked**, so an update/move/delete for it can never resolve — a
+Every inbound handler resolves the card guid via `_lookup_issue_for`: the map entry first, then
+the ledger's `kanban:<card_guid>` location (written by `_apply_card_create`), which also **heals**
+the map by writing the pair back. The second step matters because the map is only a cache of the
+link — in the live data it holds 357 keys, 280 of them card guids, and only 32 of those name a
+card still on the board (248 are stale); a card whose issue
+is in the ledger can be missing from it entirely. A card that was never *created through the
+bridge* (added directly on the Kanban board) has neither a mapping entry nor a location: it is
+**untracked**, so an update/move/delete for it can never resolve — a
 *permanent* condition. Such messages are consumed as quiet no-ops (info log, message applied):
 retrying a permanent miss three times only churns the queue toward dead-letter. A *mapped* lookup
 whose issue is absent from the ledger stays a real anomaly: warning + failure → retry →
@@ -232,7 +240,7 @@ to `queue-kanban-to-agent1\messages.jsonl`.
 | ------------- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
 | `card_create` | `_apply_card_create` | builds + **persists** a new issue (`make_issue` → upsert → save), then `link_ids(issue, card)`; tags `[category]`, `[severity:x]`, `[status:y]`; text split on `\n\n---\n` into evidence / approach | creates the mapping |
 | `card_update` | `_apply_card_update` | updates title / appends `[note]` to evidence / replaces suggested_approach and status; saves ledger                                                                                                 | yes (via source_id) |
-| `card_move`   | `_apply_card_move`   | sets issue `status` from `FRAME_TO_STATUS[frame_title]`; stamps `resolved_at` on resolved/wontfix transitions                                                                                       | yes (via source_id) |
+| `card_move`   | `_apply_card_move`   | sets issue `status` from `FRAME_TO_STATUS[frame_title]`; an unknown column supplies no status and leaves the record unchanged; stamps `resolved_at` on resolved/wontfix transitions | yes (via source_id) |
 | `card_delete` | `_apply_card_delete` | resolves the issue with disposition `wontfix`, note "Card deleted from Kanban"                                                                                                                      | yes (via source_id) |
 
 ## 10. Boot wiring (who runs the reader)
@@ -270,8 +278,12 @@ If you move a card and see no effect on Agent1:
    `KANBAN_SYNC_ENABLED=1` must be set (env wins, repo `.env` fallback), then restart/start Agent1 —
    the poller runs every 5 s. One-shot: `python -m harnessfix.kanban_bridge --process-in`.
 3. **Is a sync-enabled board active?** `active.json` → `board-<id>.json` must have `"sync": {"agent1": true}`.
-4. **Does the card map know this card?** A card added directly on the board has no issue mapping;
-   moves/updates of it resolve to nothing and dead-letter after 3 tries. Check `.card_id_map.json`.
+4. **Does the bridge know this card?** A card added directly on the board has neither a mapping
+   entry nor an issue location; moves/updates of it are consumed as quiet no-ops (nothing to apply,
+   no dead-letter). Check `.card_id_map.json` and the issue's `locations` for
+   `kanban:<card_guid>` — a pair that exists only in the ledger is healed back into the map on the
+   next message. A card that *is* mapped but whose issue has vanished from `.issues.json` is broken
+   state: it warns, retries, and lands in `dead_letters/` after 3 tries.
 5. **`boards\agent1.json` will never update from Agent1 automatically** — it is only written by the
    Kanban app when that board saves. Outbound replies land in `queue-agent1-to-kanban\messages.jsonl`;
    the Kanban app drains them into its own board state.
