@@ -68,7 +68,10 @@ class AgentDisplayMode(str, enum.Enum):
     CLEAN   — a short human-readable reason precedes each call, results are
     summarized for display only; the model always receives the full payload.
     QUIET   — tool calls/results are hidden from stdout; only the final answer
-    is printed (useful when piping output or running headless).
+    is printed (useful when piping output or running headless).  Because the
+    user sees no tool activity, ``quiet_mode_system_suffix`` makes the model
+    narrate its work as a plan instead: an upfront plain-language overall plan,
+    a numbered task plan with a per-step HOW, and a closing Markdown summary.
     """
 
     VERBOSE = "verbose"

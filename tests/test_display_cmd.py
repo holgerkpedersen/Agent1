@@ -202,3 +202,36 @@ class TestIntentSystemSuffix:
         monkeypatch.setenv("AGENT_DISPLAY_MODE", "intent")
         text = "BASE PROMPT" + _INTENT_SYSTEM_SUFFIX
         assert strip_dynamic_system_blocks(text) == "BASE PROMPT"
+
+
+class TestQuietSystemSuffix:
+    """``quiet_mode_system_suffix`` steers the model to emit an upfront
+    12-year-old-level plan + per-step HOW + closing Markdown summary when
+    (and only when) QUIET mode is on.
+    """
+
+    def test_suffix_present_when_quiet_mode(self, sandbox, monkeypatch):
+        from agent_core.run_utils import quiet_mode_system_suffix
+
+        monkeypatch.setenv("AGENT_DISPLAY_MODE", "quiet")
+        text = quiet_mode_system_suffix()
+        assert "QUIET DISPLAY MODE" in text
+        assert "OVERALL PLAN" in text
+        assert "HOW" in text
+        assert "WHAT NEXT" in text
+
+    def test_suffix_empty_in_other_modes(self, sandbox, monkeypatch):
+        from agent_core.run_utils import quiet_mode_system_suffix
+
+        for mode in ("verbose", "clean", "intent"):
+            monkeypatch.setenv("AGENT_DISPLAY_MODE", mode)
+            assert quiet_mode_system_suffix() == ""
+
+    def test_strip_removes_quiet_suffix_no_accumulation(self, sandbox, monkeypatch):
+        from agent_core.run_utils import (
+            _QUIET_MODE_SYSTEM_SUFFIX,
+            strip_dynamic_system_blocks,
+        )
+
+        text = "BASE PROMPT" + _QUIET_MODE_SYSTEM_SUFFIX
+        assert strip_dynamic_system_blocks(text) == "BASE PROMPT"

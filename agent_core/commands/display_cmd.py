@@ -42,7 +42,8 @@ class DisplayCommand(Command):
             print(f"Display mode is '{current.value}'.")
             print(
                 "Options: verbose (every call + result), clean (reason per call, "
-                "summarized results), quiet (only final answer), intent (model's "
+                "summarized results), quiet (no tool lines — the model narrates a "
+                "plan up front and a Markdown summary at the end), intent (model's "
                 "intent + planned calls before each LLM round's tools run)."
             )
             return True

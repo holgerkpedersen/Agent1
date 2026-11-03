@@ -96,11 +96,27 @@ much of the model's intent is shown:
 > display intent          the model's intent + planned calls, before they run
 > display clean           one reason line per call, summarized results
 > display verbose         every call + full result (default)
-> display quiet           one plain-language intent line per round
+> display quiet           no tool lines; the model narrates a plan + summary
 ```
 
 The choice is written to `AGENT_DISPLAY_MODE` in `.env`, so it survives a REPL
 restart. You can also set that variable by hand (see `.env.example`).
+
+### `quiet` — no tool lines, so the model narrates a plan
+
+`quiet` prints no `[tool]`/`[result]` lines at all: during a turn the only
+thing you see is the model's own prose. To keep that useful, while `quiet` is
+on the system prompt asks the model to structure its prose:
+
+1. an **OVERALL PLAN** in plain words — what it will do and why, explained
+   like to a 12-year-old (no file paths, no code);
+2. a numbered **TASK PLAN** of small steps, each with a short **HOW** line;
+3. after the work, a tidy Markdown **summary** of what changed plus a
+   **WHAT NEXT** conclusion.
+
+The plan is emitted before implementation starts and the summary closes the
+turn, so a headless/piped session still shows the shape of the work. Tool
+calls themselves stay hidden — that is the contract of `quiet`.
 
 ### `intent` — the model explains itself before acting
 

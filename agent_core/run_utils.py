@@ -177,6 +177,18 @@ _INTENT_SYSTEM_SUFFIX = (
     "separately."
 )
 
+_QUIET_MODE_SYSTEM_SUFFIX = (
+    "\n\nQUIET DISPLAY MODE is ON. The user sees almost no tool activity, so "
+    "you must narrate your work as a plan instead. Before you start "
+    "implementing, write an OVERALL PLAN at a 12-year-old level: what you "
+    "will do and why, in plain words (no program details, no file paths, no "
+    "code). Then break it into a numbered TASK PLAN of small steps. For each "
+    "step, add a short 'HOW' line saying how that step will be carried out. "
+    "After you finish, close with a tidy Markdown summary of what was done "
+    "and a 'WHAT NEXT' conclusion telling the user the recommended next "
+    "action. Keep every section short."
+)
+
 
 def intent_mode_system_suffix() -> str:
     """Appended to the system prompt when the session display mode is INTENT.
@@ -190,6 +202,28 @@ def intent_mode_system_suffix() -> str:
 
         if resolve_display_mode() is AgentDisplayMode.INTENT:
             return _INTENT_SYSTEM_SUFFIX
+    except Exception:
+        pass
+    return ""
+
+
+def quiet_mode_system_suffix() -> str:
+    """Appended to the system prompt when the session display mode is QUIET.
+
+    Empty string in every other mode.  ``agent._refresh_system_message``
+    rebuilds the dynamic blocks each turn, so a mid-session
+    ``display quiet`` starts steering on the next turn.
+
+    QUIET hides tool activity, so the model's own prose is the only thing the
+    user sees during a turn: the suffix makes that prose a plan (upfront
+    overall plan + numbered task plan with per-step HOW) and a closing
+    Markdown summary, so the turn stays narratable without any tool lines.
+    """
+    try:
+        from agent_core.config import AgentDisplayMode
+
+        if resolve_display_mode() is AgentDisplayMode.QUIET:
+            return _QUIET_MODE_SYSTEM_SUFFIX
     except Exception:
         pass
     return ""
@@ -350,6 +384,7 @@ def strip_dynamic_system_blocks(text: str) -> str:
         "\n\nCRITICAL DESIGN CONSTRAINTS",
         "\n\nSESSION MODE: PLAN",
         "\n\nINTENT DISPLAY MODE",
+        "\n\nQUIET DISPLAY MODE",
         "\n\nORIGINAL TASK",
         "\n\nSKILLS (on-demand procedural knowledge)",
         "\n\nUSER HABITS",
