@@ -567,6 +567,18 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
                         "type": "number",
                         "description": "Decision threshold in [0,1] (default 0.7).",
                     },
+                    "strategy": {
+                        "type": "string",
+                        "enum": ["single", "cascade", "triage", "verify"],
+                        "description": (
+                            "Decision policy (default 'single'): 'cascade' = "
+                            "accept when confident, ESCALATE to you when "
+                            "unsure; 'triage' = pick among 'options', "
+                            "re-checked with the order swapped; 'verify' = "
+                            "judge the draft answer in 'state' against the "
+                            "task in 'question'."
+                        ),
+                    },
                 },
                 "required": ["kind", "question"],
             },

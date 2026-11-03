@@ -68,6 +68,31 @@ Short and factual beats long and persuasive.
 - **Act only on TRUE (P ≥ threshold).** Otherwise treat the result as
   *undecided* and say so — never round 0.55 up to "jev approved".
 
+## The `strategy` Parameter — Built-in Accept/Escalate Policy
+
+`jev_decide` accepts a `strategy` that moves the accept/escalate policy
+**into the tool** (`agent_core/jev_strategy.py`) instead of your head.
+The reply is then a typed verdict: `ACCEPT` (safe to act) or `ESCALATE`
+(with the concrete reason and numbers).
+
+| strategy | behaviour | use for |
+|----------|-----------|---------|
+| `single` (default) | raw answer, no verdict | quick one-shot judgements |
+| `cascade` | ACCEPT when the signal clears `threshold` (choice also needs a runner-up gap, score also needs a tight spread); ESCALATE otherwise | gating before expensive work |
+| `triage` | `cascade` on a choice, re-asked with the **order swapped**; a winner that moves escalates | position-bias-sensitive picks among options |
+| `verify` | yesno judge of the draft answer in `state` against the task in `question` | pre-commit self-check of a draft |
+
+Rules of the verdict:
+
+- **ESCALATE is not a failure and not a "no".** It means "beyond a cheap
+  judgement" — do the real work (`speculate`, subagents, the test run) or
+  ask the user. Never report an ESCALATE as a negative answer.
+- `threshold` flows into every strategy; `triage` additionally enforces a
+  minimum winner gap on both orderings.
+- All-abstain samples and engine errors **escalate, never fabricate** —
+  the verdict carries the reason, so you can tell "unsure" from "no".
+- `triage` needs `options`; `verify` needs `state` (the draft to judge).
+
 ## When to Call — the Escalation Ladder
 
 1. **Gate before expensive work.** One `yesno` can save a `speculate`

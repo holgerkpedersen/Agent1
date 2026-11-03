@@ -667,10 +667,23 @@ async def _nlp_jev_decide(agent: "Agent", args: dict[str, Any]) -> str:
 
     The engine is built from ``settings.jev_model`` (never ``self.llm``), so
     a fast local small model makes yes/no, choice and rubric-score calls
-    without involving the main model.  Failures return an error string; the
-    tool is read-only and therefore allowed in plan mode too.
+    without involving the main model.  ``strategy`` selects the cheap-first
+    policy (see ``agent_core.jev_strategy``): ``single`` (default, the raw
+    answer), ``cascade`` (accept when confident, escalate when unsure),
+    ``triage`` (order-swap stability check among ``options``) or ``verify``
+    (judge the draft answer in ``state`` against the task).  Failures return
+    an error string; the tool is read-only and allowed in plan mode too.
     """
     from agent_core.jev_engine import JevQuestion, build_jev_engine
+    from agent_core.jev_strategy import (
+        STRATEGY_CASCADE,
+        STRATEGY_TRIAGE,
+        STRATEGY_VERIFY,
+        VALID_STRATEGIES,
+        cascade_decide,
+        triage,
+        verify_answer,
+    )
 
     kind = str(args.get("kind") or "yesno").strip().lower()
     text = str(args.get("question") or "").strip()
@@ -682,6 +695,19 @@ async def _nlp_jev_decide(agent: "Agent", args: dict[str, Any]) -> str:
     options = tuple(str(o).strip() for o in raw_options if str(o).strip())
     rubric = str(args.get("rubric") or "")
     state = str(args.get("state") or "")
+    strategy = str(args.get("strategy") or "single").strip().lower()
+    if strategy not in VALID_STRATEGIES:
+        return (
+            "Error: unknown strategy "
+            f"{strategy!r} (use single, cascade, triage, verify)."
+        )
+    if strategy == STRATEGY_TRIAGE and not options:
+        return "Error: strategy='triage' requires 'options'."
+    if strategy == STRATEGY_VERIFY and not state:
+        return (
+            "Error: strategy='verify' requires 'state' "
+            "(the draft answer to judge)."
+        )
     raw_threshold = args.get("threshold")
     if raw_threshold is None:
         # B4: calibrated default — once >= 10 labeled decisions exist,
@@ -706,15 +732,19 @@ async def _nlp_jev_decide(agent: "Agent", args: dict[str, Any]) -> str:
         except (TypeError, ValueError):
             threshold = 0.7
     threshold = min(1.0, max(0.0, threshold))
-    try:
-        question = JevQuestion(
-            kind=kind,
-            text=text,
-            options=options,
-            rubric=rubric,
-        )
-    except ValueError as exc:
-        return f"Error: {exc}"
+    question = None
+    if strategy != STRATEGY_VERIFY:
+        # verify builds its own yesno question from task + answer; the
+        # other strategies validate the typed question up front.
+        try:
+            question = JevQuestion(
+                kind=kind,
+                text=text,
+                options=options,
+                rubric=rubric,
+            )
+        except ValueError as exc:
+            return f"Error: {exc}"
     try:
         engine = build_jev_engine(
             threshold=threshold,
@@ -724,6 +754,25 @@ async def _nlp_jev_decide(agent: "Agent", args: dict[str, Any]) -> str:
     except Exception as exc:  # noqa: BLE001 - surface a clear setup error
         return f"jev_decide error: {exc}"
     try:
+        if strategy == STRATEGY_CASCADE:
+            verdict = await cascade_decide(
+                engine, question, state, accept_threshold=threshold
+            )
+            return verdict.to_text()
+        if strategy == STRATEGY_TRIAGE:
+            verdict = await triage(
+                engine,
+                text,
+                list(options),
+                state,
+                accept_threshold=threshold,
+            )
+            return verdict.to_text()
+        if strategy == STRATEGY_VERIFY:
+            verdict = await verify_answer(
+                engine, text, state, threshold=threshold
+            )
+            return verdict.to_text()
         result = await engine.decide(question, state)
     except Exception as exc:  # noqa: BLE001 - never kill the turn
         return f"jev_decide error: {exc}"

@@ -198,5 +198,5 @@ perf_history.json
 mcp.json
 reports/mcp/
 
-# Scratch / debug output files (e.g. _tmp_*.txt written by tests)
-_tmp_*.txt
+# Scratch / debug output files (e.g. _tmp_* written by tests or ad-hoc runs)
+_tmp_*

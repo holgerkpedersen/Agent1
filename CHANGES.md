@@ -1,3 +1,26 @@
+## 2026-11-03 - fix(tests): chat-prompt assertions expect the shell tag in the REPL header
+
+**Change**: `tests/test_chat_prompt_color.py` pinned the pre-shell-unification REPL header. Commit `d9997c4` made `_build_chat_prompt` always render `[shell: <token>]` before the mode tag (the documented "the REPL prompt names the active shell" behaviour), but the two full-string assertions still expected `[timestamp] branch [mode]` — so they failed on every machine, independent of which shell is detected. The tests now monkeypatch `agent_core.shell_utils.detect_shell` to a fixed token (deterministic, no dependency on the host shell) and expect the tagged header. The third test (plan vs build differ) was already tag-agnostic and is untouched.
+
+**Reason**: the two failures surfaced in the change-affected (testmon) verification run and would have broken CI on push. They predate this session's Jev-strategy work: `d9997c4` changed `agent_core/cli/interactive.py` but not this test file, and the full-suite timeout had kept them invisible.
+
+**Files**: `tests/test_chat_prompt_color.py`, `CHANGES.md`. Verified: `pytest tests/test_chat_prompt_color.py -q --no-cov` -> 3 passed; the full change-affected set (testmon, 459 tests) is green.
+
+## 2026-11-03 - feat(jev): strategy layer for jev_decide — cascade, triage, verify (card afad5797)
+
+**Change**: new `agent_core/jev_strategy.py` turns the raw `jev_decide` answer into an **actionable verdict** (ACCEPT / ESCALATE with a reason) via cheap-first decision policies over the existing engine:
+
+1. *`cascade_decide`.* Accepts when the signal is strong enough — yesno: P(yes) or P(no) ≥ threshold; choice: winner ≥ threshold **and** the gap to the runner-up ≥ margin; score: value ≥ threshold **and** spread ≤ `spread_max`. Anything weaker, plus all-abstain and engine errors, escalates with the concrete numbers instead of fabricating a call.
+2. *`triage`.* Chooses among options, then re-asks with the **order swapped** (position-bias guard, per the judge-bias research in `skills/jev-strategy`). The winner must clear threshold + margin in **both** orderings; a moving winner escalates.
+3. *`verify_answer`.* Builds a yesno question from a task + the draft answer and judges the answer against the task — the pre-commit self-check.
+4. *`run_ladder`.* Runs strategies in order (cheapest first) and stops at the first ACCEPT; all-escalate collapses into one combined ESCALATE.
+
+Wiring: the `jev_decide` tool gained a `strategy` parameter (`agent_core/handlers/nlp_tools.py:_nlp_jev_decide` — `single` (default, byte-identical old behaviour) / `cascade` / `triage` (requires `options`) / `verify` (requires `state`)), the tool schema advertises it (`agent_core/tool_schemas.py`), and the system prompt teaches it (`agent_core/shell_utils.py`): act on ACCEPT, treat ESCALATE as "do the real work or ask the user" — never as a negative answer.
+
+**Reason**: Kanban card `afad5797aaf744689773fe710247d730`. The engine already returned probabilities, but the accept/escalate policy lived in the model's head — so a mid-range 0.55 could be rounded up to "jev approved" and a confident 0.86 had no explicit "safe to act" semantics. Making the policy part of the tool (typed, threshold-driven, abstention-safe) is what the FrugalGPT-style cascade literature prescribes: the small model settles the easy cases, and the hard ones escalate with a reason instead of a guess.
+
+**Files**: `agent_core/jev_strategy.py` (new), `agent_core/handlers/nlp_tools.py`, `agent_core/tool_schemas.py`, `agent_core/shell_utils.py`, `tests/test_jev_strategy.py` (new), `skills/jev-strategy/SKILL.md`, `.issues.json`, `CHANGES.md`. Verified: `pytest tests/test_jev_strategy.py -q --no-cov` -> 38 passed; ruff clean on all changed files.
+
 ## 2026-11-02 - feat(prompts,shell): one owner for reply language, and one shell for prompt and execution
 
 **Change**: two related "what the model is told must match what runs" fixes.

@@ -287,5 +287,22 @@
     "repair_ref": "agent_core/shell_utils.py:run_shell_command",
     "created_at": "2026-11-02T12:50:50+00:00",
     "resolved_at": "2026-11-02T20:24:10+00:00"
+  },
+  {
+    "id": "iss-general-kanban_afad5797aaf744689773fe710247d730",
+    "title": "Jev strategy layer: escalation strategies for jev_decide (cascade, triage, verify)",
+    "category": "general",
+    "severity": "low",
+    "locations": [
+      "kanban:afad5797aaf744689773fe710247d730"
+    ],
+    "status": "resolved",
+    "autonomy_level": 1,
+    "evidence": "[note] Card asked for a strategy layer on top of the jev_decide decision engine. Added agent_core/jev_strategy.py: cheap-first decision policies that map typed engine results to ACCEPT/ESCALATE verdicts - cascade_decide (accept when the probability reaches the threshold, escalate with a reason otherwise), triage (choose among options, re-asked with the order swapped as a position-bias guard, escalates when the winner moves), verify_answer (yesno judge of the draft answer in state against the task), plus an escalation ladder (run_ladder) that stops at the first accept. Wired into the jev_decide tool as a new 'strategy' parameter (agent_core/handlers/nlp_tools.py:_nlp_jev_decide), advertised in the tool schema (agent_core/tool_schemas.py) and taught in the system prompt (agent_core/shell_utils.py). 38 regression tests in tests/test_jev_strategy.py.",
+    "suggested_approach": "",
+    "decision_ref": null,
+    "repair_ref": "agent_core/jev_strategy.py:cascade_decide",
+    "created_at": "2026-11-03T08:08:29+00:00",
+    "resolved_at": "2026-11-03T08:08:29+00:00"
   }
 ]

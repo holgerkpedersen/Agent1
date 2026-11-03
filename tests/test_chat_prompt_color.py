@@ -25,12 +25,17 @@ def _strip_ansi(text: str) -> str:
     return re.sub(r"\033\[[0-9;]*m", "", text)
 
 
-def test_build_prompt_build_mode_is_green_and_tagged():
+def test_build_prompt_build_mode_is_green_and_tagged(monkeypatch):
+    # Pin the shell: the header shows the executing shell's token
+    # (card "Communicating current shell"), and the test must not depend
+    # on which shell this machine happens to run.
+    monkeypatch.setattr("agent_core.shell_utils.detect_shell", lambda: "powershell")
     agent = _FakeAgent(plan=False)
     now = datetime.datetime(2025, 1, 2, 3, 4)
     prompt = _build_chat_prompt(agent, "main", now)
     # Header is one line; the caret prompt is separate (CHAT_INPUT_PROMPT).
-    assert _strip_ansi(prompt) == "\n[2025-01-02 03:04] main [build]"
+    expected = "\n[2025-01-02 03:04] main [shell: powershell] [build]"
+    assert _strip_ansi(prompt) == expected
     assert CHAT_INPUT_PROMPT == "> "
     assert "\n" not in CHAT_INPUT_PROMPT and "\033" not in CHAT_INPUT_PROMPT
     if _ENABLED:
@@ -38,11 +43,12 @@ def test_build_prompt_build_mode_is_green_and_tagged():
         assert _RESET in prompt
 
 
-def test_build_prompt_plan_mode_is_blue_and_tagged():
+def test_build_prompt_plan_mode_is_blue_and_tagged(monkeypatch):
+    monkeypatch.setattr("agent_core.shell_utils.detect_shell", lambda: "powershell")
     agent = _FakeAgent(plan=True)
     now = datetime.datetime(2025, 1, 2, 3, 4)
     prompt = _build_chat_prompt(agent, "dev", now)
-    assert _strip_ansi(prompt) == "\n[2025-01-02 03:04] dev [plan]"
+    assert _strip_ansi(prompt) == "\n[2025-01-02 03:04] dev [shell: powershell] [plan]"
     if _ENABLED:
         assert blue("[plan]") in prompt
 
