@@ -16,24 +16,76 @@ from typing import Any
 #: Destructive shell block-list (TIER-1).  One owner: the shared security
 #: module.  agent.py re-exports this as the legacy ``_DANGEROUS_SHELL_PATTERNS``
 #: alias, so a rename here must keep that alias working.
+from agent_core.language import LANGUAGE_SECTION
 from agent_core.security.allowlist import DESTRUCTIVE_SHELL_PATTERNS  # noqa: F401  re-exported by agent_core.agent
 
 # ── Shell detection ─────────────────────────────────────────────────────────
 
+#: The ONE shell detector.  ``detect_shell`` is the single source of truth:
+#: the system prompt (``SHELL_NAME=...``), the run-tool schema text, the
+#: failure hints and :func:`run_shell_command` all read this function (or its
+#: token via :func:`shell_name_token`).  ``subprocess_utils.shell_info``
+#: derives its dict from it too.  A second detector there used to report a
+#: *different* shell than the prompt advertised — e.g. system prompt
+#: "powershell", tool schema "cmd.exe" — and the model got two answers to
+#: "what shell am I in".
 
 #: Environment variables that prove cmd.exe is the ACTIVE shell for this
 #: process.  PowerShell sets these on startup; cmd.exe does not.  ``PSModulePath``
 #: alone is not proof — it is inherited by a cmd.exe launched from a PowerShell
 #: window (and by VS Code's integrated terminal), so it over-reports PowerShell.
+#: Used ONLY as the no-psutil fallback (:func:`_windows_shell_token`); with
+#: psutil installed the ancestor-process walk decides, which is why this is
+#: labelled best-effort.
 _PS_SESSION_ENV = ("PSModulePath", "Microsoft.PowerShell.ExecutionPath")
+
+#: POSIX-family shells recognised from a ``SHELL`` value on any platform —
+#: Git Bash / MSYS2 / WSL set it even on Windows, and that evidence wins over
+#: the psutil walk (a bash launched from powershell.exe runs in bash).
+_POSIX_SHELLS = frozenset({"bash", "sh", "zsh", "fish", "dash", "ash", "ksh"})
+
+
+def _windows_shell_token() -> str:
+    """Decide powershell vs cmd on Windows.
+
+    The psutil ancestor walk is authoritative when psutil is installed: a
+    PowerShell session *is* the process tree, and ``PSModulePath`` alone
+    over-reports (inherited by cmd.exe).  Without psutil the tree cannot be
+    walked, so PS session env vars are consulted as a documented best-effort
+    fallback.
+    """
+    from agent_core import subprocess_utils as _su
+
+    probe = getattr(_su, "_walk_for_powershell", None)
+    if callable(probe) and getattr(_su, "_psutil", None) is not None:
+        return "powershell" if _su._walk_for_powershell() else "cmd"
+    # No psutil: env evidence is all we have. PSModulePath alone over-reports;
+    # Microsoft.PowerShell.ExecutionPath is the stronger signal. Accept either,
+    # documented best-effort — this path only runs when psutil is absent.
+    if any(os.environ.get(v) for v in _PS_SESSION_ENV):
+        return "powershell"
+    return "cmd"
 
 
 def detect_shell() -> str:
-    """Return the shell the run tool will actually execute commands in.
+    """Return the shell token the run tool will actually execute commands in.
 
-    Must stay in sync with :func:`run_shell_command` — this string is what the
-    system prompt advertises (``SHELL_NAME=...``) and what the failure hints
-    name, so a divergence means the model is told one shell and gets another.
+    Single source of truth for every shell communication surface (system
+    prompt ``SHELL_NAME=...``, run-tool schema text, failure hints, CLI
+    status line) and for :func:`run_shell_command`'s argv construction — one
+    detection, so the advertised shell and the executing shell cannot
+    diverge.
+
+    Precedence, most trustworthy first:
+
+    1. ``AGENT1_SHELL`` — explicit override (``powershell``, ``pwsh``, ``cmd``,
+       ``bash``, ``sh``, ``zsh``, ``none``).  User intent wins everywhere; the
+       raw aliases mean plain execution: cmd.exe on Windows, sh elsewhere.
+    2. A POSIX-family ``SHELL`` value (see :data:`_POSIX_SHELLS`) — its basename
+       is the token, on any platform (Git Bash/MSYS2 set it on Windows too).
+    3. Windows: :func:`_windows_shell_token` — the psutil ancestor walk when
+       available, PS session env vars as best-effort fallback without it.
+    4. POSIX with no evidence: bash (documented default).
     """
     override = (os.environ.get("AGENT1_SHELL") or "").strip().lower()
     if override:
@@ -42,13 +94,15 @@ def detect_shell() -> str:
         if override in ("none", "off", "raw", "default"):
             return "cmd" if os.name == "nt" else "sh"
         return override
+    shell_env = (os.environ.get("SHELL") or "").strip()
+    shell_name = (
+        os.path.splitext(os.path.basename(shell_env))[0].lower() if shell_env else ""
+    )
+    if shell_name in _POSIX_SHELLS:
+        return shell_name  # POSIX-family evidence wins on any OS (Git Bash)
     if os.name == "nt":
-        # PowerShell is only the run shell when a PowerShell *session* is
-        # active; a cmd.exe that merely inherited PSModulePath is cmd.exe.
-        if any(os.environ.get(v) for v in _PS_SESSION_ENV):
-            return "powershell"
-        return "cmd"
-    return os.environ.get("SHELL", "bash").split("/")[-1]
+        return _windows_shell_token()
+    return shell_name or "bash"
 
 
 def shell_name_token() -> str:
@@ -68,14 +122,11 @@ def run_shell_command(command: str) -> list[str]:
     hint.  Running the command through the advertised shell removes the
     mismatch: the advertised shell and the executing shell become one.
 
-    Resolution order, most trustworthy first:
-
-    1. ``AGENT1_SHELL`` — explicit override (``powershell``, ``pwsh``, ``cmd``,
-       ``bash``, ``sh``, ``zsh``, ``none``).
-    2. Windows: PowerShell only when a PowerShell *session* variable is present
-       (see :data:`_PS_SESSION_ENV`); otherwise cmd.exe, matching what
-       ``shell=True`` would have done.
-    3. POSIX: ``$SHELL``, falling back to ``sh``.
+    The shell is resolved by :func:`detect_shell` — the ONE detector this
+    function's docstring used to ask it to "stay in sync" with.  It no longer
+    duplicates any detection: whatever the prompt advertises is, by
+    construction, what executes here (the raw ``AGENT1_SHELL`` aliases are the
+    documented escape hatch: plain execution, no shell wrapper).
 
     The argv is list-form so the command reaches the shell as ONE argument —
     no extra quoting layer. Two adaptations are needed because PowerShell is a
@@ -92,25 +143,18 @@ def run_shell_command(command: str) -> list[str]:
     """
     override = (os.environ.get("AGENT1_SHELL") or "").strip().lower()
     if override in ("none", "off", "raw", "default"):
-        return [command]
-    if override in ("powershell", "pwsh"):
-        return [_pwsh_argv(override), *_PS_ARGS, "-Command", _ps_command(command)]
-    if override:
-        return [override, "-c", command]
+        return [command]  # documented escape hatch: plain execution, no wrapper
 
-    if os.name == "nt":
-        # Only PowerShell gets the -Command wrapper; cmd.exe keeps the plain
-        # string so existing behaviour is unchanged when it is the shell.
-        if any(os.environ.get(v) for v in _PS_SESSION_ENV):
-            return [
-                _pwsh_argv("powershell"),
-                *_PS_ARGS,
-                "-Command",
-                _ps_command(command),
-            ]
-        return [command]
-
-    shell = (os.environ.get("SHELL") or "sh").strip() or "sh"
+    shell = detect_shell()
+    if shell in ("powershell", "pwsh"):
+        return [_pwsh_argv(shell), *_PS_ARGS, "-Command", _ps_command(command)]
+    if shell == "cmd":
+        # Route through the advertised cmd.exe explicitly (what shell=True
+        # does via %ComSpec%): a bare [command] list with shell=False is not
+        # executable as-is on Windows — CreateProcess would parse the whole
+        # string as one quoted program name.
+        comspec = (os.environ.get("COMSPEC") or "cmd.exe").strip() or "cmd.exe"
+        return [comspec, "/c", command]
     return [shell, "-c", command]
 
 
@@ -575,7 +619,8 @@ SYSTEM_PROMPT = (
     "You also talk normally: for greetings, small talk, or general questions "
     "that do not need the workspace, reply directly in text without calling "
     "any tool.\n\n"
-    "WORKING METHOD:\n"
+    + LANGUAGE_SECTION
+    + "WORKING METHOD:\n"
     "1. Understand the request.\n"
     "2. Take concrete action with the tools - never just describe what you "
     "would do. If you intend to read, search, edit or run something, call the tool.\n"
@@ -639,7 +684,7 @@ SYSTEM_PROMPT = (
     "Delete scratch scripts (_tmp_*.py) before finishing.\n"
     "- Verify fixes against the REAL code path (import the actual function), "
     "not a copied simulation of it.\n"
-    "- Be concise. Answer in the user's language.\n"
+    "- Be concise.\n"
     "\nSAFETY - AVOID FATAL CHANGES:\n"
     "- Never make unnecessary fatal changes: no `rm -rf`, no `git reset "
     "--hard`, no `git clean -f`, no force push, no deleting or overwriting "

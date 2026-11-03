@@ -24,6 +24,7 @@ from agent_core.history_compaction import (
     _recover_original_goal,
     _strip_turn_wrappers,
 )
+from agent_core.language import language_block
 from agent_core.memory import (
     load_semantic_memory,
     semantic_memory_block,
@@ -167,6 +168,24 @@ def _file_history_block(agent: "Agent", query: str | None = None) -> str:
         return file_notes_block(query, getattr(agent, "_effective_ws_dir")())
     except Exception:
         logger.exception("File-history block unavailable:\n")
+        return ""
+
+
+def _language_block(agent: "Agent", user_input: str | None = None) -> str:
+    """Per-turn reply-language reminder for the chat system prompt.
+
+    The harness is English end to end; a non-English user message gets one
+    short, prominent reminder naming the language (see
+    :mod:`agent_core.language`).  Rebuilt every turn from *user_input* and
+    cut at :data:`agent_core.language.LANGUAGE_MARKER` by the dynamic-block
+    stripper, so exactly one copy exists per rebuild.  Empty string for
+    English or undecidable turns: the prompt stays byte-identical to the
+    baseline.  Never raises — a language heuristic must not kill a turn.
+    """
+    try:
+        return language_block(user_input)
+    except Exception:
+        logger.exception("Language block unavailable:\n")
         return ""
 
 

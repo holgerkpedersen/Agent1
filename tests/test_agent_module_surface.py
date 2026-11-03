@@ -225,6 +225,7 @@ EXPECTED_IMPORTED = frozenset(
         "_is_pytest_command",
         "_is_subset_pytest_command",
         "_kill_process_tree",
+        "_language_block",
         "_load_chat_history",
         "_load_memory",
         "_looks_incomplete",

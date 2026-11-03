@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, Callable
 if TYPE_CHECKING:
     from agent_core.config import AgentDisplayMode
 
+from agent_core.language import LANGUAGE_MARKER
 from agent_core.llm.provider import provider_supports_streaming
 
 logger = logging.getLogger(__name__)
@@ -357,6 +358,8 @@ def strip_dynamic_system_blocks(text: str) -> str:
         "\n\n[habits]",
         "\n\n[file history]",
         "\n\n[semantic memory]",
+        # Per-turn language reminder (single source: agent_core.language).
+        LANGUAGE_MARKER,
     )
     cut = len(text)
     for marker in markers:

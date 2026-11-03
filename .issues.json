@@ -194,14 +194,14 @@
     "locations": [
       "agent_core/llm/tool_loop.py:614"
     ],
-    "status": "reviewing",
+    "status": "resolved",
     "autonomy_level": 1,
     "evidence": "RuntimeError: prompt cannot fit the context budget of 150000 chars even after shrinking (system prompt + task prompt + newest exchange alone are over it)\n[note] RuntimeError: prompt cannot fit the context budget of 150000 chars even after shrinking (system prompt + task prompt + newest exchange alone are over it)\n[note] RuntimeError: prompt cannot fit the context budget of 150000 chars even after shrinking (system prompt + task prompt + newest exchange alone are over it)",
     "suggested_approach": "Approach:\nInvestigate why the fully-shrunk message list still exceeds the 150000-char context budget; check system prompt + task prompt sizes and add proactive truncation before the loop instead of relying solely on the shrink fallback.\n\nResolved: C:\\Dev\\Agent1\\agent_core\\llm\\tool_loop.py:275\nAdjusted _IN_LOOP_CHAR_BUDGET from 150_000 to 250_000",
     "decision_ref": null,
     "repair_ref": null,
     "created_at": "2026-11-01T13:29:45+00:00",
-    "resolved_at": null
+    "resolved_at": "2026-11-02T14:47:05+00:00"
   },
   {
     "id": "iss-general-kanban_8e3dcc6f84384dce9e0dae34db13a324",
@@ -262,14 +262,14 @@
     "locations": [
       "kanban:deb4445272a74800af91885ddcba454d"
     ],
-    "status": "open",
+    "status": "resolved",
     "autonomy_level": 1,
-    "evidence": "",
+    "evidence": "[note] Root cause: the harness is English end to end (system prompt, tool schemas, tool results, logs) and the only language instruction was one clause at the end of a long rules list, so after long English tool loops the model drifted to English and answered non-English users in English. Fixed: agent_core/language.py is now the single owner of the reply-language policy - deterministic best-effort detector (script evidence first, then function-word markers; ties and one-marker cases stay inconclusive) plus the AGENT1_LANGUAGE override. The per-turn reminder is appended LAST in the system message on both rebuild paths, closest to the conversation, and run_utils.strip_dynamic_system_blocks cuts it at LANGUAGE_MARKER so exactly one copy exists per rebuild. English or undecidable turns add nothing: the prompt stays byte-identical to the baseline. Regression tests in tests/test_response_language.py.",
     "suggested_approach": "",
     "decision_ref": null,
-    "repair_ref": null,
+    "repair_ref": "agent_core/prompts/context_blocks.py:_language_block",
     "created_at": "2026-11-02T12:41:43+00:00",
-    "resolved_at": null
+    "resolved_at": "2026-11-02T20:24:10+00:00"
   },
   {
     "id": "iss-general-kanban_059375f7c246475dac5585be3ba90afe",
@@ -279,13 +279,13 @@
     "locations": [
       "kanban:059375f7c246475dac5585be3ba90afe"
     ],
-    "status": "open",
+    "status": "resolved",
     "autonomy_level": 1,
-    "evidence": "",
+    "evidence": "[note] Root cause: the prompt advertised one shell while execution used another. On Windows subprocess shell=True always runs %ComSpec% (cmd.exe), so a model told SHELL_NAME=powershell and following that prompt with PowerShell cmdlets was executed by cmd.exe, which does not know them; the failure looked like a broken hint. Fixed: agent_core/shell_utils.py has ONE detect_shell() whose answer both the prompt text and run_shell_command's argv use - the advertised shell and the executing shell are now one. Commands reach the shell in list form as a single argument (the old bare [command] with shell=False was not executable, CreateProcess parsed the whole string as one program name), PowerShell gets the statement-list adaptations (call-operator rewrite, UTF-8 console pinning, __AGENT1_EXIT__ exit-code marker recovery), and AGENT1_SHELL=none/off/raw/default is the documented escape hatch that skips the wrapper. The REPL prompt now names the active shell. Regression tests in tests/test_shell_communication.py.",
     "suggested_approach": "",
     "decision_ref": null,
-    "repair_ref": null,
+    "repair_ref": "agent_core/shell_utils.py:run_shell_command",
     "created_at": "2026-11-02T12:50:50+00:00",
-    "resolved_at": null
+    "resolved_at": "2026-11-02T20:24:10+00:00"
   }
 ]

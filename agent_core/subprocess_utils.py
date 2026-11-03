@@ -172,49 +172,40 @@ def _posix_guidance(shell: str) -> str:
 def shell_info() -> dict[str, str]:
     """Return shell metadata for inclusion in LLM system prompts.
 
-    Detects the *actual* shell the agent runs in by inspecting the ``SHELL``
-    environment variable first, then falling back to platform defaults.
+    DERIVES from :func:`agent_core.shell_utils.detect_shell` — the ONE
+    detector that also governs real execution (card "Communicating current
+    shell": this module used to run its own second, independent detector, so
+    the tool-schema text could advertise one shell while ``shell_utils``
+    executed another).  The token is the canonical display name; on Windows
+    it gains the ``.exe`` suffix naming the executable the executor invokes.
 
     Returns a dictionary with ``name`` (e.g. ``cmd.exe`` or ``/bin/bash``),
     ``flag`` (the flag used to pass a command string, e.g. ``/c`` or ``-c``),
     ``separator`` (e.g. ``&`` or ``&&``), and ``guidance`` (a short human
     sentence the LLM can use).
     """
-    shell_env = os.environ.get("SHELL", "")
-    shell_name = (
-        os.path.splitext(os.path.basename(shell_env))[0].lower() if shell_env else ""
-    )
+    from agent_core import shell_utils
 
-    # POSIX-like shell detected (bash, zsh, sh, fish, …) – even on Windows
-    # when Git Bash / MSYS2 / WSL is in use.
-    if shell_name in ("bash", "sh", "zsh", "fish", "dash", "ash", "ksh"):
+    token = shell_utils.detect_shell()
+
+    if token in ("powershell", "pwsh"):
+        # Windows: a PowerShell session owns this process tree.  The psutil
+        # ancestor walk is authoritative when installed; PS session env vars
+        # are the documented best-effort fallback without it (see
+        # shell_utils._windows_shell_token).
         return {
-            "name": shell_name,
-            "flag": "-c",
-            "separator": "&&",
-            "guidance": _posix_guidance(shell_name),
+            "name": "powershell.exe" if token == "powershell" else "pwsh",
+            "flag": "-Command",
+            "separator": ";",
+            "guidance": (
+                "Use PowerShell syntax; paths use backslash. There is NO "
+                "tail/head/sed/awk/wc and NO piping to them (run output is "
+                "auto-truncated). PowerShell aliases ls/grep/cat/rm/curl do "
+                "exist; call Python tools as 'python -m <tool>'."
+            ),
         }
 
-    # Windows: detect PowerShell by walking the process tree.  The run-tool
-    # injects cmd.exe as the direct parent, but the *user's* shell lives
-    # higher up in the chain (e.g. Python → cmd.exe → powershell.exe → …).
-    # Walking ancestors with psutil is the only reliable way to tell them
-    # apart, because environment variables like PSModulePath are persistent
-    # and inherited even in plain cmd.exe sessions.
-    if sys.platform == "win32":
-        ps_parent = _walk_for_powershell()
-        if ps_parent:
-            return {
-                "name": "powershell.exe",
-                "flag": "-Command",
-                "separator": ";",
-                "guidance": (
-                    "Use PowerShell syntax; paths use backslash. There is NO "
-                    "tail/head/sed/awk/wc and NO piping to them (run output is "
-                    "auto-truncated). PowerShell aliases ls/grep/cat/rm/curl do "
-                    "exist; call Python tools as 'python -m <tool>'."
-                ),
-            }
+    if token == "cmd":
         return {
             "name": "cmd.exe",
             "flag": "/c",
@@ -228,12 +219,20 @@ def shell_info() -> dict[str, str]:
             ),
         }
 
-    # POSIX default
+    # POSIX shell — the token IS the display name.  With no SHELL evidence at
+    # all, report the full default path (/bin/bash) rather than a bare token.
+    if sys.platform != "win32" and not os.environ.get("SHELL"):
+        return {
+            "name": "/bin/bash",
+            "flag": "-c",
+            "separator": "&&",
+            "guidance": _posix_guidance("bash/sh"),
+        }
     return {
-        "name": "/bin/bash",
+        "name": token,
         "flag": "-c",
         "separator": "&&",
-        "guidance": _posix_guidance("bash/sh"),
+        "guidance": _posix_guidance(token),
     }
 
 

@@ -299,6 +299,7 @@ from agent_core.prompts.context_blocks import (
     _habits_block,
     _file_history_block,
     _semantic_memory_block,
+    _language_block,
     _ensure_original_goal,
     _recent_user_texts,
     _prompts_related,
@@ -974,7 +975,8 @@ class AgentCore:
                     "role": "system",
                     "content": _SYSTEM_PROMPT
                     + (plan_mode_system_suffix() if self.is_plan_mode() else "")
-                    + _intent_mode_system_suffix(),
+                    + _intent_mode_system_suffix()
+                    + self._language_block(query),
                 }
             )
         elif self._chat_history[0].get("role") != "system":
@@ -991,7 +993,11 @@ class AgentCore:
             + self._semantic_memory_block(query)
             + self._file_history_block(query)
             + (plan_mode_system_suffix() if self.is_plan_mode() else "")
-            + _intent_mode_system_suffix(),
+            + _intent_mode_system_suffix()
+            # Language reminder LAST: closest to the conversation, and the
+            # dynamic-block stripper cuts it at LANGUAGE_MARKER so exactly
+            # one copy exists per rebuild.
+            + self._language_block(query),
         }
 
     def _append_user_turn(self, user_input: str, images: list[str] | None) -> None:
@@ -1446,6 +1452,10 @@ class AgentCore:
     def _semantic_memory_block(self, query: str | None = None) -> str:
         return _semantic_memory_block(self, query)
 
+    def _language_block(self, user_input: str | None = None) -> str:
+        """Per-turn reply-language reminder (rebuilt every turn)."""
+        return _language_block(self, user_input)
+
     def _ensure_original_goal(self, pending_user_input: str | None = None) -> None:
         _ensure_original_goal(self, pending_user_input)
 
@@ -1667,6 +1677,7 @@ __all__ = (
     "_is_pytest_command",
     "_is_subset_pytest_command",
     "_kill_process_tree",
+    "_language_block",
     "_load_chat_history",
     "_load_memory",
     "_message_size",

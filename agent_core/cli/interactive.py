@@ -308,12 +308,23 @@ def _build_chat_prompt(agent: "Agent", branch: str, now: datetime) -> str:
     ``[plan]`` in blue (read-only research mode), so the active mode is
     unmistakable at a glance.  Falls back to green/build styling when the
     agent has no ``is_plan_mode`` (defensive — the prompt must always render).
+
+    The single detector's token (``shell_utils.detect_shell``) is shown as
+    ``[shell: <token>]`` before the mode tag, so the shell that run commands
+    execute in is visible at use time — not only inside prompts (card
+    "Communicating current shell").
     """
+    from agent_core.shell_utils import detect_shell
+
     plan = getattr(agent, "is_plan_mode", None)
     plan = bool(plan() if callable(plan) else False)
     mode_tag = "[plan] " if plan else "[build] "
     prompt_color = blue if plan else green
-    return f"\n[{now:%Y-%m-%d %H:%M}] {branch} {prompt_color(mode_tag.rstrip())}"
+    shell = detect_shell()
+    return (
+        f"\n[{now:%Y-%m-%d %H:%M}] {branch} [shell: {shell}] "
+        f"{prompt_color(mode_tag.rstrip())}"
+    )
 
 
 #: The startup session's effective workspace (set by :func:`main` before
