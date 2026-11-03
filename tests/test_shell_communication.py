@@ -18,8 +18,11 @@ The contract pinned here:
 * Windows precedence: the psutil ancestor walk is authoritative when psutil
   is installed; PS session env vars are a documented best-effort fallback
   only when it is absent (PSModulePath alone over-reports).
-* A POSIX-family ``SHELL`` value wins on any platform (Git Bash/MSYS2), and
-  the ``AGENT1_SHELL`` override wins everywhere.
+* The ``AGENT1_SHELL`` override wins everywhere.  On Windows ``SHELL`` is
+  NOT consulted at all: session managers, WSL-mounted shells and Git Bash /
+  MSYS2 export a POSIX ``SHELL`` inside a cmd/PowerShell terminal, so on
+  Windows it is not proof of the *executing* shell — the process tree (or the
+  explicit override) is.  On POSIX the ``SHELL`` basename decides.
 """
 
 from __future__ import annotations
@@ -96,26 +99,44 @@ def test_run_argv_executes_the_advertised_shell(
 # ── detection precedence ────────────────────────────────────────────────────
 
 
-def test_posix_family_shell_wins_on_any_platform(
+def test_posix_family_shell_never_overrides_windows_process_tree(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A POSIX-family SHELL (Git Bash/MSYS2) wins — even on Windows with a
-    PowerShell ancestor in the tree."""
-    monkeypatch.setattr(su, "_walk_for_powershell", lambda: True)
+    """On Windows a POSIX ``SHELL`` must NOT hijack detection.
+
+    Git Bash / MSYS2 / WSL-mounted sessions export ``SHELL=/bin/bash`` inside
+    a cmd.exe or PowerShell terminal, so on Windows ``SHELL`` is not proof of
+    the executing shell — the process tree is.  The explicit ``AGENT1_SHELL``
+    override (tested above) is the supported escape hatch for a real bash.
+    """
     monkeypatch.setenv("SHELL", "/bin/bash")
-    assert shell_utils.detect_shell() == "bash"
-    info = su.shell_info()
-    assert info["name"] == "bash"
-    assert info["flag"] == "-c"
-    assert info["separator"] == "&&"
+    if getattr(su, "_psutil", None) is not None:
+        # Walk available on Windows: it decides, SHELL is ignored.
+        monkeypatch.setattr(su, "_walk_for_powershell", lambda: True)
+        assert shell_utils.detect_shell() == (
+            "powershell" if sys.platform == "win32" else "bash"
+        )
+        return
+    for var in shell_utils._PS_SESSION_ENV:
+        monkeypatch.setenv(var, "C:\\PowerShell\\Modules")
+    assert shell_utils.detect_shell() == (
+        "powershell" if sys.platform == "win32" else "bash"
+    )
 
 
 def test_windows_ancestor_walk_is_authoritative(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """With psutil available the ancestor walk decides powershell vs cmd."""
+    """On Windows, with psutil available the ancestor walk decides powershell
+    vs cmd.  POSIX CI has no PowerShell in the process tree, so there the same
+    mechanism legitimately reports the POSIX default — assert on Windows only.
+    """
     if getattr(su, "_psutil", None) is None:
         pytest.skip("psutil not installed — walk is unavailable")
+    if sys.platform != "win32":
+        pytest.skip(
+            "Windows-only: the powershell/cmd ancestor walk has no POSIX analogue"
+        )
     monkeypatch.setattr(su, "_walk_for_powershell", lambda: True)
     assert shell_utils.detect_shell() == "powershell"
     monkeypatch.setattr(su, "_walk_for_powershell", lambda: False)
@@ -125,7 +146,11 @@ def test_windows_ancestor_walk_is_authoritative(
 def test_windows_env_fallback_is_best_effort(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Without psutil the detector falls back to PS session env evidence."""
+    """On Windows without psutil the detector falls back to PS session env
+    evidence.  The fallback is a Windows branch, so it is asserted on Windows
+    only."""
+    if sys.platform != "win32":
+        pytest.skip("Windows-only: PS session env fallback does not run on POSIX")
     if getattr(su, "_psutil", None) is not None:
         # Walk available: env vars are NOT consulted — walk decides.
         monkeypatch.setattr(su, "_walk_for_powershell", lambda: False)

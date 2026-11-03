@@ -160,28 +160,23 @@ def test_shell_info_returns_dict() -> None:
 
 
 def test_shell_info_current_platform() -> None:
-    """On this platform shell_info() should match the actual shell."""
-    import agent_core.subprocess_utils as _mod
+    """shell_info() must agree with the ONE detector on this platform.
+
+    Names are canonical tokens (no path prefix); Windows reads the process
+    tree, POSIX reads ``SHELL`` — so assert against detect_shell() rather
+    than re-implementing detection here (that duplication is what diverged).
+    """
+    import agent_core.shell_utils as shell_utils
 
     info = shell_info()
-    shell_env = os.environ.get("SHELL", "")
-    shell_name = (
-        os.path.splitext(os.path.basename(shell_env))[0].lower() if shell_env else ""
-    )
-    if shell_name in ("bash", "sh", "zsh", "fish", "dash", "ash", "ksh"):
-        # SHELL env var set to a known POSIX shell (e.g. Git Bash on Windows)
-        assert info["name"] == shell_name
-        assert info["flag"] == "-c"
-    elif sys.platform == "win32":
-        if _mod._walk_for_powershell():
-            assert info["name"] == "powershell.exe"
-            assert info["flag"] == "-Command"
-            assert info["separator"] == ";"
-        else:
-            assert info["name"] == "cmd.exe"
-            assert info["flag"] == "/c"
+    token = shell_utils.detect_shell()
+    if sys.platform == "win32":
+        assert info["name"] in ("powershell.exe", "cmd.exe")
+        base = os.path.splitext(os.path.basename(info["name"]))[0].lower()
+        assert base == token, (info["name"], token)
+        assert info["flag"] == ("-Command" if token == "powershell" else "/c")
     else:
-        assert info["name"] == "/bin/bash"
+        assert info["name"] == token
         assert info["flag"] == "-c"
 
 
@@ -196,10 +191,15 @@ def test_shell_info_posix_guidance_is_symmetric(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A POSIX shell's run guidance must warn against cmd.exe builtins AND
-    PowerShell cmdlets — the mirror of the Windows 'no Unix tools' guidance."""
+    PowerShell cmdlets — the mirror of the Windows 'no Unix tools' guidance.
+
+    Detection is platform-shaped (Windows reads the process tree, POSIX reads
+    ``SHELL``), so drive detection with the cross-platform ``AGENT1_SHELL``
+    override and pin the name canonically — no path prefix.
+    """
     import agent_core.subprocess_utils as _mod
 
-    monkeypatch.setenv("SHELL", "/bin/bash")
+    monkeypatch.setenv("AGENT1_SHELL", "bash")
     info = _mod.shell_info()
     assert info["name"] == "bash"
     assert "cmd.exe" in info["guidance"]

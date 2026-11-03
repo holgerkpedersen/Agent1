@@ -179,7 +179,8 @@ def shell_info() -> dict[str, str]:
     executed another).  The token is the canonical display name; on Windows
     it gains the ``.exe`` suffix naming the executable the executor invokes.
 
-    Returns a dictionary with ``name`` (e.g. ``cmd.exe`` or ``/bin/bash``),
+    Returns a dictionary with ``name`` (the canonical token: ``cmd.exe``,
+    ``powershell.exe`` or e.g. ``bash``),
     ``flag`` (the flag used to pass a command string, e.g. ``/c`` or ``-c``),
     ``separator`` (e.g. ``&`` or ``&&``), and ``guidance`` (a short human
     sentence the LLM can use).
@@ -219,20 +220,13 @@ def shell_info() -> dict[str, str]:
             ),
         }
 
-    # POSIX shell — the token IS the display name.  With no SHELL evidence at
-    # all, report the full default path (/bin/bash) rather than a bare token.
-    if sys.platform != "win32" and not os.environ.get("SHELL"):
-        return {
-            "name": "/bin/bash",
-            "flag": "-c",
-            "separator": "&&",
-            "guidance": _posix_guidance("bash/sh"),
-        }
+    # POSIX shell — the token IS the display name, canonically: no path
+    # prefix ("/bin/bash" is what gets invoked, "bash" is what we advertise).
     return {
         "name": token,
         "flag": "-c",
         "separator": "&&",
-        "guidance": _posix_guidance(token),
+        "guidance": _posix_guidance(token if token != "bash" else "bash/sh"),
     }
 
 

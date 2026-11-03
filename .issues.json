@@ -228,14 +228,14 @@
     "locations": [
       "kanban:3ce94eeab70f4b468c59c45848020709"
     ],
-    "status": "open",
+    "status": "resolved",
     "autonomy_level": 1,
     "evidence": "",
     "suggested_approach": "",
     "decision_ref": null,
     "repair_ref": null,
     "created_at": "2026-11-01T21:54:54+00:00",
-    "resolved_at": null
+    "resolved_at": "2026-11-03T22:35:26+00:00"
   },
   {
     "id": "iss-general-kanban_287ab40ccdf84bf892049541be86014b",

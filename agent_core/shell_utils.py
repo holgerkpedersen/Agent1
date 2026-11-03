@@ -81,11 +81,15 @@ def detect_shell() -> str:
     1. ``AGENT1_SHELL`` — explicit override (``powershell``, ``pwsh``, ``cmd``,
        ``bash``, ``sh``, ``zsh``, ``none``).  User intent wins everywhere; the
        raw aliases mean plain execution: cmd.exe on Windows, sh elsewhere.
-    2. A POSIX-family ``SHELL`` value (see :data:`_POSIX_SHELLS`) — its basename
-       is the token, on any platform (Git Bash/MSYS2 set it on Windows too).
-    3. Windows: :func:`_windows_shell_token` — the psutil ancestor walk when
+    2. Windows: :func:`_windows_shell_token` — the psutil ancestor walk when
        available, PS session env vars as best-effort fallback without it.
-    4. POSIX with no evidence: bash (documented default).
+       ``SHELL`` is deliberately NOT consulted here: login/session managers and
+       WSL-mounted shells export a POSIX ``SHELL`` on Windows terminals (Git
+       Bash/MSYS2 included), so on Windows it is not proof of the *executing*
+       shell — the process tree is.  The explicit override above remains the
+       documented escape hatch for those setups.
+    3. POSIX: the basename of ``SHELL`` when it names a POSIX-family shell,
+       otherwise bash (documented default).
     """
     override = (os.environ.get("AGENT1_SHELL") or "").strip().lower()
     if override:
@@ -94,14 +98,16 @@ def detect_shell() -> str:
         if override in ("none", "off", "raw", "default"):
             return "cmd" if os.name == "nt" else "sh"
         return override
+    if os.name == "nt":
+        # Windows: the process tree decides (walk, then env fallback).  A
+        # POSIX ``SHELL`` value is NOT evidence here — see docstring point 2.
+        return _windows_shell_token()
     shell_env = (os.environ.get("SHELL") or "").strip()
     shell_name = (
         os.path.splitext(os.path.basename(shell_env))[0].lower() if shell_env else ""
     )
     if shell_name in _POSIX_SHELLS:
-        return shell_name  # POSIX-family evidence wins on any OS (Git Bash)
-    if os.name == "nt":
-        return _windows_shell_token()
+        return shell_name
     return shell_name or "bash"
 
 
