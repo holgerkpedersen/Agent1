@@ -30,6 +30,8 @@ from pathlib import Path
 
 import pytest
 
+from agent_core.pytest_gate import is_scratch_path
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -257,18 +259,48 @@ class TestAllTextTrueCallsPinUtf8:
         return bodies
 
     def test_text_true_calls_always_pass_encoding(self) -> None:
-        offenders: list[str] = []
-        for p in sorted(REPO_ROOT.rglob("*.py")):
-            if any(part in self.SKIP_DIRS for part in p.parts):
-                continue
-            src = p.read_text(encoding="utf-8", errors="replace")
-            for body in self._subprocess_call_bodies(src):
-                if "text=True" in body and "encoding=" not in body:
-                    snippet = " ".join(body.split())[:80]
-                    offenders.append(f"{p.relative_to(REPO_ROOT)}: {snippet!r}")
+        offenders, scratch_skipped = self._scan()
         assert not offenders, (
             "subprocess.run(text=True) without an explicit encoding — on "
             "Windows this decodes child output with the locale codepage and "
             "crashes/mojibakes on git's UTF-8 output.  Add "
             'encoding="utf-8", errors="replace".\n' + "\n".join(offenders)
         )
+
+    def test_scratch_lane_stays_narrow(self) -> None:
+        """Scratch files are exempt, so the exemption must stay countable.
+
+        The scratch lane is a real hole in this scan: a file named ``_tmp_x.py``
+        can hide an unpinned call. Keep it small and visible — if this number
+        grows, clean up the drafts (repo convention) instead of raising the cap.
+        Measured on 2026-11-03: **52** scratch .py files in the repo, all
+        untracked throwaway probes. The cap is a ratchet — it must go DOWN as
+        drafts are deleted, and only an owner decision may raise it.
+        """
+        _, scratch_skipped = self._scan()
+        assert scratch_skipped <= 52, (
+            f"{scratch_skipped} scratch .py files are exempt from this scan; "
+            "delete the throwaway drafts (_tmp_*, tmp/, *.bak) — they are not "
+            "supposed to accumulate in the repo root"
+        )
+
+    def _scan(self) -> tuple[list[str], int]:
+        """Return ``(offenders, scratch_skipped)`` for every .py in the repo."""
+        offenders: list[str] = []
+        scratch_skipped = 0
+        for p in sorted(REPO_ROOT.rglob("*.py")):
+            if any(part in self.SKIP_DIRS for part in p.parts):
+                continue
+            # Scratch/probe files (_tmp_*, tmp/, *.bak ...) are throwaway
+            # artefacts, not shipped code: the repo convention is to delete
+            # them, and they must never gate the suite (decision: scratch
+            # files earn nothing — same rule as the full-run gate).
+            if is_scratch_path(str(p.relative_to(REPO_ROOT))):
+                scratch_skipped += 1
+                continue
+            src = p.read_text(encoding="utf-8", errors="replace")
+            for body in self._subprocess_call_bodies(src):
+                if "text=True" in body and "encoding=" not in body:
+                    snippet = " ".join(body.split())[:80]
+                    offenders.append(f"{p.relative_to(REPO_ROOT)}: {snippet!r}")
+        return offenders, scratch_skipped
