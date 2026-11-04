@@ -63,6 +63,7 @@ class HelpCommand(Command):
         from .memory_cmd import MemoryCommand
         from .habits_cmd import HabitsCommand
         from .issue_cmd import IssueCommand
+        from .kanban_cmd import KanbanCommand
         from .kg_cmd import KGCommand
         from .session_cmd import SessionCommand
 
@@ -102,6 +103,7 @@ class HelpCommand(Command):
             MemoryCommand,
             HabitsCommand,
             IssueCommand,
+            KanbanCommand,
             KGCommand,
             SessionCommand,
             HelpCommand,

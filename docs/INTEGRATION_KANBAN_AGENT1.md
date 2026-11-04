@@ -257,6 +257,41 @@ flowchart TD
 
 Manual one-shot processing: `python -m harnessfix.kanban_bridge --process-in` (alias `--process`).
 
+## 10b. Read-side tooling — the `kanban` REPL command and `kanban_inspect`
+
+The bridge writes state; the read side answers "what does card X say, and where is
+the link?" without hand-reading four files. Both live in Agent1 and are read-only
+except one repair subcommand:
+
+| Command | Owner | What it gives you |
+| --- | --- | --- |
+| `kanban status` | `agent_core/commands/kanban_cmd.py` → `harnessfix/kanban_inspect.py:status_summary` | sync switches, active board, id-map health, queue depths, dead letters |
+| `kanban card <key> [--full]` | same → `issue_view` + `composed_description` | resolves a **card id, issue id, card title or unique title prefix**; prints both sides, which hop found the link, column→status, the composed description, queued messages about that key |
+| `kanban queue [--limit N]` | same → `queue_status` | unprocessed messages in **both** directions, each resolved to an issue id |
+| `kanban board [board-id]` | same → `board_view` | frames with titles, the issue status each column maps to, and the cards |
+| `kanban keys` | same → `key_anatomy` | every key that travels between the repos and what it means |
+| `kanban sync-descriptions [--dry-run]` | same → `sync_descriptions` | the **only mutating** subcommand: fills EMPTY issue fields from the card body (backfill for issues created before the bridge carried the body); never overwrites text; blocked in plan mode |
+
+The module runs standalone too (`python harnessfix/kanban_inspect.py card <id>`),
+but **not** as `python -m harnessfix.kanban_inspect` — that form is refused by the
+run sandbox's module allow-list, so use the REPL command.
+
+The matching runbook is the vendored skill `skills/kanban-card-work/SKILL.md`: it
+teaches the key anatomy, the "description did not move" diagnosis, and the loop
+close-back. It is loaded when a request names a card (guarded by
+`tests/test_vendored_skills.py`).
+
+### Why a plain card description used to arrive empty
+
+`card_to_issue_data` splits the card text into `evidence` / `suggested_approach`
+**only** on the `\n\n---\n` separator or `[component:]`/`[note:]`/`[status:]` tags.
+A plain paragraph has no tags, so both fields came out empty and the body was
+dropped: kanban→agent1 moved a title with no content. `_apply_card_create` and
+`_apply_card_update` now carry the raw description into the first EMPTY field
+(create) and fill only empty fields, never overwriting existing text (update), and
+never duplicating a body already present on the record. `kanban sync-descriptions`
+repairs issues created before that fix.
+
 ## 11. Historical defects this design fixed (why the code looks like this)
 
 | Commit                | Defect it closed                                                                                                                                                                    |

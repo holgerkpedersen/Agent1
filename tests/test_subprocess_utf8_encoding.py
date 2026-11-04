@@ -273,12 +273,12 @@ class TestAllTextTrueCallsPinUtf8:
         The scratch lane is a real hole in this scan: a file named ``_tmp_x.py``
         can hide an unpinned call. Keep it small and visible — if this number
         grows, clean up the drafts (repo convention) instead of raising the cap.
-        Measured on 2026-11-03: **52** scratch .py files in the repo, all
+        Measured on 2026-11-04: **3** scratch .py files in the repo, all
         untracked throwaway probes. The cap is a ratchet — it must go DOWN as
         drafts are deleted, and only an owner decision may raise it.
         """
         _, scratch_skipped = self._scan()
-        assert scratch_skipped <= 52, (
+        assert scratch_skipped <= 3, (
             f"{scratch_skipped} scratch .py files are exempt from this scan; "
             "delete the throwaway drafts (_tmp_*, tmp/, *.bak) — they are not "
             "supposed to accumulate in the repo root"

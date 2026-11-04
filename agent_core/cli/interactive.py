@@ -206,6 +206,9 @@ def _register_commands(registry: CommandRegistry) -> None:
     from agent_core.commands.issue_cmd import IssueCommand
 
     registry.register(IssueCommand())
+    from agent_core.commands.kanban_cmd import KanbanCommand
+
+    registry.register(KanbanCommand())
     registry.register(RunCommand())
     registry.register(SelfHealCommand())
     registry.register(ReconstructCommand())

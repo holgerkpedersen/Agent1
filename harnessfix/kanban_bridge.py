@@ -436,6 +436,12 @@ def card_to_issue_data(card: dict[str, Any]) -> dict[str, Any]:
         "severity": severity,
         "evidence": evidence,
         "suggested_approach": suggested_approach,
+        # The card's raw description, untagged.  ``evidence`` /
+        # ``suggested_approach`` only get text when the author used the
+        # ``---`` split, so a plain description used to be dropped here —
+        # kanban→agent1 moved a title and no body.  Callers use it as the
+        # fallback body for issues whose tagged fields are empty.
+        "description": str(text).strip(),
         "status": status,
         "tags": card.get("tags", []),
     }
@@ -524,13 +530,24 @@ def _apply_card_create(payload: dict[str, Any]) -> bool:
 
     data = card_to_issue_data(payload)
     locations = [f"kanban:{payload.get('id', 'unknown')}"]
+    # The card body: tagged text lands in evidence/suggested_approach; a plain
+    # (untagged) description would be dropped, so it fills the first empty
+    # field. Kanban→Agent1 then moves the whole card, not just its title.
+    evidence = data["evidence"]
+    suggested = data["suggested_approach"]
+    desc = str(data.get("description") or "").strip()
+    if desc:
+        if not suggested.strip():
+            suggested = desc
+        elif not evidence.strip():
+            evidence = desc
     issue = issue_store.make_issue(
         category=data["category"],
         title=data["title"],
         locations=locations,
         severity=data["severity"],
-        evidence=data["evidence"],
-        suggested_approach=data["suggested_approach"],
+        evidence=evidence,
+        suggested_approach=suggested,
         autonomy_level=1,  # Kanban cards default to auto-safe
     )
 
@@ -594,6 +611,24 @@ def _apply_card_update(payload: dict[str, Any]) -> bool:
     if "suggested_approach" in data and data["suggested_approach"]:
         existing["suggested_approach"] = data["suggested_approach"]
         updated = True
+
+    # Untagged card description: the board author typed a body, the tagged
+    # fields are empty, so the description IS the content.  Fill the first
+    # empty field and stop — never overwrite text the bridge or a human put
+    # there, and never copy a body that is already on the record: repeated
+    # edits of one card used to land the same paragraph in every free field.
+    desc = str(data.get("description") or "").strip()
+    if desc:
+        carried = any(
+            desc == str(existing.get(_field) or "").strip()
+            for _field in ("suggested_approach", "evidence")
+        )
+        if not carried:
+            for _field in ("suggested_approach", "evidence"):
+                if not str(existing.get(_field) or "").strip():
+                    existing[_field] = desc
+                    updated = True
+                    break
 
     # Status travels as a `[status:...]` tag.  A card WITHOUT that tag supplies
     # no status at all (Kanban's Card.to_dict() has no status field), so it

@@ -23,6 +23,7 @@ from agent_core.skills import (
     SkillError,
     discover_skills,
     format_skill_page,
+    match_skills_for_input,
     read_skill,
     skill_index_block,
 )
@@ -33,6 +34,7 @@ WORKSPACE = Path(__file__).resolve().parent.parent
 VENDORED_SKILLS = {
     "asd-ste100",
     "jev-strategy",
+    "kanban-card-work",
     "requesting-code-review",
     "subagent-orchestration",
     "systematic-debugging",
@@ -69,6 +71,53 @@ def test_index_block_lists_all_vendored_skills() -> None:
     block = skill_index_block(discover_skills(WORKSPACE))
     for name in sorted(VENDORED_SKILLS):
         assert f"- {name} — " in block, f"{name} missing from the system-prompt index"
+
+
+def test_kanban_card_work_skill_loads_with_metadata() -> None:
+    """The Kanban card runbook must be discoverable AND triggerable.
+
+    It is the runbook for "work on card <id>" requests. Discovery alone is not
+    enough: a skill that never matches the phrasing of such a request is dead
+    weight in the index, so pin both halves here.
+    """
+    by_name = {skill.name: skill for skill in discover_skills(WORKSPACE)}
+    assert "kanban-card-work" in by_name, "kanban-card-work skipped by discovery"
+    skill = by_name["kanban-card-work"]
+    assert skill.description.strip()
+    assert "kanban" in skill.tags
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "work on kanban card 3f9a1b2c4d5e6f7089a0b1c2d3e4f506",
+        "what is the status of the kanban card about the parser?",
+        "why didn't my description show up on the issue from kanban?",
+        "check the kanban queue, that card looks stuck",
+    ],
+)
+def test_kanban_card_work_triggers_on_card_requests(text: str) -> None:
+    """A request naming a Kanban card must surface the runbook as a hint."""
+    skills = discover_skills(WORKSPACE)
+    matched = match_skills_for_input(skills, text)
+    assert "kanban-card-work" in [s.name for s in matched], (
+        f"no kanban-card-work hint for {text!r}"
+    )
+
+
+def test_kanban_card_work_runbook_documents_the_keys() -> None:
+    """The runbook must teach the key anatomy — that is its whole point."""
+    page = read_skill(WORKSPACE, "kanban-card-work", offset=1, limit=400)
+    body = page.text
+    for token in (
+        ".card_id_map.json",
+        "locations",
+        "source_id",
+        "offset.txt",
+        "kanban card",
+        "sync-descriptions",
+    ):
+        assert token in body, f"runbook does not document {token!r}"
 
 
 def test_asd_ste100_skill_loads_with_metadata() -> None:
