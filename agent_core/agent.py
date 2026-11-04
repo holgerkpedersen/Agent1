@@ -298,6 +298,7 @@ from agent_core.prompts.context_blocks import (
     _skill_index_block,
     _skill_hint_block,
     _habits_block,
+    _knowledge_graph_block,
     _file_history_block,
     _semantic_memory_block,
     _language_block,
@@ -992,6 +993,7 @@ class AgentCore:
             + self._decision_constraints_block()
             + self._skill_index_block()
             + self._habits_block()
+            + self._knowledge_graph_block()
             + self._semantic_memory_block(query)
             + self._file_history_block(query)
             + (plan_mode_system_suffix() if self.is_plan_mode() else "")
@@ -1449,6 +1451,9 @@ class AgentCore:
     def _habits_block(self) -> str:
         return _habits_block(self)
 
+    def _knowledge_graph_block(self) -> str:
+        return _knowledge_graph_block(self)
+
     def _file_history_block(self, query: str | None = None) -> str:
         return _file_history_block(self, query)
 
@@ -1753,6 +1758,7 @@ __all__ = (
     "_shell_command_hint",
     "_shell_name_token",
     "_signal_break_with_cleanup",
+    "_knowledge_graph_block",
     "_skill_hint_block",
     "_skill_index_block",
     "_start_kanban_inbound",

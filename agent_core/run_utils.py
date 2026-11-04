@@ -370,6 +370,22 @@ def append_turn_log(record: dict[str, Any]) -> None:
 
 # ── Dynamic system blocks ─────────────────────────────────────────────────────
 
+#: Marker that marks the knowledge-graph block.  Single source of truth: the
+#: builder in ``prompts/context_blocks.py`` prefixes it, and
+#: :func:`strip_dynamic_system_blocks` cuts at it so exactly one copy exists
+#: per rebuild (same contract as ``agent_core.language.LANGUAGE_MARKER``).
+KNOWLEDGE_GRAPH_MARKER = "\n\nKNOWLEDGE GRAPH"
+
+#: Most entries rendered in the knowledge-graph block (the graph is a curated
+#: store; overflow points at ``kg show`` instead of bloating the prompt).
+MAX_KG_BLOCK_LINES = 40
+
+#: Longest one entry may occupy in the block.
+MAX_KG_ENTRY_CHARS = 200
+
+#: Hard cap on the rendered knowledge-graph block (system-prompt budget).
+MAX_KG_BLOCK_CHARS = 6000
+
 
 def strip_dynamic_system_blocks(text: str) -> str:
     """Remove previously injected dynamic blocks from a system prompt.
@@ -393,6 +409,8 @@ def strip_dynamic_system_blocks(text: str) -> str:
         "\n\n[habits]",
         "\n\n[file history]",
         "\n\n[semantic memory]",
+        # Knowledge-graph content + `kg add` steering (single source: here).
+        KNOWLEDGE_GRAPH_MARKER,
         # Per-turn language reminder (single source: agent_core.language).
         LANGUAGE_MARKER,
     )

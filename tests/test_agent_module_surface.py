@@ -166,6 +166,7 @@ EXPECTED_IMPORTED = frozenset(
         "_finish_turn",
         "_get_plan_state",
         "_habits_block",
+        "_knowledge_graph_block",
         "_mutating_files_this_turn",
         "_note_effect",
         "_nlp_analyze",

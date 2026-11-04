@@ -31,6 +31,13 @@ from agent_core.memory import (
     semantic_search_memories,
 )
 from agent_core.memory.types import MAX_GOAL_CHARS, original_goal_block
+from agent_core.commands.kg_cmd import SECTIONS as _KG_SECTIONS
+from agent_core.run_utils import (
+    KNOWLEDGE_GRAPH_MARKER,
+    MAX_KG_BLOCK_CHARS,
+    MAX_KG_BLOCK_LINES,
+    MAX_KG_ENTRY_CHARS,
+)
 from agent_core.skills import (
     discover_skills,
     load_skill_index,
@@ -229,6 +236,75 @@ def _semantic_memory_block(agent: "Agent", query: str | None = None) -> str:
     except Exception:
         logger.exception("Semantic memory block unavailable:\n")
         return ""
+
+
+def _knowledge_graph_block(agent: "Agent") -> str:
+    """Knowledge-graph block for the chat system prompt.
+
+    Two jobs, in one block:
+
+    * **Content** — every stored entry is listed (``section/key: value``) so
+      what the user recorded with ``kg add fact`` is visible to the model on
+      every turn, not only on the REPL screen of the session that typed it.
+    * **Use** — the block names the command that writes the graph and tells
+      the model when to call it: record a file after reading it, record a
+      durable fact learned from a prompt.
+
+    The *use* half is emitted only while the graph has content. An empty
+    graph gets no block at all, so a fresh workspace's system prompt stays
+    byte-identical to before (the same contract as :func:`_habits_block` and
+    :func:`_semantic_memory_block`).
+
+    Capped at ``MAX_KG_BLOCK_CHARS``: the graph is a curated store, so a
+    graph that outgrows the cap is truncated with a marker pointing at
+    ``kg show``.  Never raises — a malformed entry must not kill a turn.
+    """
+    try:
+        graph = getattr(agent, "_knowledge_graph", None)
+        if not isinstance(graph, dict):
+            return ""
+        lines: list[str] = []
+        for section in _KG_SECTIONS:
+            entry = graph.get(section)
+            items = entry if isinstance(entry, dict) else {}
+            for key, value in items.items():
+                rendered = value.get("value") if isinstance(value, dict) else value
+                try:
+                    text = rendered if isinstance(rendered, str) else json.dumps(
+                        rendered, ensure_ascii=False
+                    )
+                except (TypeError, ValueError):
+                    # One hand-edited / exotic entry must not drop the rest
+                    # of the graph from the prompt — render it as text.
+                    text = repr(rendered)
+                lines.append(f"{section}/{key}: {_one_line(text)}")
+        if not lines:
+            return ""
+        body = "\n".join(lines[: MAX_KG_BLOCK_LINES])
+        if len(lines) > MAX_KG_BLOCK_LINES:
+            body += f"\n… {len(lines) - MAX_KG_BLOCK_LINES} more — run 'kg show'"
+        return (
+            KNOWLEDGE_GRAPH_MARKER
+            + "\nRecorded with the REPL command "
+            "`kg add <fact|file|tag|symbol> <key> [value]`; persisted across "
+            "sessions and listed by `clear stats`.\n"
+            + body
+            + "\nUse `kg add` as you work, not at the end: after reading a file "
+            "record it with `kg add file <path> <why it matters>`; when a prompt "
+            "teaches something that stays true next session record it with "
+            "`kg add fact <key> <value>`.\n"
+        )[:MAX_KG_BLOCK_CHARS]
+    except Exception:
+        logger.exception("Knowledge graph block unavailable:\n")
+        return ""
+
+
+def _one_line(text: str) -> str:
+    """Collapse a value to one prompt line (newlines, cap)."""
+    collapsed = " ".join((text or "").split())
+    return collapsed if len(collapsed) <= MAX_KG_ENTRY_CHARS else (
+        collapsed[:MAX_KG_ENTRY_CHARS] + "…"
+    )
 
 
 def _ensure_original_goal(
