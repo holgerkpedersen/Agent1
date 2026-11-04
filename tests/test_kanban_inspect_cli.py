@@ -41,6 +41,13 @@ def sandbox(tmp_path, monkeypatch):
         monkeypatch.setattr(mod, "CARD_ID_MAP_PATH", data / ".card_id_map.json")
         monkeypatch.setattr(mod, "DEAD_LETTER_DIR", data / "dead-letter")
     monkeypatch.setattr(issue_store, "ISSUES_PATH", tmp_path / "issues.json")
+    # Isolate the .env master switch: the status test asserts sync is enabled,
+    # so provide an enabled .env in the temp dir instead of relying on the
+    # (gitignored, CI-absent) real repo .env.
+    env_file = tmp_path / ".env"
+    env_file.write_text("KANBAN_SYNC_ENABLED=1\n", encoding="utf-8")
+    monkeypatch.setattr(kb, "ENV_FILE_PATH", env_file)
+    monkeypatch.delenv("KANBAN_SYNC_ENABLED", raising=False)
 
     (data / "active.json").write_text(
         json.dumps({"active": "b1"}), encoding="utf-8"

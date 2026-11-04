@@ -1146,23 +1146,44 @@ async def _nlp_run(agent: "Agent", args: dict[str, Any]) -> str:
     # model told SHELL_NAME=powershell got cmd.exe and its PowerShell cmdlets
     # died as 'is not recognized').  See shell_utils.run_shell_command.
     run_argv = _run_shell_command(cmd_to_run)
+    # cmd.exe case: run_shell_command returns [comspec, "/c", command].
+    # Popen with shell=False + a list runs list2cmdline(), which escapes
+    # embedded quotes with backslashes that cmd.exe does not understand, so
+    # a command containing quoted paths (e.g. python "script.py") fails with
+    # "is not recognized".  Use shell=True with the raw command string, the
+    # same way subprocess does internally, so the quotes survive.
+    _cmd_case = (
+        isinstance(run_argv, (list, tuple))
+        and len(run_argv) >= 3
+        and str(run_argv[1]).lower() == "/c"
+        and str(run_argv[0]).lower().endswith(("cmd.exe", "cmd"))
+    )
     try:
-        proc = subprocess.Popen(
-            run_argv,
-            shell=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            # Pin UTF-8 explicitly: without it the child's stdout/stderr
-            # are decoded with the locale codepage (cp1252 on Windows), so
-            # a command emitting UTF-8 (CJK, emoji, git output) comes back
-            # as mojibake or raises UnicodeDecodeError out of communicate()
-            # (decision #114 — every text=True child call must pin this).
-            encoding="utf-8",
-            errors="replace",
-            cwd=_effective_ws_dir(agent),
-            creationflags=creationflags,
-        )
+        if _cmd_case:
+            proc = subprocess.Popen(
+                run_argv[2],
+                shell=True,
+                executable=run_argv[0],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                cwd=_effective_ws_dir(agent),
+                creationflags=creationflags,
+            )
+        else:
+            proc = subprocess.Popen(
+                run_argv,
+                shell=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                cwd=_effective_ws_dir(agent),
+                creationflags=creationflags,
+            )
         try:
             output, err = proc.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:

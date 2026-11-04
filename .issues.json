@@ -355,5 +355,22 @@
     "repair_ref": null,
     "created_at": "2026-11-04T18:06:16+00:00",
     "resolved_at": null
+  },
+  {
+    "id": "iss-general-kanban_eb3471f1797d4b8f8f6622d6f2fbe689",
+    "title": "Kanban card coloring",
+    "category": "general",
+    "severity": "low",
+    "locations": [
+      "kanban:eb3471f1797d4b8f8f6622d6f2fbe689"
+    ],
+    "status": "open",
+    "autonomy_level": 1,
+    "evidence": "",
+    "suggested_approach": "Workspace C:\\Dev\\Kanban. When a kanban card is already integrated with agent1, make the card color different than the default color, and make sure there's a filter option to select integrated kanban cards.",
+    "decision_ref": null,
+    "repair_ref": null,
+    "created_at": "2026-11-04T20:47:32+00:00",
+    "resolved_at": null
   }
 ]
