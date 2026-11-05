@@ -316,7 +316,7 @@
       "merge"
     ],
     "contradictions": [],
-    "resolved_by": "031",
+    "resolved_by": null,
     "status": "active",
     "category": ""
   },
@@ -630,10 +630,12 @@
       "human-in-loop",
       "workflow"
     ],
-    "contradictions": [],
+    "contradictions": ["015"],
     "resolved_by": "015",
-    "status": "active",
-    "category": ""
+    "status": "superseded",
+    "category": "",
+    "resolution_note": "Superseded by #015 (amended 2026-11-05). This record was a duplicate of #015's open question, not a separate decision. The 015<->031 resolved_by cycle (each record pointing at the other, both 'active') is removed: #015 is the authoritative root (its resolved_by is now null) and #031 is superseded, pointing to #015. #015's human-review-gate behaviour is unchanged.",
+    "superseded_at": "2026-11-05T00:00:00+00:00"
   },
   {
     "id": "032",
