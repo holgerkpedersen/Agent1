@@ -115,8 +115,11 @@ def test_linked_returns_exactly_linked_card_ids(kanban_client):
     resp = kanban_client.get("/api/cards/linked")
     assert resp.status_code == 200, resp.get_data(as_text=True)
     body = resp.get_json()
-    assert isinstance(body, list), f"expected a JSON list, got {type(body)}: {body!r}"
-    assert sorted(body) == ["card-linked-a", "card-linked-b"], (
+    card_ids = body["card_ids"]
+    assert isinstance(
+        card_ids, list
+    ), f"expected a JSON list, got {type(card_ids)}: {body!r}"
+    assert sorted(card_ids) == ["card-linked-a", "card-linked-b"], (
         "linked endpoint must return each issue-linked card id exactly once: "
         "reverse keys, non-issue pairs and stale links must be excluded"
     )
@@ -129,10 +132,12 @@ def test_linked_ids_are_deduplicated(kanban_client):
     mapping["iss-duplicate-of-alpha"] = "card-linked-a"
     map_path.write_text(json.dumps(mapping), encoding="utf-8")
 
-    body = kanban_client.get("/api/cards/linked").get_json()
-    assert isinstance(body, list)
-    assert sorted(body) == ["card-linked-a", "card-linked-b"]
-    assert len(body) == len(set(body)), f"duplicate card ids in response: {body!r}"
+    card_ids = kanban_client.get("/api/cards/linked").get_json()["card_ids"]
+    assert isinstance(card_ids, list)
+    assert sorted(card_ids) == ["card-linked-a", "card-linked-b"]
+    assert len(card_ids) == len(set(card_ids)), (
+        f"duplicate card ids in response: {card_ids!r}"
+    )
 
 
 def test_linked_is_empty_when_map_file_missing(kanban_client):
@@ -141,4 +146,4 @@ def test_linked_is_empty_when_map_file_missing(kanban_client):
 
     resp = kanban_client.get("/api/cards/linked")
     assert resp.status_code == 200, resp.get_data(as_text=True)
-    assert resp.get_json() == []
+    assert resp.get_json()["card_ids"] == []

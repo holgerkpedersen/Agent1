@@ -5,12 +5,15 @@ selector asserted against the shipped stylesheet, and a DOM element asserted
 against the served template -- both are *pins*, so a rename in either file
 fails loudly instead of silently un-styling the page.
 
-1. ``static/ttheme/css/style.css`` must carry a ``.card-integrated`` rule.
-   The modal card is only stitched into its container while that class is
-   applied; drop the rule and the dialog renders as a detached box.
+1. The Kanban checkout's ``static/style.css`` must carry a
+   ``.card-integrated`` rule (the feature is implemented there).  Drop the
+   rule and the dialog renders as a detached box.
 2. ``index.html`` must keep the badge element(s) the card header pins its
    counters to (``id="badge-..."``). The JS writes textContent into those ids
    by name, so renaming them in the template leaves the badges on "-".
+
+Note: the ``.card-integrated`` rule lives in the Kanban checkout's stylesheet;
+all other pins stay against Agent1's own assets.
 """
 
 from __future__ import annotations
@@ -23,12 +26,13 @@ import pytest
 #: Repo root derived from this file's location -- a hardcoded path breaks CI
 #: the moment the checkout lands anywhere else.
 REPO = Path(__file__).resolve().parent.parent
-CSS = REPO / "static" / "ttheme" / "css" / "style.css"
+KANBAN_ROOT = REPO.parent / "Kanban"
+CSS = KANBAN_ROOT / "src" / "agent1" / "static" / "style.css"
 TEMPLATE = REPO / "static" / "index.html"
 
 
 def _read(path: Path) -> str:
-    assert path.is_file(), f"missing asset: {path.relative_to(REPO)}"
+    assert path.is_file(), f"missing asset: {path}"
     return path.read_text(encoding="utf-8", errors="replace")
 
 
@@ -37,7 +41,7 @@ def test_card_integrated_rule_exists_in_style_css() -> None:
     css = _read(CSS)
     rule = re.search(r"(?m)^\s*([^{}]*\.card-integrated[^{}]*)\{", css)
     assert rule, (
-        "style.css has no .card-integrated rule -> the modal card is not "
+        "Kanban style.css has no .card-integrated rule -> the modal card is not "
         "stitched into its container and renders detached"
     )
     selector = rule.group(1)
