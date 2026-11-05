@@ -18,7 +18,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "002",
@@ -40,7 +40,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "003",
@@ -62,7 +62,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "general"
   },
   {
     "id": "004",
@@ -83,7 +83,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "general"
   },
   {
     "id": "005",
@@ -103,7 +103,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "006",
@@ -125,7 +125,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "007",
@@ -146,7 +146,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "architecture"
   },
   {
     "id": "008",
@@ -168,7 +168,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "architecture"
   },
   {
     "id": "009",
@@ -190,7 +190,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "architecture"
   },
   {
     "id": "010",
@@ -213,7 +213,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "architecture"
   },
   {
     "id": "011",
@@ -236,7 +236,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "architecture"
   },
   {
     "id": "012",
@@ -259,7 +259,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "architecture"
   },
   {
     "id": "013",
@@ -279,7 +279,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "process"
   },
   {
     "id": "014",
@@ -298,7 +298,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "015",
@@ -318,7 +318,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "016",
@@ -336,7 +336,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "quality"
   },
   {
     "id": "017",
@@ -356,7 +356,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "process"
   },
   {
     "id": "018",
@@ -377,7 +377,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "process"
   },
   {
     "id": "019",
@@ -397,7 +397,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "architecture"
   },
   {
     "id": "020",
@@ -417,7 +417,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "021",
@@ -438,7 +438,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "022",
@@ -456,7 +456,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "023",
@@ -476,7 +476,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "024",
@@ -498,7 +498,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "025",
@@ -516,7 +516,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "process"
   },
   {
     "id": "026",
@@ -534,7 +534,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "process"
   },
   {
     "id": "027",
@@ -555,7 +555,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "028",
@@ -576,7 +576,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "architecture"
   },
   {
     "id": "029",
@@ -598,7 +598,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "process"
   },
   {
     "id": "030",
@@ -616,7 +616,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "metrics"
   },
   {
     "id": "031",
@@ -630,10 +630,12 @@
       "human-in-loop",
       "workflow"
     ],
-    "contradictions": ["015"],
+    "contradictions": [
+      "015"
+    ],
     "resolved_by": "015",
     "status": "superseded",
-    "category": "",
+    "category": "general",
     "resolution_note": "Superseded by #015 (amended 2026-11-05). This record was a duplicate of #015's open question, not a separate decision. The 015<->031 resolved_by cycle (each record pointing at the other, both 'active') is removed: #015 is the authoritative root (its resolved_by is now null) and #031 is superseded, pointing to #015. #015's human-review-gate behaviour is unchanged.",
     "superseded_at": "2026-11-05T00:00:00+00:00"
   },
@@ -652,7 +654,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "architecture"
   },
   {
     "id": "033",
@@ -671,7 +673,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "process"
   },
   {
     "id": "034",
@@ -692,7 +694,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "035",
@@ -714,7 +716,7 @@
     "contradictions": [],
     "resolved_by": "007",
     "status": "active",
-    "category": ""
+    "category": "operations"
   },
   {
     "id": "036",
@@ -738,7 +740,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "037",
@@ -763,7 +765,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "038",
@@ -787,7 +789,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "039",
@@ -817,7 +819,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "040",
@@ -841,7 +843,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "041",
@@ -867,7 +869,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "042",
@@ -892,7 +894,26 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "process"
+  },
+  {
+    "id": "043",
+    "date": "2026-11-05T00:00:00+00:00",
+    "title": "ID 043 is void: sequence gap preserved",
+    "context": "The ledger runs 001-042 then 044-129. No record 043 was ever written, and the gap is indistinguishable from a deletion (see #058, second data-loss incident).",
+    "decision": "Reserve 043 as a void tombstone and do not reuse it. Do not renumber: every supersession link uses zero-padded IDs, so renumbering would silently invalidate them (#015, #031, #035, #046, #116).",
+    "rationale": "One record removes the ambiguity about ledger history; renumbering is destructive to cross-references and to any tool that resolves them (#054).",
+    "affected_files": [
+      ".decisions.json"
+    ],
+    "tags": [
+      "audit",
+      "process"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "void",
+    "category": "process"
   },
   {
     "id": "044",
@@ -913,7 +934,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "process"
   },
   {
     "id": "045",
@@ -934,7 +955,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "architecture"
   },
   {
     "id": "046",
@@ -958,7 +979,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "047",
@@ -979,7 +1000,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "048",
@@ -1001,7 +1022,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "testing"
   },
   {
     "id": "049",
@@ -1024,7 +1045,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "process"
   },
   {
     "id": "050",
@@ -1049,7 +1070,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "051",
@@ -1071,7 +1092,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "052",
@@ -1094,7 +1115,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "053",
@@ -1117,7 +1138,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "054",
@@ -1139,7 +1160,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "055",
@@ -1162,7 +1183,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "056",
@@ -1182,7 +1203,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "057",
@@ -1199,10 +1220,14 @@
       "production",
       "observability"
     ],
-    "contradictions": [],
-    "resolved_by": null,
-    "status": "active",
-    "category": ""
+    "contradictions": [
+      "109"
+    ],
+    "resolved_by": "109",
+    "status": "superseded",
+    "category": "operations",
+    "resolution_note": "\nSuperseded by #109 (amended 2026-11-05): open question phrased as a decision; same logging migration",
+    "superseded_at": "2026-11-05T00:00:00+00:00"
   },
   {
     "id": "058",
@@ -1225,7 +1250,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "testing"
   },
   {
     "id": "059",
@@ -1242,10 +1267,14 @@
       "python-packaging",
       "pytest"
     ],
-    "contradictions": [],
-    "resolved_by": null,
-    "status": "active",
-    "category": ""
+    "contradictions": [
+      "058"
+    ],
+    "resolved_by": "058",
+    "status": "superseded",
+    "category": "testing",
+    "resolution_note": "\nSuperseded by #058 (amended 2026-11-05): agent_core/tests/__init__.py was already reconstructed in 058",
+    "superseded_at": "2026-11-05T00:00:00+00:00"
   },
   {
     "id": "060",
@@ -1273,7 +1302,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "general"
   },
   {
     "id": "061",
@@ -1294,7 +1323,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "architecture"
   },
   {
     "id": "062",
@@ -1313,7 +1342,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "architecture"
   },
   {
     "id": "063",
@@ -1335,7 +1364,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "064",
@@ -1351,10 +1380,14 @@
       "production",
       "shutdown"
     ],
-    "contradictions": [],
-    "resolved_by": null,
-    "status": "active",
-    "category": ""
+    "contradictions": [
+      "121"
+    ],
+    "resolved_by": "121",
+    "status": "superseded",
+    "category": "operations",
+    "resolution_note": "\nSuperseded by #121 (amended 2026-11-05): same SIGBREAK os._exit(1) cleanup gap (4th record of one bug)",
+    "superseded_at": "2026-11-05T00:00:00+00:00"
   },
   {
     "id": "065",
@@ -1371,10 +1404,14 @@
       "logging",
       "production"
     ],
-    "contradictions": [],
-    "resolved_by": null,
-    "status": "active",
-    "category": ""
+    "contradictions": [
+      "109"
+    ],
+    "resolved_by": "109",
+    "status": "superseded",
+    "category": "operations",
+    "resolution_note": "\nSuperseded by #109 (amended 2026-11-05): same logging migration; 109 is the JSON + trace-id form",
+    "superseded_at": "2026-11-05T00:00:00+00:00"
   },
   {
     "id": "066",
@@ -1393,7 +1430,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "067",
@@ -1411,7 +1448,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "planning"
   },
   {
     "id": "068",
@@ -1435,7 +1472,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "ux"
   },
   {
     "id": "069",
@@ -1459,7 +1496,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "metrics"
   },
   {
     "id": "070",
@@ -1479,7 +1516,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "correctness"
   },
   {
     "id": "071",
@@ -1502,7 +1539,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "metrics"
   },
   {
     "id": "072",
@@ -1525,7 +1562,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "metrics"
   },
   {
     "id": "073",
@@ -1549,7 +1586,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "074",
@@ -1572,7 +1609,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "compliance"
   },
   {
     "id": "075",
@@ -1593,7 +1630,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "ux"
   },
   {
     "id": "076",
@@ -1618,7 +1655,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "077",
@@ -1642,7 +1679,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "078",
@@ -1665,13 +1702,14 @@
       "context"
     ],
     "status": "active",
-    "created_at": "2026-08-24T10:43:00.306892+00:00",
     "related_decisions": [
       "077",
       "035"
     ],
     "date": "2026-08-24T10:43:00.306892+00:00",
-    "category": ""
+    "category": "security",
+    "contradictions": [],
+    "resolved_by": null
   },
   {
     "id": "079",
@@ -1697,7 +1735,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "correctness"
   },
   {
     "id": "080",
@@ -1717,13 +1755,17 @@
       "validation",
       "documentation"
     ],
-    "contradictions": [],
-    "resolved_by": null,
+    "contradictions": [
+      "131"
+    ],
+    "resolved_by": "131",
     "meta_warnings": [
       "Repeats unverified claim reference: plan_proposed.md"
     ],
-    "status": "active",
-    "category": ""
+    "status": "superseded",
+    "category": "documentation",
+    "resolution_note": "\nSuperseded by #131 (amended 2026-11-05): schema for plan_proposed.md; ledger meta_warning: file absent",
+    "superseded_at": "2026-11-05T00:00:00+00:00"
   },
   {
     "id": "081",
@@ -1748,7 +1790,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "082",
@@ -1768,13 +1810,17 @@
       "race-condition",
       "file-operations"
     ],
-    "contradictions": [],
-    "resolved_by": null,
+    "contradictions": [
+      "131"
+    ],
+    "resolved_by": "131",
     "meta_warnings": [
       "Repeats unverified claim reference: .plans.json"
     ],
-    "status": "active",
-    "category": ""
+    "status": "superseded",
+    "category": "correctness",
+    "resolution_note": "\nSuperseded by #131 (amended 2026-11-05): atomicity of .plans.json; ledger meta_warning: file absent",
+    "superseded_at": "2026-11-05T00:00:00+00:00"
   },
   {
     "id": "083",
@@ -1800,7 +1846,7 @@
       "Repeats unverified claim reference: decisions.json"
     ],
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "084",
@@ -1819,14 +1865,18 @@
       "file-security",
       "logging"
     ],
-    "contradictions": [],
-    "resolved_by": null,
+    "contradictions": [
+      "131"
+    ],
+    "resolved_by": "131",
     "meta_warnings": [
       "Affected file does not exist in workspace: .plans.json",
       "Repeats unverified claim reference: .plans.json"
     ],
-    "status": "active",
-    "category": ""
+    "status": "superseded",
+    "category": "security",
+    "resolution_note": "\nSuperseded by #131 (amended 2026-11-05): protection for .plans.json; ledger meta_warning: file absent",
+    "superseded_at": "2026-11-05T00:00:00+00:00"
   },
   {
     "id": "085",
@@ -1849,7 +1899,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "086",
@@ -1870,13 +1920,17 @@
       "file-security",
       "validation"
     ],
-    "contradictions": [],
-    "resolved_by": null,
+    "contradictions": [
+      "046"
+    ],
+    "resolved_by": "046",
     "meta_warnings": [
       "Repeats unverified claim reference: plan_executed_...md"
     ],
-    "status": "active",
-    "category": ""
+    "status": "superseded",
+    "category": "security",
+    "resolution_note": "\nSuperseded by #046 (amended 2026-11-05): imported two path_utils impls; 046 mandates one canonical",
+    "superseded_at": "2026-11-05T00:00:00+00:00"
   },
   {
     "id": "087",
@@ -1896,14 +1950,18 @@
       "reliability",
       "state-transitions"
     ],
-    "contradictions": [],
-    "resolved_by": null,
+    "contradictions": [
+      "131"
+    ],
+    "resolved_by": "131",
     "meta_warnings": [
       "Repeats unverified claim reference: plan_executed_...md",
       "Repeats unverified claim reference: plan_proposed.md"
     ],
-    "status": "active",
-    "category": ""
+    "status": "superseded",
+    "category": "security",
+    "resolution_note": "\nSuperseded by #131 (amended 2026-11-05): rename atomicity for plan_executed_*.md; artifact absent",
+    "superseded_at": "2026-11-05T00:00:00+00:00"
   },
   {
     "id": "088",
@@ -1923,13 +1981,17 @@
       "audit",
       "consistency"
     ],
-    "contradictions": [],
-    "resolved_by": null,
+    "contradictions": [
+      "121"
+    ],
+    "resolved_by": "121",
     "meta_warnings": [
       "Repeats unverified claim reference: .plans.json"
     ],
-    "status": "active",
-    "category": ""
+    "status": "superseded",
+    "category": "process",
+    "resolution_note": "\nSuperseded by #121 (amended 2026-11-05): shutdown/cleanup strategy is owned by the signal decision",
+    "superseded_at": "2026-11-05T00:00:00+00:00"
   },
   {
     "id": "089",
@@ -1944,10 +2006,14 @@
       "atomic-operations",
       "plan-lifecycle"
     ],
-    "contradictions": [],
-    "resolved_by": null,
-    "status": "active",
-    "category": ""
+    "contradictions": [
+      "085"
+    ],
+    "resolved_by": "085",
+    "status": "superseded",
+    "category": "general",
+    "resolution_note": "\nSuperseded by #085 (amended 2026-11-05): plan-state semantics authored in-agent after 085 forbade it",
+    "superseded_at": "2026-11-05T00:00:00+00:00"
   },
   {
     "id": "090",
@@ -1963,10 +2029,14 @@
       "audit-trail",
       "append-only"
     ],
-    "contradictions": [],
-    "resolved_by": null,
-    "status": "active",
-    "category": ""
+    "contradictions": [
+      "085"
+    ],
+    "resolved_by": "085",
+    "status": "superseded",
+    "category": "process",
+    "resolution_note": "\nSuperseded by #085 (amended 2026-11-05): same; and a second competing plan audit-log store",
+    "superseded_at": "2026-11-05T00:00:00+00:00"
   },
   {
     "id": "091",
@@ -1983,10 +2053,14 @@
       "constants",
       "defense-in-depth"
     ],
-    "contradictions": [],
-    "resolved_by": null,
-    "status": "active",
-    "category": ""
+    "contradictions": [
+      "085"
+    ],
+    "resolved_by": "085",
+    "status": "superseded",
+    "category": "general",
+    "resolution_note": "\nSuperseded by #085 (amended 2026-11-05): same; protected constants for artifacts that do not exist",
+    "superseded_at": "2026-11-05T00:00:00+00:00"
   },
   {
     "id": "092",
@@ -2002,10 +2076,14 @@
       "stdlib",
       "type-safety"
     ],
-    "contradictions": [],
-    "resolved_by": null,
-    "status": "active",
-    "category": ""
+    "contradictions": [
+      "085"
+    ],
+    "resolved_by": "085",
+    "status": "superseded",
+    "category": "security",
+    "resolution_note": "\nSuperseded by #085 (amended 2026-11-05): same; schema types for an unbuilt subsystem",
+    "superseded_at": "2026-11-05T00:00:00+00:00"
   },
   {
     "id": "093",
@@ -2021,10 +2099,14 @@
       "lightweight",
       "structured-content"
     ],
-    "contradictions": [],
-    "resolved_by": null,
-    "status": "active",
-    "category": ""
+    "contradictions": [
+      "085"
+    ],
+    "resolved_by": "085",
+    "status": "superseded",
+    "category": "planning",
+    "resolution_note": "\nSuperseded by #085 (amended 2026-11-05): same; markdown validation for an unbuilt subsystem",
+    "superseded_at": "2026-11-05T00:00:00+00:00"
   },
   {
     "id": "094",
@@ -2039,10 +2121,14 @@
       "module-organization",
       "testability"
     ],
-    "contradictions": [],
-    "resolved_by": null,
-    "status": "active",
-    "category": ""
+    "contradictions": [
+      "085"
+    ],
+    "resolved_by": "085",
+    "status": "superseded",
+    "category": "general",
+    "resolution_note": "\nSuperseded by #085 (amended 2026-11-05): same; module split for an unbuilt subsystem",
+    "superseded_at": "2026-11-05T00:00:00+00:00"
   },
   {
     "id": "095",
@@ -2063,7 +2149,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "process"
   },
   {
     "id": "096",
@@ -2086,7 +2172,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "097",
@@ -2105,10 +2191,14 @@
       "regex",
       "bypass"
     ],
-    "contradictions": [],
-    "resolved_by": null,
-    "status": "active",
-    "category": ""
+    "contradictions": [
+      "037"
+    ],
+    "resolved_by": "037",
+    "status": "superseded",
+    "category": "security",
+    "resolution_note": "\nSuperseded by #037 (amended 2026-11-05): extends the block-list 037 rejects and 063 centralises away",
+    "superseded_at": "2026-11-05T00:00:00+00:00"
   },
   {
     "id": "098",
@@ -2129,7 +2219,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "099",
@@ -2146,10 +2236,14 @@
       "cleanup",
       "signal-handling"
     ],
-    "contradictions": [],
-    "resolved_by": null,
-    "status": "active",
-    "category": ""
+    "contradictions": [
+      "121"
+    ],
+    "resolved_by": "121",
+    "status": "superseded",
+    "category": "security",
+    "resolution_note": "\nSuperseded by #121 (amended 2026-11-05): same SIGBREAK os._exit(1) cleanup gap",
+    "superseded_at": "2026-11-05T00:00:00+00:00"
   },
   {
     "id": "100",
@@ -2168,7 +2262,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "testing"
   },
   {
     "id": "101",
@@ -2189,7 +2283,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "architecture"
   },
   {
     "id": "102",
@@ -2209,7 +2303,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "103",
@@ -2231,7 +2325,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "104",
@@ -2253,7 +2347,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "105",
@@ -2278,7 +2372,7 @@
       "Negative existence claim without a file reference — cannot be verified against the workspace."
     ],
     "status": "active",
-    "category": ""
+    "category": "testing"
   },
   {
     "id": "106",
@@ -2302,7 +2396,7 @@
       "Repeats unverified claim reference: EXDEV"
     ],
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "107",
@@ -2316,7 +2410,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "general"
   },
   {
     "id": "108",
@@ -2333,10 +2427,14 @@
       "innovation",
       "planning"
     ],
-    "contradictions": [],
-    "resolved_by": null,
-    "status": "active",
-    "category": ""
+    "contradictions": [
+      "126"
+    ],
+    "resolved_by": "126",
+    "status": "superseded",
+    "category": "planning",
+    "resolution_note": "\nSuperseded by #126 (amended 2026-11-05): agent_memory.json is session-scoped: cross-session resume is impossible by construction",
+    "superseded_at": "2026-11-05T00:00:00+00:00"
   },
   {
     "id": "109",
@@ -2357,7 +2455,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "operations"
   },
   {
     "id": "110",
@@ -2377,7 +2475,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "security"
   },
   {
     "id": "111",
@@ -2397,7 +2495,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "correctness"
   },
   {
     "id": "112",
@@ -2414,10 +2512,14 @@
       "error-handling",
       "production"
     ],
-    "contradictions": [],
-    "resolved_by": null,
-    "status": "active",
-    "category": ""
+    "contradictions": [
+      "121"
+    ],
+    "resolved_by": "121",
+    "status": "superseded",
+    "category": "operations",
+    "resolution_note": "\nSuperseded by #121 (amended 2026-11-05): same SIGBREAK os._exit(1) cleanup gap",
+    "superseded_at": "2026-11-05T00:00:00+00:00"
   },
   {
     "id": "113",
@@ -2439,7 +2541,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "process"
   },
   {
     "id": "114",
@@ -2472,7 +2574,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "correctness"
   },
   {
     "id": "115",
@@ -2538,7 +2640,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "quality"
   },
   {
     "id": "118",
@@ -2558,7 +2660,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "operations"
   },
   {
     "id": "119",
@@ -2575,10 +2677,14 @@
       "refactoring",
       "code-quality"
     ],
-    "contradictions": [],
-    "resolved_by": null,
-    "status": "active",
-    "category": ""
+    "contradictions": [
+      "122"
+    ],
+    "resolved_by": "122",
+    "status": "superseded",
+    "category": "quality",
+    "resolution_note": "\nSuperseded by #122 (amended 2026-11-05): same god-object split, same timestamp, narrower scope",
+    "superseded_at": "2026-11-05T00:00:00+00:00"
   },
   {
     "id": "120",
@@ -2594,10 +2700,14 @@
       "performance",
       "optimization"
     ],
-    "contradictions": [],
-    "resolved_by": null,
-    "status": "active",
-    "category": ""
+    "contradictions": [
+      "061"
+    ],
+    "resolved_by": "061",
+    "status": "superseded",
+    "category": "general",
+    "resolution_note": "\nSuperseded by #061 (amended 2026-11-05): optimizes the handler dict that 061 replaces",
+    "superseded_at": "2026-11-05T00:00:00+00:00"
   },
   {
     "id": "121",
@@ -2617,7 +2727,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "operations"
   },
   {
     "id": "122",
@@ -2640,7 +2750,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "architecture"
   },
   {
     "id": "123",
@@ -2654,7 +2764,7 @@
     "contradictions": [],
     "resolved_by": null,
     "status": "active",
-    "category": ""
+    "category": "general"
   },
   {
     "id": "124",
@@ -2825,14 +2935,36 @@
       "architecture"
     ],
     "contradictions": [],
-    "resolved_by": "130",
+    "resolved_by": "131",
     "status": "superseded",
-    "category": "architecture"
+    "category": "architecture",
+    "resolution_note": "Superseded by #131 (amended 2026-11-05): worktrees layer removed; resolved_by updated from old #130 to renamed #131."
   },
   {
     "id": "130",
+    "date": "2026-11-05T00:00:00+00:00",
+    "title": "Plan-state storage is an open question after 080-094 supersession",
+    "context": "Superseding #080-#088 (which specified .plans.json, plan_proposed.md, plan_executed_*.md and a JSONL audit log, all flagged by the ledger's own meta_warnings as absent from the workspace) and #089-#094 (plan-state semantics, barred by #085) leaves the plan subsystem with no recorded storage decision. #108's agent_memory.json home was superseded by #126's per-session isolation.",
+    "decision": "Record as OPEN: plan-state storage, the plan file schema, and the audit-log format. A future decision must choose ONE store, on a path that exists in the workspace, and must state the session scope (shared repository knowledge vs per-session state) per #126. #085 requires such changes be implemented outside the agent, so this record is a request, not an implementation.",
+    "rationale": "Removing contradictory records must not create the impression that the question was settled. Naming the hole keeps it visible to the human gate (#054) instead of letting a superseded schema read as authoritative.",
+    "affected_files": [
+      ".decisions.json",
+      "agent_core/decisions.py"
+    ],
+    "tags": [
+      "planning",
+      "audit",
+      "blocked"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "planning"
+  },
+  {
+    "id": "131",
     "date": "2026-11-05T11:21:02+00:00",
-    "title": "Remove per-session git worktrees layer (supersedes #129)",
+    "title": "#131 Remove per-session git worktrees layer (supersedes #129)",
     "context": "Decision #129 bound each named session to its own git worktree on a session/<id> branch. Two agents editing one repo through separate checkouts produced merge conflicts and duplicated state without real isolation gain, and the layer added a whole module of Windows-sensitive git plumbing.",
     "decision": "Deleted agent_core/session/worktrees.py and tests/test_session_worktrees.py. Dropped the worktree field from SessionMeta/SessionPaths, the worktree kwarg from create_session/update_session, the --worktree/--no-worktree CLI flags, the session prune subcommand and the worktrees package export. Sessions now share the repository working tree.",
     "rationale": "The isolation never paid for itself: shared-repo conflicts were resolved at merge time anyway, and the plumbing (bind/unbind/move/prune, retries on Windows lock errors) was a large untested-in-practice surface for a feature nobody used by default.",
