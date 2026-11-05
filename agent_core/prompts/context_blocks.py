@@ -63,21 +63,51 @@ def _agent_mod() -> Any:
 def _decision_constraints_block(agent: "Agent") -> str:
     """Design-decision constraints for the chat system prompt.
 
-    Mirrors what ``implement``/``fix`` already inject (decision ledger
-    ``.decisions.json`` via :func:`decisions_as_system_prompt`) so the
-    conversational loop cannot contradict a recorded decision mid-chat.
+    Uses RAG-style retrieval from a compact decision index (see
+    :mod:`agent_core.decisions_index`) so only relevant decisions are injected
+    (~5-10 summaries instead of all ~106 active records).  Full text stays in
+    ``.decisions.json`` for human review via ``review show``.
+
     Matched on the files read this session; empty string when no decision
     touches them — the prompt stays byte-identical to before in that case.
     Never raises: a broken/absent ledger must not kill a chat turn.
     """
     try:
-        if not agent._files_read:
-            return ""
-        return str(
-            _agent_mod().decisions_as_system_prompt(
-                agent.workspace, sorted(agent._files_read)
-            )
+        from agent_core.decisions_index import (
+            load_or_build_index,
+            retrieve_decisions,
         )
+
+        index = load_or_build_index(agent.workspace)
+
+        files = sorted(agent._files_read) if agent._files_read else None
+
+        # Gather tags from active decisions for broader matching.
+        all_tags: list[str] = []
+        try:
+            from agent_core.decisions import STATUS_ACTIVE, load_decisions
+
+            for d in load_decisions(agent.workspace):
+                if d.get("status") == STATUS_ACTIVE:
+                    all_tags.extend(d.get("tags", []))
+        except Exception:
+            pass
+
+        relevant = retrieve_decisions(
+            index, files=files, tags=all_tags, top_k=10
+        )
+
+        if not relevant:
+            return ""
+
+        lines = [
+            "\n\nCRITICAL DESIGN CONSTRAINTS — past decisions that MUST be respected:",
+            "These are design choices already documented for this codebase.",
+            "",
+        ]
+        for d in relevant:
+            lines.append(f"  Decision #{d['id']}: {d['summary']}")
+        return "\n".join(lines)
     except Exception:
         logger.exception("Decision constraints unavailable:\n")
         return ""
