@@ -100,7 +100,11 @@ class PlanDecisionGate:
 
         try:
             with open(self.decisions_path, "r", encoding="utf-8") as f:
-                self._decisions = json.load(f)
+                raw = json.load(f)
+            # Only active decisions constrain plans; superseded/archived/void
+            # are resolved and no longer authoritative (same rule as
+            # :func:`decisions_as_system_prompt`).
+            self._decisions = [d for d in raw if d.get("status") == "active"]
         except (json.JSONDecodeError, OSError):
             self._decisions = []
 

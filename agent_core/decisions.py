@@ -878,9 +878,11 @@ def decisions_as_system_prompt(workspace: str | Path, files: list[str]) -> str:
     Returns empty string if no relevant decisions exist.
     """
     decisions = (
-        find_decisions(workspace=str(workspace), files=files)
+        find_decisions(
+            workspace=str(workspace), files=files, status=STATUS_ACTIVE
+        )
         if files
-        else load_decisions(workspace)
+        else [d for d in load_decisions(workspace) if d.get("status") == STATUS_ACTIVE]
     )
     if not decisions:
         return ""
