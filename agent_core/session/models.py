@@ -7,8 +7,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-#: v2 added the ``worktree`` field (per-session git worktree binding).
-SESSION_VERSION = 2
+#: Session metadata schema version.
+#:   v2 added ``worktree``/``repo`` (per-session git worktree binding).
+#:   v3 removed the worktree layer: the fields stay in the record as legacy
+#:   keys (always "" for new sessions) so pre-v3 ``meta.json`` files keep
+#:   loading unchanged.
+SESSION_VERSION = 3
 DEFAULT_SESSION_ID = "default"
 
 
@@ -82,13 +86,12 @@ class SessionMeta:
     created_at: str = field(default_factory=utc_now)
     updated_at: str = field(default_factory=utc_now)
     workspace: str = ""
-    #: Absolute path of the session's dedicated git worktree (v2), or ""
-    #: when the session shares the main checkout (every pre-v2 session).
+    #: Legacy v2 field — absolute path of a git worktree this session once
+    #: owned.  The worktree layer was removed in v3; the key is kept so old
+    #: ``meta.json`` files load, and is always "" for new sessions.
     worktree: str = ""
-    #: Absolute path of the MAIN checkout (git registry root) the session's
-    #: worktree is registered in (v2).  All worktree plumbing runs with this
-    #: as cwd — never the worktree being moved/removed, whose open handle
-    #: makes Windows deny the operation.
+    #: Legacy v2 field — absolute path of the main checkout a worktree was
+    #: registered in.  Kept for schema compatibility; always "" now.
     repo: str = ""
     model: str = ""
     provider: str = ""

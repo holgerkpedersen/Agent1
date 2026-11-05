@@ -6,12 +6,13 @@ session aliases the historical repo-root files.  One live process may hold a
 session at a time (enforced with an OS-level lock), which is what makes
 side-by-side Agent1 instances safe to run.
 
-With ``AGENT_SESSION_WORKTREES=1`` a new named session is additionally bound
-to its own git worktree on a ``session/<id>`` branch (see ``worktrees``), so
-concurrent sessions edit separate checkouts instead of one shared workspace.
+Sessions share the repository working tree: the per-session git worktree
+layer that once bound each named session to its own checkout (and branch)
+was removed, because two agents editing one repo through separate
+checkouts produced merge conflicts and duplicated state for no real
+isolation gain.
 """
 
-from agent_core.session import worktrees
 from agent_core.session.context import (
     activate_session,
     active_paths,
@@ -94,5 +95,4 @@ __all__ = [
     "update_active_meta",
     "update_session",
     "utc_now",
-    "worktrees",
 ]

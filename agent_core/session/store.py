@@ -6,11 +6,14 @@ cross-session memory, turn log, and derived state files.  The ``default``
 session is a compatibility alias for the historical repo-root files, so
 existing installations keep their conversation without a migration step.
 
-With the worktree layer enabled (``AGENT_SESSION_WORKTREES=1``) a named
-session also owns a git worktree (``meta.worktree``): creation binds one,
-deletion unbinds it (dirty trees are refused without ``force``), and
-relocation moves it.  The store keeps the metadata honest — a session's
-recorded ``workspace`` is the live worktree path when one is bound.
+Sessions do NOT own a checkout: ``meta.workspace`` is the workspace the
+session was started in, and every session shares the repository working
+tree.  The former worktree layer (``AGENT_SESSION_WORKTREES``) was removed
+— worktrees are registrations of one shared repository, so branch moves in
+one session changed the state every other session read, and per-session
+branches had no merge intent behind them.  ``meta.worktree`` / ``meta.repo``
+remain on the schema as legacy fields (always empty for new sessions) so
+existing ``meta.json`` files keep loading.
 
 Storage is intentionally index-free: listing scans the session directories,
 so concurrent processes never race on one shared index file.  Metadata writes
@@ -26,7 +29,6 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from agent_core.session import worktrees
 from agent_core.session.models import (
     DEFAULT_SESSION_ID,
     SessionMeta,
@@ -167,19 +169,6 @@ def save_meta(meta: SessionMeta, root: str | Path | None = None) -> None:
         raise SessionError(f"Could not save session metadata: {exc}") from exc
 
 
-def _git_repo_for(root: str | Path | None, meta: SessionMeta) -> Path:
-    """Repo root (git registry) to run worktree plumbing in for this session.
-
-    Prefer the recorded main-checkout path (``meta.repo``); the session
-    root's parent is the production fallback.  The worktree path is never
-    used as cwd: on Windows, running git with the worktree as its own cwd
-    locks the directory and makes the move/remove deny.
-    """
-    if meta.repo:
-        return Path(meta.repo)
-    return Path(session_root(root)).parent
-
-
 def create_session(
     name: str,
     *,
@@ -189,16 +178,11 @@ def create_session(
     provider: str = "",
     mode: str = "build",
     title: str = "",
-    worktree: str = "",
-    repo: str = "",
 ) -> SessionMeta:
     """Create a new session directory and metadata record.
 
-    ``worktree`` is the absolute path of the session's dedicated git
-    worktree (the caller binds it BEFORE this runs — a bind failure means
-    no session), and ``repo`` the main checkout it is registered in.  When
-    bound, the session's ``workspace`` is the worktree path; an empty
-    ``worktree`` keeps the shared-workspace behaviour.
+    ``workspace`` is the shared checkout the session starts in; sessions
+    never own a checkout (see the module docstring).
     """
     sid = slugify(name)
     if sid == DEFAULT_SESSION_ID:
@@ -209,8 +193,6 @@ def create_session(
         id=sid,
         title=title or sid,
         workspace=workspace,
-        worktree=worktree,
-        repo=repo,
         model=model,
         provider=provider,
         mode=mode or "build",
@@ -258,15 +240,8 @@ def rename_session(
     old_name: str,
     new_name: str,
     root: str | Path | None = None,
-    *,
-    move_worktree: bool = True,
 ) -> SessionMeta:
-    """Rename a session directory and id (the default session is fixed).
-
-    With ``move_worktree`` (default) the session's git worktree and its
-    ``session/<id>`` branch are relocated FIRST — a refused move (dirty
-    tree) aborts before the state directory is touched.
-    """
+    """Rename a session directory and id (the default session is fixed)."""
     old_id = slugify(old_name) if old_name != DEFAULT_SESSION_ID else old_name
     new_id = slugify(new_name)
     if old_id == DEFAULT_SESSION_ID or new_id == DEFAULT_SESSION_ID:
@@ -275,23 +250,12 @@ def rename_session(
         raise SessionNotFound(f"Session '{old_id}' does not exist.")
     if session_meta_path(new_id, root).exists():
         raise SessionExists(f"Session '{new_id}' already exists.")
-    moved = None
-    repo = _git_repo_for(root, load_meta(old_id, root))
-    if move_worktree and worktrees.worktree_path(old_id, repo).exists():
-        try:
-            moved = worktrees.move_worktree(old_id, new_id, repo=repo)
-        except worktrees.WorktreeError as exc:
-            raise SessionError(f"Worktree move refused: {exc}") from exc
     src = session_dir(old_id, root)
     dst = session_dir(new_id, root)
     src.rename(dst)
     meta = load_meta(new_id, root)
     meta.id = new_id
     meta.title = new_id
-    if moved is not None:
-        meta.worktree = str(moved)
-        if meta.workspace:
-            meta.workspace = str(moved)
     save_meta(meta, root)
     return meta
 
@@ -301,27 +265,14 @@ def delete_session(
     root: str | Path | None = None,
     *,
     allow_default: bool = False,
-    remove_worktree: bool = True,
-    force: bool = False,
 ) -> None:
-    """Delete a session directory and all of its state files.
-
-    The session's git worktree (if bound) is unbound FIRST: a dirty
-    worktree is refused without ``force`` and the state directory stays
-    untouched (fail closed).
-    """
+    """Delete a session directory and all of its state files."""
     sid = slugify(name) if name != DEFAULT_SESSION_ID else name
     if sid == DEFAULT_SESSION_ID and not allow_default:
         raise SessionError("The 'default' session cannot be deleted.")
     target = session_dir(sid, root)
     if not target.is_dir():
         raise SessionNotFound(f"Session '{sid}' does not exist.")
-    if remove_worktree:
-        repo = _git_repo_for(root, load_meta(sid, root))
-        try:
-            worktrees.unbind(sid, repo=repo, force=force)
-        except worktrees.WorktreeError as exc:
-            raise SessionError(f"Worktree removal refused: {exc}") from exc
     shutil.rmtree(target)
 
 

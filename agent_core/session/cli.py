@@ -1,11 +1,13 @@
 """Command-line session selection for the Agent1 REPL.
 
-The effective *workspace* follows the selected session: with the worktree
-layer enabled (``AGENT_SESSION_WORKTREES=1``), a new named session is
-bound to its own git worktree on a ``session/<id>`` branch, and resuming
-a session lands in its worktree — each session edits its own checkout.
-Without the layer (or without git), sessions share the caller's
-workspace exactly as before.
+Sessions isolate conversation, memory, model and mode.  They deliberately
+do NOT isolate the checkout: every session works in the caller's
+workspace.  An earlier layer bound each named session to its own git
+worktree on a ``session/<id>`` branch; it was removed because a worktree
+is just another registration (and branch) of the SAME repository — a
+session that checked out, committed or switched branches moved the
+repository state every other session reads, so isolation was an illusion
+that also fragmented shared state.  See ``docs/SESSIONS.md``.
 """
 
 from __future__ import annotations
@@ -16,7 +18,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Sequence
 
-from agent_core.session import worktrees
 from agent_core.session.context import activate_session
 from agent_core.session.lock import SessionLocked, probe_owner
 from agent_core.session.models import DEFAULT_SESSION_ID
@@ -26,7 +27,6 @@ from agent_core.session.store import (
     SessionNotFound,
     create_session,
     list_sessions,
-    load_meta,
     paths_for,
     repo_root,
     session_root,
@@ -41,7 +41,6 @@ class StartupSelection:
     session_id: str = DEFAULT_SESSION_ID
     root: str = ""
     workspace: str = ""
-    worktree: str = ""
     should_exit: bool = False
 
 
@@ -64,19 +63,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="Create and enter a new session (a timestamped name is generated "
         "when NAME is omitted).",
-    )
-    parser.add_argument(
-        "--base",
-        metavar="REF",
-        default="HEAD",
-        help="With --new-session and the worktree layer: the ref the new "
-        "session/<id> branch starts from (default: HEAD).",
-    )
-    parser.add_argument(
-        "--no-worktree",
-        action="store_true",
-        help="Do not bind a new session to its own git worktree, even when "
-        "the worktree layer is enabled.",
     )
     parser.add_argument(
         "--list-sessions",
@@ -152,57 +138,31 @@ def resolve_startup(
 ) -> StartupSelection:
     """Create/resume/lock the session selected on the command line.
 
-    The workspace follows the session: a bound worktree wins over the
-    caller's workspace when it exists (a pruned worktree degrades to the
-    main checkout with a note).  ``should_exit`` is true for informational
-    commands (``--list-sessions``) and for a refused session (locked,
-    missing, or a worktree bind that failed); the caller should return.
+    The *workspace* is the caller's (or the repo root): sessions share one
+    checkout by design.  ``should_exit`` is true for informational commands
+    (``--list-sessions``) and for a refused session (locked or missing); the
+    caller should return.
     """
     if namespace.session_root:
         os.environ["AGENT_SESSION_ROOT"] = str(namespace.session_root)
     root = str(session_root())
     ws = os.path.abspath(workspace or str(repo_root()))
-    use_worktree = worktrees.worktrees_enabled() and not namespace.no_worktree
 
     if namespace.list_sessions:
         print(format_session_table(root))
         return StartupSelection(root=root, workspace=ws, should_exit=True)
 
-    worktree = ""
-    main_repo = ws
     if namespace.new_session is not None:
         name = namespace.new_session.strip() or _generated_name(root)
         sid = slugify(name)
-        if use_worktree:
-            if not worktrees.is_git_repo(ws):
-                print(
-                    "[session] workspace is not a git repo — the session "
-                    "shares the main checkout (no worktree)."
-                )
-            else:
-                try:
-                    worktree = str(
-                        worktrees.bind(sid, repo=main_repo, base_ref=namespace.base)
-                    )
-                except worktrees.WorktreeError as exc:
-                    print(f"[session] Worktree bind failed: {exc}")
-                    return StartupSelection(root=root, workspace=ws, should_exit=True)
-                ws = worktree
         try:
             meta = create_session(
                 name,
                 root=root,
                 workspace=ws,
-                worktree=worktree,
-                repo=main_repo if worktree else "",
             )
         except (SessionError, SessionExists) as exc:
             print(f"[session] {exc}")
-            if worktree:
-                try:
-                    worktrees.unbind(sid, repo=main_repo)
-                except worktrees.WorktreeError as exc2:
-                    print(f"[session] worktree cleanup also failed: {exc2}")
             return StartupSelection(root=root, workspace=ws, should_exit=True)
         sid = meta.id
     else:
@@ -212,20 +172,6 @@ def resolve_startup(
         except SessionError as exc:
             print(f"[session] {exc}")
             return StartupSelection(root=root, workspace=ws, should_exit=True)
-
-    # A session's own worktree wins over the caller's workspace.
-    recorded = ""
-    try:
-        recorded = load_meta(sid, root).worktree
-    except SessionError:
-        pass
-    if recorded and os.path.isdir(recorded):
-        ws = os.path.abspath(recorded)
-    elif recorded:
-        print(
-            f"[session] Worktree {recorded} is missing; continuing in "
-            f"{ws} (run 'session prune' to clean up)."
-        )
 
     try:
         activate_session(sid, root=root, workspace=ws)
@@ -240,9 +186,7 @@ def resolve_startup(
     except SessionError as exc:
         print(f"[session] {exc}")
         return StartupSelection(root=root, workspace=ws, should_exit=True)
-    return StartupSelection(
-        session_id=sid, root=root, workspace=ws, worktree=recorded or worktree
-    )
+    return StartupSelection(session_id=sid, root=root, workspace=ws)
 
 
 def parse_and_activate(
