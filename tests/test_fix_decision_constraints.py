@@ -9,6 +9,7 @@ canonical workspace-relative form.
 """
 
 from pathlib import Path
+from unittest.mock import patch
 
 from agent_core.commands.fix_cmd import (
     _decision_constraints_for,
@@ -94,9 +95,18 @@ class TestDecisionWorkspaceFor:
         assert not (target.parent / ".decisions.json").exists()
 
     def test_no_existing_ledger_defaults_to_parent(self, tmp_path):
+        """Walk-up must NOT be derailed by stray .decisions.json above tmp_path."""
         lone = tmp_path / "lone.py"
         lone.write_text("z = 3\n", encoding="utf-8")
-        assert _decision_workspace_for(str(lone)) == str(lone.parent)
+
+        def _is_file_patch(self) -> bool:
+            # Only our workspace root has a ledger; everything else is clean.
+            if self.name == ".decisions.json":
+                return str(self.parent) == str(tmp_path)
+            return False  # no stray ledgers above tmp_path
+
+        with patch.object(Path, "is_file", _is_file_patch):
+            assert _decision_workspace_for(str(lone)) == str(lone.parent)
 
     def test_none_path_is_safe(self, tmp_path):
         assert _decision_workspace_for(None) == ""
