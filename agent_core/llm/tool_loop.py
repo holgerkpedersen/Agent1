@@ -184,6 +184,27 @@ _IDEMPOTENT_TOOLS: frozenset[str] = frozenset(
     }
 )
 
+#: After this many consecutive idempotent-tool calls with the SAME arguments
+#: and NO text answer produced, inject a self-questioning note that forces the
+#: model to either produce its final answer or ask specific clarifying questions.
+#: This breaks loops like `git status --short` → "nothing to commit" → repeat.
+_IDEMPOTENT_REPEAT_LIMIT = 3
+
+#: Self-questioning note: when the model repeats idempotent calls without
+#: producing a text answer, this forces it to reflect on whether it has enough
+#: information or needs to ask clarifying questions.
+_SELF_QUESTION_NOTE = (
+    "You have now checked the same state {count} time(s) without producing a "
+    "final answer. STOP calling tools and REFLECT:\n"
+    "\n"
+    "1. Do you have enough information to answer the user's request?\n"
+    "   - If YES: give your final answer NOW in text.\n"
+    "   - If NO: state EXACTLY what specific piece of information is missing\n"
+    "     and call ONE tool to get it (not a repeat of what you already checked).\n"
+    "\n"
+    "Do NOT re-check the same thing. Either answer or ask for something new."
+)
+
 #: Steering note injected with a parent-directory listing when a tool result shows
 #: a missing path — supplies the simple existence check the model lacks so it can
 #: progress instead of getting stuck on the same non-existent path (decision #035).
@@ -1033,6 +1054,12 @@ class ToolLoopRunner:
         #: A third consecutive duplicate stops the loop and forces synthesis.
         prev_call_key: tuple[str, str] | None = None
         prev_result: str = ""
+        #: Idempotent-tool repeat tracking: when an idempotent tool (git,
+        #: get_current_datetime) is called with the SAME arguments N times in a
+        #: row without producing a text answer, inject a self-questioning note.
+        #: This breaks loops like `git status --short` → "nothing to commit" → repeat.
+        _idempotent_repeat_key: tuple[str, str] | None = None
+        _idempotent_repeat_count: int = 0
         #: Seen-call sets for parallel-repeat detection (decision #062):
         #: ``_seen_this_iter`` accumulates every call key of the CURRENT batch
         #: (catches identical calls inside one batch); ``_prev_batch_keys``
@@ -1247,7 +1274,9 @@ class ToolLoopRunner:
                 dup_streak: dict[tuple[str, str], bool],
                 tool_consec_failures: dict[str, int],
             ) -> dict[str, Any]:
-                nonlocal calls_without_progress, prev_call_key, prev_result, stuck
+                nonlocal \
+                    calls_without_progress, prev_call_key, prev_result, stuck, \
+                    _idempotent_repeat_key, _idempotent_repeat_count
                 tc_id, tool_name, args, call_key, args_hash, prev_text = prepared
                 #: The proof the agent is acting on: the result of the PREVIOUS
                 #: round.  Captured BEFORE this call runs — once it completes,
@@ -1372,6 +1401,19 @@ class ToolLoopRunner:
                 prev_call_key = call_key
                 dup_streak[call_key] = False
                 prev_result = result_str
+                # Idempotent-tool repeat tracking: when an idempotent tool is
+                # called with the SAME arguments repeatedly without producing a
+                # text answer, count it and inject self-questioning after N repeats.
+                if tool_name in _IDEMPOTENT_TOOLS:
+                    if call_key == _idempotent_repeat_key:
+                        _idempotent_repeat_count += 1
+                    else:
+                        _idempotent_repeat_key = call_key
+                        _idempotent_repeat_count = 1
+                else:
+                    # Non-idempotent tool resets the counter.
+                    _idempotent_repeat_key = None
+                    _idempotent_repeat_count = 0
                 executed_this_batch.add(call_key)
                 if seen_calls is not None:
                     seen_calls[call_key] = seen_calls.get(call_key, 0) + 1
@@ -1722,6 +1764,21 @@ class ToolLoopRunner:
             for _note in deferred_notes:
                 current_messages.append({"role": "user", "content": _note})
             deferred_notes.clear()
+
+            # Self-questioning for idempotent-tool repeats: when the model keeps
+            # calling an idempotent tool (git, get_current_datetime) with the SAME
+            # arguments N times without producing a text answer, inject a note that
+            # forces it to either give its final answer or ask specific clarifying
+            # questions.  This breaks loops like `git status --short` → "nothing to
+            # commit" → repeat (the Kanban agent got stuck in exactly this pattern).
+            if _idempotent_repeat_count >= _IDEMPOTENT_REPEAT_LIMIT:
+                sq_note = _SELF_QUESTION_NOTE.format(count=_idempotent_repeat_count)
+                current_messages.append({"role": "user", "content": sq_note})
+                injected_notes.append(sq_note)
+                # Reset so the note fires again if the model keeps repeating.
+                _idempotent_repeat_key = None
+                _idempotent_repeat_count = 0
+
             _prev_batch_keys = _executed_this_batch
 
             if stuck:
