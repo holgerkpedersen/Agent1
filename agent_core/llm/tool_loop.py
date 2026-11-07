@@ -190,6 +190,32 @@ _IDEMPOTENT_TOOLS: frozenset[str] = frozenset(
 #: This breaks loops like `git status --short` → "nothing to commit" → repeat.
 _IDEMPOTENT_REPEAT_LIMIT = 3
 
+#: Repeat guard for the ``run`` tool (Kanban 2026-11-07 session: intents
+#: 87/91/93 re-ran the full-suite pytest the gate had already REFUSED).
+#: Shell commands vary by a character — a different ``| Select-Object`` tail,
+#: a reworded ``echo`` separator — so the exact-call duplicate guard misses
+#: them, yet the RESULT is byte-identical.  Track consecutive ``run`` calls
+#: whose stripped result equals the previous ``run`` result (intervening
+#: non-run calls do NOT reset the streak: the model researched between the
+#: refused attempts) and inject a self-questioning note at the limit.
+_SAME_RESULT_TOOLS: frozenset[str] = frozenset({"run"})
+_SAME_RESULT_REPEAT_LIMIT = 3
+#: Cap on the result quoted inside the note (the model has it in context).
+_SAME_RESULT_QUOTE_CAP = 200
+
+_SAME_RESULT_NOTE = (
+    "You have now run {count} shell commands that all produced the SAME "
+    "result:\n"
+    '"""{result}"""\n'
+    "Rephrasing the command will not change the outcome. STOP and REFLECT:\n"
+    "- If the result is a refusal (e.g. a test-suite gate), it states what "
+    "to do INSTEAD — follow that, or ask the user for the missing permission "
+    "in your final answer.\n"
+    "- If the result is an error, fix its cause; re-running cannot help.\n"
+    "- If you already have enough information, give your final answer NOW.\n"
+    "Do NOT re-run the same command with cosmetic changes."
+)
+
 #: Self-questioning note: when the model repeats idempotent calls without
 #: producing a text answer, this forces it to reflect on whether it has enough
 #: information or needs to ask clarifying questions.
@@ -1091,6 +1117,12 @@ class ToolLoopRunner:
         #: arguments).  Breaks variant-repeat loops like grep with slightly
         #: different patterns that all fail (decision #061).
         _tool_consec_failures: dict[str, int] = {}
+        #: Same-result repeat tracker for ``run`` (see _SAME_RESULT_NOTE):
+        #: the stripped result of the LAST run call plus how many consecutive
+        #: run calls produced that exact result.  Non-run calls leave it
+        #: alone — the Kanban model researched between refused attempts.
+        _run_streak_result: str | None = None
+        _run_streak_count: int = 0
         #: Steering notes that must be appended AFTER a batch's tool results —
         #: inserting them mid-batch would split an assistant tool_calls message
         #: from its tool results (strict gateways reject that with HTTP 400
@@ -1276,7 +1308,8 @@ class ToolLoopRunner:
             ) -> dict[str, Any]:
                 nonlocal \
                     calls_without_progress, prev_call_key, prev_result, stuck, \
-                    _idempotent_repeat_key, _idempotent_repeat_count
+                    _idempotent_repeat_key, _idempotent_repeat_count, \
+                    _run_streak_result, _run_streak_count
                 tc_id, tool_name, args, call_key, args_hash, prev_text = prepared
                 #: The proof the agent is acting on: the result of the PREVIOUS
                 #: round.  Captured BEFORE this call runs — once it completes,
@@ -1459,6 +1492,38 @@ class ToolLoopRunner:
                         tool=tool_name,
                         note=note,
                     )
+                # Same-result repeat guard for ``run``: commands the model
+                # rewords (``; echo ...``, a different ``Select-Object`` tail)
+                # dodge the exact-call duplicate guard, so key the streak on
+                # the RESULT: N consecutive run calls with byte-identical
+                # output is the Kanban "full-suite pytest REFUSED" loop.
+                if tool_name in _SAME_RESULT_TOOLS:
+                    _norm_result = result_str.strip()
+                    if _norm_result and _norm_result == _run_streak_result:
+                        _run_streak_count += 1
+                    else:
+                        _run_streak_result = _norm_result
+                        _run_streak_count = 1
+                    if _run_streak_count >= _SAME_RESULT_REPEAT_LIMIT:
+                        note = _SAME_RESULT_NOTE.format(
+                            count=_run_streak_count,
+                            result=truncate(result_str, _SAME_RESULT_QUOTE_CAP),
+                        )
+                        # Queue, don't append (strict-gateway tool ordering —
+                        # see the consecutive-failure guard above).
+                        deferred_notes.append(note)
+                        injected_notes.append(note)
+                        # Reset so the note fires again on a fresh streak.
+                        _run_streak_result = None
+                        _run_streak_count = 0
+                        self._emit(
+                            KIND_GUARD_TRIGGERED,
+                            LAYER_LIFECYCLE,
+                            guard=GUARD_STUCK,
+                            iteration=iteration,
+                            tool=tool_name,
+                            note=note,
+                        )
                 # Return the tool message instead of appending it here: under
                 # concurrent fan-out the caller appends results in ORIGINAL
                 # tool_call_id order (gather completes in arbitrary order),

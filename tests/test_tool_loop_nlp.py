@@ -253,6 +253,111 @@ class TestToolLoopExecution:
         assert not any("NOTE: This exact call" in m for m in tool_msgs)
         assert not any("three times" in m for m in tool_msgs)
 
+    def test_run_same_result_repeats_get_self_question_note(self):
+        """Kanban 2026-11-07 (intents 87/91/93): the model re-ran the full-suite
+        pytest the gate had already REFUSED, rewording the command each time so
+        the exact-call duplicate guard missed it.  Three consecutive run calls
+        with byte-identical output (non-run calls in between do NOT reset the
+        streak) must inject the self-questioning note — every call still runs."""
+        refused = "Error: full-suite pytest REFUSED - no real source file has changed"
+        fake = _ScriptedLLM(
+            [
+                ("run", {"command": "python -m pytest -q --no-cov"}),
+                ("read", {"path": "a.py"}),
+                ("run", {"command": "python -m pytest -q --no-cov; echo done"}),
+                ("read", {"path": "b.py"}),
+                (
+                    "run",
+                    {"command": "python -m pytest -q --no-cov | Select-Object -Last 5"},
+                ),
+                "The gate refuses; using targeted lanes.",
+            ]
+        )
+        executed = []
+
+        async def execute_tool(name, args):
+            executed.append(name)
+            return refused if name == "run" else "content"
+
+        runner = ToolLoopRunner(max_iterations=10)
+        final_text, messages = _loop_runner_sync(runner, fake, execute_tool)
+
+        assert executed == ["run", "read", "run", "read", "run"]
+        assert final_text == "The gate refuses; using targeted lanes."
+        # Steering notes are stripped from the PERSISTED history (by design),
+        # so observe the injection in the prompt the NEXT LLM call receives.
+        notes = [
+            m["content"]
+            for msgs, _tools in fake.calls
+            for m in msgs
+            if m["role"] == "user" and "SAME result" in str(m.get("content", ""))
+        ]
+        assert notes, "self-questioning note never reached the model"
+        assert refused in notes[0]
+        assert "Do NOT re-run the same command" in notes[0]
+        # One note per completed streak: one streak of three -> exactly one.
+        assert len(notes) == 1
+
+    def test_run_different_results_get_no_same_result_note(self):
+        """Legit work: run calls with DIFFERENT outputs (test runs after edits)
+        must not trigger the same-result note."""
+        fake = _ScriptedLLM(
+            [
+                ("run", {"command": "python -m pytest tests/test_a.py -q"}),
+                ("run", {"command": "python -m pytest tests/test_b.py -q"}),
+                ("run", {"command": "python -m pytest tests/test_c.py -q"}),
+                "All lanes green.",
+            ]
+        )
+        executed = []
+
+        async def execute_tool(name, args):
+            executed.append(name)
+            return f"1 passed in {len(executed)}.0s"
+
+        runner = ToolLoopRunner(max_iterations=10)
+        final_text, messages = _loop_runner_sync(runner, fake, execute_tool)
+
+        assert executed == ["run", "run", "run"]
+        assert final_text == "All lanes green."
+        assert not any(
+            m["role"] == "user"
+            and "SAME result" in str(m.get("content", ""))
+            for msgs, _tools in fake.calls
+            for m in msgs
+        )
+
+    def test_run_same_result_below_limit_gets_no_note(self):
+        """Two identical run outputs are legit verification (run, edit-check,
+        run the same lane again); only the third triggers the note."""
+        same = "184 passed in 4.26s"
+        cmd_a = "python -m pytest tests -q --no-cov"
+        cmd_b = cmd_a + " -p no:cacheprovider"
+        fake = _ScriptedLLM(
+            [
+                ("run", {"command": cmd_a}),
+                ("run", {"command": cmd_b}),
+                "Verified twice.",
+            ]
+        )
+        executed = []
+
+        async def execute_tool(name, args):
+            executed.append(name)
+            return same
+
+        runner = ToolLoopRunner(max_iterations=10)
+        final_text, messages = _loop_runner_sync(runner, fake, execute_tool)
+
+        assert executed == ["run", "run"]
+        assert final_text == "Verified twice."
+        assert not any(
+            m["role"] == "user"
+            and "SAME result" in str(m.get("content", ""))
+            for msgs, _tools in fake.calls
+            for m in msgs
+        )
+
     def test_non_consecutive_identical_call_still_executes(self):
         """A legit re-read (read -> edit -> read) must still work."""
         fake = _ScriptedLLM(
