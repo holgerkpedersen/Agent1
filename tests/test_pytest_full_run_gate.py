@@ -14,6 +14,7 @@ a scratch probe (``_tmp_probe.py``).  Two rules now guard this
 
 from __future__ import annotations
 
+import os
 import subprocess
 
 import pytest
@@ -223,6 +224,141 @@ class TestFullRunGate:
         assert gate.check() is None
 
 
+# ---------------------------------------------------------------------------
+# cross-repo work: the EARNED rule follows the repo the command runs in
+# ---------------------------------------------------------------------------
+
+
+class TestCrossRepoGate:
+    """History (2026-11-07): an hour-long Kanban session (a SECOND repo,
+    reached via ``cd C:\\Dev\\Kanban; python -m pytest ...``) was refused a full
+    suite run FOUR times — the gate checked Agent1's git status (clean) while
+    the real edits sat in Kanban's tree.  The refusal is deterministic, so the
+    model retried the same doomed command each time.  The gate must judge
+    dirtiness against the repo the command actually executes in."""
+
+    def test_foreign_repo_change_earns_a_run(self, monkeypatch, tmp_path) -> None:
+        """Session repo clean, Kanban dirty -> the Kanban run is allowed."""
+        session = tmp_path / "agent1"
+        foreign = tmp_path / "kanban"
+        session.mkdir()
+        foreign.mkdir()
+
+        def _changed(root: str) -> set[str]:
+            return {"src/app.py"} if str(root) == str(foreign) else set()
+
+        monkeypatch.setattr(pytest_gate, "changed_real_files", _changed)
+        gate = FullRunGate(str(session), baseline=set())
+        assert gate.check(str(session)) is not None  # session: nothing earned
+        assert gate.check(str(foreign)) is None  # Kanban: real change -> allowed
+
+    def test_foreign_dirt_earls_immediately_no_lazy_baseline(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        """A foreign repo's pre-existing tracked changes earn the run at the
+        FIRST check — the Kanban session was dirty before the gate ever saw the
+        repo, so a lazily-captured baseline would have refused it forever.
+        The budget (one per session) is the protection against waste."""
+        session = tmp_path / "agent1"
+        foreign = tmp_path / "kanban"
+        session.mkdir()
+        foreign.mkdir()
+
+        def _changed(root: str) -> set[str]:
+            return {"src/security.py"} if str(root) == str(foreign) else set()
+
+        monkeypatch.setattr(pytest_gate, "changed_real_files", _changed)
+        gate = FullRunGate(str(session), baseline=set())
+        assert gate.check(str(foreign)) is None
+        assert gate.check(str(foreign)) is None  # dirt unchanged, budget unspent
+
+    def test_budget_is_session_wide(self, monkeypatch, tmp_path) -> None:
+        """One full pass per session, whichever repo earned it (cheap lanes
+        handle iteration)."""
+        monkeypatch.setenv(MAX_FULL_RUNS_ENV, "1")
+        foreign = tmp_path / "kanban"
+        foreign.mkdir()
+        monkeypatch.setattr(
+            pytest_gate, "changed_real_files", lambda root: {"a.py"}
+        )
+        gate = FullRunGate(str(tmp_path / "agent1"), baseline=set())
+        assert gate.check(str(foreign)) is None
+        gate.record_full_run()
+        assert gate.check(str(foreign)) is not None
+
+    def test_check_without_root_keeps_legacy_behavior(self, monkeypatch) -> None:
+        """check() with no root == the pre-cross-repo behavior (the primary
+        baseline only) — the wiring tests above pin this contract."""
+        _Git(" M agent_core/llm/tool_loop.py\n").install(monkeypatch)
+        gate = FullRunGate(".", baseline=set())
+        assert gate.check() is None
+
+
+class TestEffectiveRepoRoot:
+    """The command-to-repo resolver: follow the ``cd`` chain, fall back safely."""
+
+    def test_plain_command_uses_start_repo(self, tmp_path) -> None:
+        repo = tmp_path / "kanban"
+        (repo / ".git").mkdir(parents=True)
+        got = pytest_gate.effective_repo_root(
+            "python -m pytest -q --no-cov", str(repo)
+        )
+        assert got == str(repo)
+
+    def test_cd_chain_resolves_the_target_repo(self, tmp_path) -> None:
+        start = tmp_path / "agent1"
+        start.mkdir()
+        kanban = tmp_path / "kanban"
+        (kanban / ".git").mkdir(parents=True)
+        cmd = f"cd {kanban}; python -m pytest tests/ -q --no-cov"
+        assert pytest_gate.effective_repo_root(cmd, str(start)) == str(kanban)
+
+    def test_powershell_cd_and_git_bash_mount(self, tmp_path) -> None:
+        kanban = tmp_path / "kanban"
+        (kanban / ".git").mkdir(parents=True)
+        # PowerShell Set-Location with -Path, and a quoted target.
+        cmd = f"Set-Location -Path '{kanban}'; python -m pytest -q"
+        assert pytest_gate.effective_repo_root(cmd, str(tmp_path)) == str(kanban)
+
+    def test_relative_cd_and_parent_walk(self, tmp_path) -> None:
+        outer = tmp_path / "work"
+        kanban = outer / "kanban"
+        (kanban / ".git").mkdir(parents=True)
+        start = kanban / "src"
+        start.mkdir(parents=True)
+        cmd = "cd ..; python -m pytest -q"
+        assert pytest_gate.effective_repo_root(cmd, str(start)) == str(kanban)
+
+    def test_missing_cd_target_keeps_previous_dir(self, tmp_path) -> None:
+        start = tmp_path / "agent1"
+        (start / ".git").mkdir(parents=True)
+        cmd = "cd C:\\does\\not\\exist; python -m pytest -q"
+        assert pytest_gate.effective_repo_root(cmd, str(start)) == str(start)
+
+    def test_git_repo_root_walks_up(self, tmp_path) -> None:
+        repo = tmp_path / "repo"
+        (repo / ".git").mkdir(parents=True)
+        nested = repo / "src" / "agent1"
+        nested.mkdir(parents=True)
+        assert pytest_gate.find_repo_root(str(nested)) == str(repo)
+
+    def test_no_git_returns_start(self, tmp_path) -> None:
+        plain = tmp_path / "plain"
+        plain.mkdir()
+        assert pytest_gate.find_repo_root(str(plain)) == str(plain)
+
+    def test_git_bash_mount_style(self, tmp_path) -> None:
+        """Git-Bash /c/... paths (the run tool hint shows them) resolve on Windows."""
+        kanban = tmp_path / "kanban"
+        (kanban / ".git").mkdir(parents=True)
+        norm = os.path.normcase(str(kanban))  # c:\dev\kanban\...
+        mount = "/" + norm[0] + "/" + norm[3:].replace("\\", "/")
+        cmd = f"cd {mount}; python -m pytest -q"
+        assert os.path.normcase(
+            pytest_gate.effective_repo_root(cmd, str(tmp_path))
+        ) == norm
+
+
 class TestBudgetReadsDotenv:
     """The COUNT budget must be raisable without restarting the launch shell.
 
@@ -305,6 +441,61 @@ class TestRunToolGate:
         bot._full_run_gate = FullRunGate(".", baseline={"agent_core/llm/tool_loop.py"})
         out = await bot._nlp_run({"command": "python -m pytest -q --no-cov"})
         assert "REFUSED" in out
+
+    @pytest.mark.asyncio
+    async def test_full_run_in_foreign_repo_earned_by_foreign_dirt(
+        self, bot: Agent, monkeypatch, tmp_path
+    ) -> None:
+        """The Kanban scenario (2026-11-07): ``cd <other repo>; python -m pytest``
+        must be judged on THAT repo's git status.  Session repo clean, foreign
+        repo dirty -> the run is earned (it used to be refused forever)."""
+        kanban = tmp_path / "kanban"
+        (kanban / ".git").mkdir(parents=True)
+
+        def _changed(root: str) -> set[str]:
+            if os.path.normcase(str(root)) == os.path.normcase(str(kanban)):
+                return {"src/security.py"}
+            return set()
+
+        monkeypatch.setattr(pytest_gate, "changed_real_files", _changed)
+        bot._full_run_gate = FullRunGate(".", baseline=set())
+
+        class _Ok:
+            returncode = 0
+
+            def communicate(self, timeout=None):  # noqa: ANN001
+                return ("38 passed", "")
+
+        monkeypatch.setattr(agent.subprocess, "Popen", lambda cmd, **kw: _Ok())
+        out = await bot._nlp_run(
+            {"command": f"cd {kanban}; python -m pytest -q --no-cov"}
+        )
+        assert "REFUSED" not in out, out
+        assert bot._full_run_gate.runs == 1
+
+    @pytest.mark.asyncio
+    async def test_full_run_in_clean_foreign_repo_not_earned_by_session_dirt(
+        self, bot: Agent, monkeypatch, tmp_path
+    ) -> None:
+        """Mirror case: the session repo is dirty, the command's repo is clean.
+        The EARNED rule is per-repo — foreign dirt must not be inferred from
+        unrelated session changes."""
+        kanban = tmp_path / "kanban"
+        (kanban / ".git").mkdir(parents=True)
+
+        def _changed(root: str) -> set[str]:
+            if os.path.normcase(str(root)) == os.path.normcase(str(kanban)):
+                return set()
+            return {"agent_core/llm/tool_loop.py"}
+
+        monkeypatch.setattr(pytest_gate, "changed_real_files", _changed)
+        bot._full_run_gate = FullRunGate(".", baseline=set())
+        out = await bot._nlp_run(
+            {"command": f"cd {kanban}; python -m pytest -q --no-cov"}
+        )
+        assert "REFUSED" in out
+        assert "checked repo" in out
+        assert bot._full_run_gate.runs == 0
 
     @pytest.mark.asyncio
     async def test_full_run_allowed_and_counted(self, bot: Agent, monkeypatch) -> None:

@@ -308,7 +308,13 @@ into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`
     (default **1**) is not spent. The refusal text names the cheap lanes, so
     the model self-corrects from the tool result. Escape hatch:
     `AGENT_PYTEST_FULL_RUN_GATE=off` (or raise the budget) for a deliberate
-    second pass. Also fixed here: `--lf` / `--nf` / `--new-first` /
+    second pass. **Cross-repo work (2026-11-07)**: the EARNED rule is
+    evaluated against the repo the COMMAND runs in — `effective_repo_root()`
+    follows `cd`/`Set-Location` segments (`cd C:\Dev\Kanban; python -m pytest`
+    is judged on Kanban's git status, not the session workspace's; a clean
+    foreign repo's refusal names the checked repo). Foreign repos have no
+    session baseline: any real tracked change there earns the run. Also fixed
+    here: `--lf` / `--nf` / `--new-first` /
     `--testmon` select a SUBSET and are no longer classified as full runs by
     either classifier (`agent._is_full_pytest_command`, `conftest._is_full_run`)
     — they were being given the whole-suite budget *and* the gate.

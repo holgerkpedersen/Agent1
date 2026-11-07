@@ -33,6 +33,7 @@ from agent_core.pytest_cmd_policy import (
     non_python_pytest_target_refusal as _non_python_pytest_target_refusal,
     pytest_flag_conflict as _pytest_flag_conflict,
 )
+from agent_core.pytest_gate import effective_repo_root as _effective_repo_root
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from agent import Agent
@@ -1092,7 +1093,13 @@ async def _nlp_run(agent: "Agent", args: dict[str, Any]) -> str:
         # A full run costs ~2 min and must be EARNED (a real source file
         # changed) and RARE (one per session by default) - so it happens at
         # the END of real work, never after a _tmp_* scratch probe.
-        refusal = agent._full_run_gate.check()
+        # The EARNED rule is evaluated against the repo the command runs in:
+        # `cd C:\Dev\Kanban; python -m pytest` edits the Kanban tree, so the
+        # session workspace's clean git status must not refuse the run the
+        # work in Kanban earned.
+        refusal = agent._full_run_gate.check(
+            _effective_repo_root(cmd_to_run, _effective_ws_dir(agent))
+        )
         if refusal:
             return refusal
     # The suite budget bounds ANY pytest run: a subset selector such as
@@ -1424,11 +1431,16 @@ async def _nlp_tests(agent: "Agent", args: dict[str, Any]) -> str:
     is_full = os.path.abspath(test_path) == os.path.abspath(_effective_ws_dir(agent))
     if is_full:
         # Whole-workspace run: same "earned and rare" gate as the run tool -
-        # no real change means a full pass verifies nothing.  Check BEFORE
-        # running, but spend the budget only AFTER (see below): recording
-        # first burned the one-shot budget even when the run then timed out
-        # or failed to launch, unlike _nlp_run which records on completion.
-        refusal = agent._full_run_gate.check()
+        # no real change means a full pass verifies nothing.  The repo is the
+        # effective workspace's own tree (a paste --workspace override points
+        # the run at a SECOND repo, which must be judged on its own dirt).
+        # Check BEFORE running, but spend the budget only AFTER (see below):
+        # recording first burned the one-shot budget even when the run then
+        # timed out or failed to launch, unlike _nlp_run which records on
+        # completion.
+        refusal = agent._full_run_gate.check(
+            _effective_repo_root("", _effective_ws_dir(agent))
+        )
         if refusal:
             return refusal
     if framework == "pytest":

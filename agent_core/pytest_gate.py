@@ -27,6 +27,7 @@ Escape hatch: ``AGENT_PYTEST_FULL_RUN_GATE=off`` disables the gate entirely
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from typing import Iterable
 
@@ -40,6 +41,8 @@ __all__ = [
     "MAX_FULL_RUNS_ENV",
     "FullRunGate",
     "changed_real_files",
+    "effective_repo_root",
+    "find_repo_root",
     "full_suite_timeout",
     "gate_enabled",
     "is_scratch_path",
@@ -182,6 +185,83 @@ def changed_real_files(root: str) -> set[str]:
         for p in _porcelain_paths(proc.stdout)
         if is_testable_source(p)
     }
+
+
+def find_repo_root(start: str) -> str:
+    """Walk up from *start* to the git repository root (a ``.git`` dir/file).
+
+    Returns *start* unchanged when no ``.git`` marker is found (e.g. the
+    workspace is not a checkout) — :func:`changed_real_files` then degrades to
+    an empty set, which is the gate's fail-closed default.
+    """
+    cur = os.path.abspath(start or ".")
+    while True:
+        if os.path.exists(os.path.join(cur, ".git")):
+            return cur
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            return os.path.abspath(start or ".")
+        cur = parent
+
+
+#: One shell segment that changes the directory: ``cd``, ``Set-Location``,
+#: ``sl``, ``chdir`` — with the cmd ``/d`` and PowerShell ``-Path`` switches,
+#: and optional quotes.
+_CD_SEGMENT_RE = re.compile(
+    r"^\s*(?:cd|Set-Location|sl|chdir)"
+    r"(?:\s+(?:/[dm]|-Path|-LiteralPath|-PSPath))?"
+    r"\s+[\"']?(?P<path>[^\s\"';|]+)[\"']?\s*$",
+    re.IGNORECASE,
+)
+
+#: Shell segment separators (POSIX + PowerShell).
+_SEGMENT_SPLIT_RE = re.compile(r"&&|\|\||;|\||\r?\n")
+
+#: Git-Bash mount style ``/c/Dev/Kanban`` -> ``C:\\Dev\\Kanban``.
+_BASH_MOUNT_RE = re.compile(r"^/([a-z])/(.*)$")
+
+
+def _normalize_cd_target(path: str, cwd: str) -> str:
+    """Resolve one ``cd`` target *path* against *cwd* to a Windows-style path."""
+    target = path.strip().rstrip(";,")
+    mount = _BASH_MOUNT_RE.match(target)
+    if mount:
+        target = f"{mount.group(1).upper()}:\\{mount.group(2)}"
+    if target in (".", "..", "", "~"):
+        # ``cd ..`` chains are common; ``.``/``~`` are no-ops for repo lookup.
+        if target == "..":
+            return os.path.dirname(cwd)
+        return cwd
+    if not os.path.isabs(target):
+        target = os.path.join(cwd, target)
+    return os.path.normpath(target)
+
+
+def effective_repo_root(command: str, start_cwd: str) -> str:
+    """The git repo a shell command runs pytest in, following its ``cd`` segments.
+
+    The NLP ``run`` tool launches every command at ``_effective_ws_dir`` and the
+    model then chains ``cd <other-repo>; python -m pytest ...`` (the Kanban
+    session).  A dirtiness check pinned to the SESSION workspace then sees a
+    clean tree and refuses a run whose edits live in the OTHER repo — the full
+    suite becomes unreachable no matter how much real work was done.  This
+    helper tracks every ``cd``/``Set-Location`` segment in command order and
+    resolves the final directory's repository root, so the gate asks the right
+    repo "did real files change here?".
+
+    Best-effort by design: a target that does not exist keeps the previous cwd
+    (a typo must not poison the lookup), and any unparseable command yields the
+    repo of *start_cwd* — the pre-cross-repo behavior.
+    """
+    cwd = os.path.abspath(start_cwd or ".")
+    for segment in _SEGMENT_SPLIT_RE.split(command or ""):
+        match = _CD_SEGMENT_RE.match(segment)
+        if not match:
+            continue
+        candidate = _normalize_cd_target(match.group("path"), cwd)
+        if os.path.isdir(candidate):
+            cwd = candidate
+    return find_repo_root(cwd)
 
 
 _GATE_OFF = {"off", "0", "false", "no", "none"}
@@ -348,6 +428,14 @@ class FullRunGate:
     Usage: construct once per :class:`agent.Agent` (baseline = the tracked
     changes already present at session start), call :meth:`check` before every
     full run and :meth:`record_full_run` after one is spent.
+
+    The gate follows the command's repository: :meth:`check` accepts the repo
+    root the run will execute in (see :func:`effective_repo_root`), so work in
+    a SECOND repo (e.g. ``cd C:\\Dev\\Kanban; python -m pytest``) is judged
+    against THAT repo's dirt, not the session workspace's.  Each foreign repo
+    is baselined at first sight, so its pre-existing tracked changes never
+    entitle a run.  The run BUDGET stays session-wide: one full pass per
+    session, whichever repo earns it.
     """
 
     def __init__(
@@ -361,7 +449,17 @@ class FullRunGate:
             max_full_runs if max_full_runs is not None else max_full_runs_from_env()
         )
         self._baseline = changed_real_files(root) if baseline is None else set(baseline)
+        #: Baselines per repo root (normalized).  The primary root keeps the
+        #: constructor baseline; secondary roots are captured at first check.
+        self._baselines: dict[str, set[str]] = {
+            self._norm(root): set(self._baseline),
+        }
         self._runs = 0
+
+    @staticmethod
+    def _norm(root: str) -> str:
+        """Case/shape-insensitive key for a repo root path."""
+        return os.path.normcase(os.path.abspath(root or "."))
 
     @property
     def runs(self) -> int:
@@ -372,15 +470,34 @@ class FullRunGate:
     def max_runs(self) -> int:
         return self._max
 
-    def pending_real_changes(self) -> set[str]:
-        """Real files that changed since the session baseline."""
-        return changed_real_files(self.root) - self._baseline
+    def baseline_for(self, root: str) -> set[str]:
+        """The baseline of *root*: the primary repo keeps the session baseline;
+        a FOREIGN repo has none.
 
-    def check(self) -> str | None:
+        The primary baseline exists to stop a read-only probe in the session's
+        own workspace from burning the suite on pre-existing dirt.  A repo the
+        command explicitly ``cd``-s into and runs pytest against IS the work
+        target: any real tracked change there is by definition this session's
+        work (the Kanban session was already dirty at the gate's first check,
+        so a lazily-captured baseline refused it forever).
+        """
+        key = self._norm(root)
+        if key in self._baselines:
+            return self._baselines[key]
+        return set()
+
+    def pending_real_changes(self, root: str | None = None) -> set[str]:
+        """Real files that changed since the baseline of *root* (default: primary)."""
+        target = self.root if root is None else root
+        return changed_real_files(target) - self.baseline_for(target)
+
+    def check(self, root: str | None = None) -> str | None:
         """Return a refusal message, or None when a full run is allowed.
 
         The budget is a HARD per-session cap: a new real change does not buy
-        extra full runs (that is what the cheap lanes are for).
+        extra full runs (that is what the cheap lanes are for).  *root* is the
+        repository the run will execute in; the dirtiness rule is evaluated
+        there, so cross-repo work is judged on its own tree.
         """
         if not gate_enabled():
             return None
@@ -395,19 +512,27 @@ class FullRunGate:
                 f"Raise {MAX_FULL_RUNS_ENV} deliberately only when the change is "
                 "wide enough to justify another full pass."
             )
-        pending = self.pending_real_changes()
+        target = self.root if root is None else root
+        pending = self.pending_real_changes(target)
         if not pending:
-            shown = ", ".join(sorted(self._baseline)[:5]) or "(none)"
+            base = self.baseline_for(target)
+            shown = ", ".join(sorted(base)[:5]) or "(none)"
+            repo_note = (
+                ""
+                if self._norm(target) == self._norm(self.root)
+                else f" (checked repo: {os.path.abspath(target)})"
+            )
             return (
                 "Error: full-suite pytest REFUSED - no real source file has changed "
                 "since the session baseline (scratch/probe files such as _tmp_*.py "
                 f"never count; real files already dirty at baseline: {shown}). A "
                 "full run would verify nothing. Use a cheap lane instead: "
                 "`python -m pytest --lf -q --no-cov` (only what failed), "
-                "`python -m pytest --testmon -q --no-cov` (only what changed), or "
-                "`python -m pytest <path>::<TestName> -q --no-cov` (targeted). "
+                "`python -m pytest --testmon -q --no-cov` (only what changed), "
+                "or `python -m pytest <path>::<TestName> -q --no-cov` (targeted). "
                 "Reserve the full suite for the END of the work, after real edits."
-            ).format(shown=shown)
+                f"{repo_note}"
+            )
         return None
 
     def record_full_run(self) -> None:
@@ -427,4 +552,5 @@ class FullRunGate:
         when git is unavailable.
         """
         self._baseline = changed_real_files(self.root)
+        self._baselines = {self._norm(self.root): set(self._baseline)}
         self._runs = 0
