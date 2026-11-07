@@ -1,6 +1,6 @@
 name: Kanban checkout (sibling of the Agent1 workspace)
 description: >-
-  Check out the KanbanBoard repo next to the current workspace, so the
+  Materialize the KanbanBoard repo next to the current workspace, so the
   cross-repo tests in tests/ run for real instead of skipping.
 
 # WHY THIS ACTION EXISTS
@@ -11,38 +11,41 @@ description: >-
 #   * tests/test_linked_cards.py        - GET /api/cards/linked
 #   * tests/test_kanban_status_contract.py - status/frame mapping tables
 # All four resolve the Kanban checkout as AGENT1_ROOT.parent / "Kanban"
-# (see KANBAN_ROOT in those files) and skip at module level when it is
-# absent.  The default actions/checkout@v4 lands a second repo *inside*
-# the workspace, so CI never satisfied that layout: every bridge test
-# silently skipped and the integration ran untested.
+# (see KANBAN_ROOT in those files; test_card_modal.py also honours the
+# KANBAN_REPO_ROOT env override) and skip at module level when it is
+# absent.  CI used to check out Agent1 only, so every bridge test silently
+# skipped and the integration ran untested.
 #
-# Kanban's own tests (Kanban/tests/test_card_integrated_style.py) cover
-# the same CSS rule inside the Kanban repo; a self-assertion in Agent1
-# would be circular, so this action pins the cross-repo coverage to the
-# real checkout instead of duplicating it.
-#
-# WHY THE CHECKOUT LANDS IN A SIBLING DIRECTORY (not inside the workspace)
-# actions/checkout@v4 with a relative `path` WIPES ITS WORKING DIRECTORY
-# before cloning, and the working directory is the workspace root.  With
-# path: ../Kanban it deletes everything in $GITHUB_WORKSPACE and then
-# clones KanbanBoard *into* the Agent1 checkout (it does not clone into
-# the parent - the repo root follows the existing .git).  Result, observed
-# in CI run 42409020802: pyproject.toml gone -> `pip install -e .[dev]`
-# fails; .github/actions/kanban-checkout/action.yml gone -> the composite
-# action's Post step cannot find its own definition and fails the job.
-# A sibling path is therefore not just layout preference, it is required
-# to keep the Agent1 tree intact.  The runner parent (/home/runner/work)
-# is writable, so ../Kanban works from inside the workspace.
+# WHY THIS IS NOT actions/checkout (two hard limitations, both observed)
+# 1. `actions/checkout@v4` with a path INSIDE the workspace wipes its
+#    working directory before cloning, and the repo root follows the
+#    existing .git - so it clones KanbanBoard INTO the Agent1 checkout.
+#    With path: "" that is the workspace root itself: pyproject.toml gone
+#    -> `pip install -e .[dev]` fails; this action's own definition gone
+#    -> the composite Post step cannot find action.yml.  Seen in CI run
+#    42409020802.
+# 2. `actions/checkout@v4` REFUSES a path outside the workspace: run
+#    42417691132 failed with "Repository path '/home/runner/work/Agent1/
+#    Kanban' is not under '/home/runner/work/Agent1/Agent1'" (actions/
+#    checkout issue #1812).  The sibling layout the tests need is exactly
+#    the layout this action forbids.
+# So the tree is materialized with git when a plain clone into the sibling
+# directory works, and with the GitHub contents API when it does not (the
+# runner parent is read-only on some images): the API path writes the tree
+# under $GITHUB_WORKSPACE/.kanban/ and exports KANBAN_REPO_ROOT, which
+# test_card_modal.py already honours.  The tests skip cleanly whenever no
+# usable tree appears - a Kanban outage must never break Agent1 CI.
 #
 # INPUTS
-#   path    where the checkout lands (default: parent of the workspace)
+#   path    where the clone lands (default: parent of the workspace)
 #   token   PAT for private-repo access; defaults to the job's GITHUB_TOKEN
 #           (works while KanbanBoard is public - no secret needed)
 #
 # OUTPUTS
-#   available  "true" when a usable checkout exists at the expected path.
-#              Every consumer MUST gate on this: a hard failure here would
-#              break unrelated Agent1 CI, and the tests already skip
+#   available  "true" when a usable Kanban tree exists.
+#   root       the directory holding that tree (exported as KANBAN_REPO_ROOT).
+#              Every consumer MUST gate on `available`: a hard failure here
+#              would break unrelated Agent1 CI, and the tests already skip
 #              cleanly when the checkout is missing.
 
 inputs:
@@ -59,37 +62,113 @@ inputs:
 
 outputs:
   available:
-    description: '"true" when a Kanban checkout exists at the expected path.'
+    description: '"true" when a usable Kanban tree exists at the expected path.'
     value: ${{ steps.check.outputs.available }}
+  root:
+    description: "Directory holding the Kanban tree (exported as KANBAN_REPO_ROOT)."
+    value: ${{ steps.check.outputs.root }}
 
 runs:
   using: composite
   steps:
-    - name: Check out KanbanBoard next to this workspace
-      uses: actions/checkout@v4
-      with:
-        repository: holgerkpedersen/KanbanBoard
-        token: ${{ inputs.token }}
-        path: ${{ inputs.path }}
-        persist-credentials: false
-
-    - name: Report whether the checkout is usable
+    - name: Materialize the KanbanBoard tree next to this workspace
       id: check
       shell: bash
+      env:
+        # Quoted: a plain scalar starting with "${{" is parsed as a YAML alias.
+        KANBAN_TOKEN: "$**"
+        KANBAN_PATH: "${{ inputs.path }}"
+        KANBAN_OWNER: "holgerkpedersen"
+        KANBAN_REPO: "KanbanBoard"
       run: |
-        # A Kanban checkout is only useful to these tests when it carries
+        set -uo pipefail
+        owner="$KANBAN_OWNER"
+        repo="$KANBAN_REPO"
+        ref="${{ github.event.repository.default_branch }}"
+        ref="${ref:-main}"
+
+        # A Kanban tree is only useful to these tests when it carries
         # src/agent1/ - that package is the bridge surface every cross-repo
         # test imports.  Probe exactly what the tests probe (kanban_sync.py,
         # models.py, static/style.css) so CI and local runs agree.
-        root="${{ inputs.path }}"
-        [ -n "$root" ] || root="$(dirname "$GITHUB_WORKSPACE")/Kanban"
-        available=false
-        for probe in src/agent1/kanban_sync.py src/agent1/models.py \
-                     src/agent1/static/style.css; do
-          if [ -f "$root/$probe" ]; then
-            available=true
-            break
+        usable() {
+          for probe in src/agent1/kanban_sync.py src/agent1/models.py \
+                       src/agent1/static/style.css; do
+            if [ -f "$1/$probe" ]; then return 0; fi
+          done
+          return 1
+        }
+
+        target="${KANBAN_PATH:-}"
+        [ -n "$target" ] || target="$(dirname "$GITHUB_WORKSPACE")/Kanban"
+
+        api() {
+          curl -fsSL --retry 3 --max-time 60 \
+            -H "Authorization: Bearer ${KANBAN_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "User-Agent: agent1-ci" \
+            "https://api.github.com/repos/${owner}/${repo}$1"
+        }
+
+        # 1. Plain clone into the sibling directory (full checkout, real .git).
+        #    The token is passed in the URL, so it never reaches a file on the
+        #    runner; the resulting .git is dropped below.
+        if mkdir -p "$target" 2>/dev/null && [ -w "$target" ]; then
+          url="https://x-access-token:${KANBAN_TOKEN}@github.com/${owner}/${repo}.git"
+          if git clone --depth 1 --branch "$ref" "$url" "$target" >/dev/null 2>&1; then
+            rm -rf "$target/.git"   # drop the credential from the checkout
           fi
-        done
+        else
+          echo "sibling path '$target' is not writable - using the archive API"
+        fi
+
+        # 2. Fallback: download the commit archive into a directory inside the
+        #    workspace (the runner parent is read-only on some images).  One
+        #    codeload request, ~150 KB for this repo - well under any rate
+        #    limit, and it needs no per-file API calls.
+        if ! usable "$target"; then
+          fb="$GITHUB_WORKSPACE/.kanban"
+          rm -rf "$fb"; mkdir -p "$fb" 2>/dev/null || true
+          sha="$(api "/git/ref/heads/$ref" \
+                 | python3 -c 'import json,sys; print(json.load(sys.stdin)["object"]["sha"])' \
+                 2>/dev/null || true)"
+          if [ -n "$sha" ]; then
+            url="https://x-access-token:${KANBAN_TOKEN}@codeload.github.com/${owner}/${repo}/zip/${sha}"
+            # The extractor is written with printf, not a heredoc: bash only
+            # accepts an unquoted <<PY terminator at column 0, and the YAML
+            # block scalar indents every line of this script - a heredoc body
+            # at column 0 would fall out of the block and break the YAML.
+            printf '%s\n' > _kanban_unzip.py \
+              'import shutil, sys, zipfile' \
+              'zf = zipfile.ZipFile("_kanban.zip")' \
+              'if zf.testzip() is not None:' \
+              '    print("corrupt archive"); raise SystemExit(1)' \
+              'roots = {n.split("/")[0] for n in zf.namelist() if "/" in n}' \
+              'if len(roots) != 1:' \
+              '    print(f"unexpected archive layout: {sorted(roots)}")' \
+              '    raise SystemExit(1)' \
+              'top = roots.pop()' \
+              'zf.extractall("_kanban_extract")' \
+              'shutil.copytree("_kanban_extract/" + top, sys.argv[1], dirs_exist_ok=True)' \
+              'print(f"zipball: extracted {top} -> {sys.argv[1]}")'
+            if curl -fsSL --retry 3 --max-time 180 -o _kanban.zip "$url" \
+               && python3 _kanban_unzip.py "$fb"; then
+              echo "fetched Kanban archive at $sha"
+            else
+              echo "archive fetch failed"
+            fi
+            rm -rf _kanban.zip _kanban_extract _kanban_unzip.py
+          fi
+          if usable "$fb"; then target="$fb"; fi
+        fi
+
+        available=false
+        if usable "$target"; then available=true; fi
         echo "available=$available" >> "$GITHUB_OUTPUT"
-        echo "kanban checkout: $root (usable: $available)"
+        echo "root=$target" >> "$GITHUB_OUTPUT"
+        # test_card_modal.py honours this env var, so the fallback location
+        # needs no test change.  Written to GITHUB_ENV for later steps.
+        if [ "$available" = true ]; then
+          echo "KANBAN_REPO_ROOT=$target" >> "$GITHUB_ENV"
+        fi
+        echo "kanban tree: $target (usable: $available)"
