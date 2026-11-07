@@ -199,6 +199,39 @@ class TestSearchToolHandler:
 
         assert "No files found matching that query." in asyncio.run(run())
 
+    def test_search_tool_regex_query_no_match_gets_literal_hint(self, tmp_path):
+        """Kanban 2026-11-07 intent 33: 'dead_letter|_process_single_message|
+        quarantine' returned the bare no-match line; the model had to
+        rediscover the literal-matcher limitation via git grep one intent later."""
+        from agent import Agent
+
+        (tmp_path / "a.py").write_text("dead_letter = 1", encoding="utf-8")
+
+        async def run():
+            return await Agent(workspace=str(tmp_path))._execute_tool_call(
+                "search",
+                {"query": "dead_letter|quarantine", "path": "."},
+            )
+
+        out = asyncio.run(run())
+        assert "No files found matching that query." in out
+        assert "LITERAL" in out
+        assert "git grep" in out
+
+    def test_search_tool_plain_no_match_stays_terse(self, tmp_path):
+        from agent import Agent
+
+        (tmp_path / "a.py").write_text("x = 1", encoding="utf-8")
+
+        async def run():
+            return await Agent(workspace=str(tmp_path))._execute_tool_call(
+                "search",
+                {"query": "never-present", "path": "."},
+            )
+
+        out = asyncio.run(run())
+        assert out == "No files found matching that query."
+
     def test_search_tool_excludes_chat_history(self, tmp_path):
         from agent import Agent
 

@@ -852,6 +852,30 @@ async def _nlp_speculate(agent: "Agent", args: dict[str, Any]) -> str:
     return _truncate_output(text, limit=8000)
 
 
+#: Regex metacharacters a model reaches for when it thinks ``search`` is
+#: ripgrep.  ``search`` is a LITERAL text search, so ``"A|B"`` can never
+#: match anything — the Kanban session (intent 33) asked for
+#: ``dead_letter|_process_single_message|quarantine``, got the bare "No files
+#: found" and burned a retry-intent to rediscover that via git grep.
+_REGEX_META_CHARS = ("|", "(", ")", "[", "]", "+", "*", "?", "{", "}", "\\")
+
+_SEARCH_LITERAL_HINT = (
+    " NOTE: 'search' matches LITERAL text — a regex like 'A|B' can never "
+    "match. Search ONE term per call, use references(symbol) for where a "
+    "name is defined/used, or the git tool with 'git grep -n \"A\\|B\"' "
+    "for a real regex."
+)
+
+
+def _search_no_hit_message(query: str) -> str:
+    """The no-match result, plus the regex-usage hint when the query LOOKS
+    like a regex (contains metacharacters the literal matcher cannot use)."""
+    msg = "No files found matching that query."
+    if any(c in query for c in _REGEX_META_CHARS):
+        msg += _SEARCH_LITERAL_HINT
+    return msg
+
+
 async def _nlp_search(agent: "Agent", args: dict[str, Any]) -> str:
     """Search workspace files for text (first 30 matches)."""
     query = str(args.get("query", ""))
@@ -861,7 +885,7 @@ async def _nlp_search(agent: "Agent", args: dict[str, Any]) -> str:
     except Exception as e:
         return f"Search error: {e}"
     if not found or found == "No matches found":
-        return "No files found matching that query."
+        return _search_no_hit_message(query)
     _agent_attr(agent, "_note_effect")(search_path)
     lines = found.splitlines()
     return "\n".join(f"  {line}" for line in lines[:30])
