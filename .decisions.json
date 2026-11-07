@@ -2985,5 +2985,30 @@
     "resolved_by": null,
     "status": "active",
     "category": "architecture"
+  },
+  {
+    "id": "132",
+    "date": "2026-11-07T09:30:09+00:00",
+    "title": "#132 Full-suite pytest gate judges the repo the command runs in",
+    "context": "The Kanban security session (2026-11-07) was refused a full pytest run four times: FullRunGate pinned its git dirtiness check to the Agent1 session workspace (clean) while every real edit sat in C:\\Dev\\Kanban, reached via 'cd C:\\Dev\\Kanban; python -m pytest'. The refusal was deterministic, so the model retried the same doomed command each time and the full-suite lane was unreachable no matter how much work was done.",
+    "decision": "pytest_gate.effective_repo_root(command, cwd) follows cd/Set-Location/sl/chdir segments (cmd /d, PowerShell -Path, quoted paths, relative '..', git-bash /c/ mounts) and resolves the final directory's git root (find_repo_root walks up for .git; a missing cd target keeps the previous cwd). FullRunGate.check(root) evaluates the EARNED rule against that repo. A foreign repo has NO session baseline - it is the work target, so any real tracked change there earns the run; the per-session budget stays session-wide and a clean foreign repo's refusal names the checked repo. _nlp_run passes the command's repo root; _nlp_tests passes the effective workspace's repo root.",
+    "rationale": "A lazily-captured first-sight baseline for foreign repos was tried first and rejected: the Kanban tree was dirty before the gate's first check, so that design refuses the earned run forever - the exact bug being fixed. The one-per-session budget is the waste guard; the EARNED rule only needs to ask the right repo.",
+    "affected_files": [
+      "agent_core/pytest_gate.py",
+      "agent_core/handlers/nlp_tools.py",
+      "tests/test_pytest_full_run_gate.py",
+      "AGENTS.md"
+    ],
+    "tags": [
+      "pytest",
+      "gates",
+      "verification",
+      "cross-repo",
+      "tooling"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "architecture"
   }
 ]
