@@ -3031,5 +3031,66 @@
     "contradictions": [],
     "rationale": "Keyed on the RESULT, not the command: cosmetic rewording cannot dodge it, deterministic identical outputs (gate refusals, All checks passed!, nothing to commit) are exactly the loops to break, and timing-bearing outputs (N passed in X.XXs) differ so legit test reruns stay silent. Soft steering (note) not hard stop: the model may have a real reason to re-check, and a byte-identical third output is strong evidence it does not.",
     "resolved_by": null
+  },
+  {
+    "id": "134",
+    "date": "2026-11-07T10:58:41+00:00",
+    "title": "#134 verify-hook lints with the TARGET repo ruff config",
+    "context": "Kanban 2026-11-07: every write to a Kanban file reported 20 E501 findings from Agent1's 88-col line-length while Kanban's own ruff run passed - the ruff child inherited the agent process cwd, and ruff resolves [tool.ruff] from the child cwd. The concise-format parser also split C:\\... paths at the drive colon, rendering every finding unreadably (file shown as C:, line shown as the column). 3 intents went into re-verifying the phantom findings.",
+    "decision": "agent_effects._ruff_config_root walks up from the linted file for ruff.toml/.ruff.toml/pyproject.toml-with-[tool.ruff]; _lint_file runs the child with cwd=that root (the file stays the lint target) and skips the explicit --select so repo settings (line-length, per-file-ignores) apply. Only config-less trees keep the explicit E,F,W gate for fixtures. _format_ruff_violations uses a greedy-path regex so drive-letter colons survive.",
+    "rationale": "A repo that passes its own lint must not be nagged by the agent's checkout rules; the phantom-E501 spam eroded trust in the [verify] line, which is load-bearing for the self-review note.",
+    "affected_files": [
+      "agent_core/agent_effects.py",
+      "tests/test_verify_ruff_gate.py"
+    ],
+    "category": "tooling",
+    "status": "active",
+    "tags": [
+      "harness",
+      "kanban-session-2026-11-07"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "135",
+    "date": "2026-11-07T10:58:41+00:00",
+    "title": "#135 run tool steers git commit -F on shell-split message failures",
+    "context": "Kanban 2026-11-07 intent 73: PowerShell split a 3-paragraph 'git commit -m ... -m ...' at inner quotes; git answered 'error: pathspec X did not match any file(s) known to git'. The model retried with a subject-only message (intent 74) - the fix rationale was lost from git history (survives only in CHANGES.md).",
+    "decision": "shape_run_stderr appends git_commit_quoting_hint() when the failure shape is pathspec + did-not-match: write the full message to a file (UTF-8) and use 'git commit -F <file>'; single-quote PowerShell metacharacters like @{u}.",
+    "rationale": "The failure is deterministic quoting math, so a deterministic hint beats hoping the model rederives the -F pattern; the Kanban session proved it rederives a LOSSY fallback instead.",
+    "affected_files": [
+      "agent_core/shell_utils.py",
+      "tests/test_run_exit_code.py"
+    ],
+    "category": "tooling",
+    "status": "active",
+    "tags": [
+      "harness",
+      "kanban-session-2026-11-07"
+    ],
+    "contradictions": [],
+    "resolved_by": null
+  },
+  {
+    "id": "136",
+    "date": "2026-11-07T10:58:41+00:00",
+    "title": "#136 search tool hints on regex-shaped queries; run tool forces UTF-8 children",
+    "context": "Kanban 2026-11-07: (a) intent 33 queried 'dead_letter|_process_single_message|quarantine' and got the bare 'No files found matching that query.' - search is a LITERAL matcher, so alternation can never match; the model burned an intent rediscovering this via git grep. (b) pytest/git cp1252 pipe output rendered as 'Adgang n?gtet' mojibake (intents 22/24) because Python grandchildren encode stdout with the ANSI code page while the run tool decodes UTF-8.",
+    "decision": "(a) _nlp_search's no-hit result appends a hint (one term per call, references(symbol) for symbols, git grep for regex) when the query contains regex metacharacters (_search_no_hit_message). (b) _run_child_env() sets PYTHONUTF8=1 + PYTHONIOENCODING=utf-8 (setdefault: an explicit operator setting wins) on both Popen paths of _nlp_run.",
+    "rationale": "Both gaps cost exactly one self-corrected intent per occurrence in the session log; the hints convert rediscovery into one-shot compliance.",
+    "affected_files": [
+      "agent_core/handlers/nlp_tools.py",
+      "tests/test_file_searcher.py",
+      "tests/test_agent_robustness.py"
+    ],
+    "category": "tooling",
+    "status": "active",
+    "tags": [
+      "harness",
+      "kanban-session-2026-11-07"
+    ],
+    "contradictions": [],
+    "resolved_by": null
   }
 ]
