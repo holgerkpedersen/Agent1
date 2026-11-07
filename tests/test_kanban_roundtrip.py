@@ -30,6 +30,12 @@ if not (KANBAN_ROOT / "src" / "agent1" / "kanban_sync.py").exists():
 
 sys.path.insert(0, str(KANBAN_ROOT))
 
+# Kanban's app enforces a double-submit CSRF token on every /api/* write
+# (POST/PUT/DELETE).  Under TESTING it uses the fixed token from the Kanban
+# test conftest, so this cross-repo harness sends that header — the guard
+# itself stays live and keeps rejecting requests without it.
+KANBAN_TEST_CSRF_TOKEN = "test-csrf-token"
+
 from src.agent1 import kanban_sync as ks  # noqa: E402
 from src.agent1.app import create_app  # noqa: E402
 from src.agent1.models import Frame  # noqa: E402
@@ -90,6 +96,12 @@ def _app_with_card(monkeypatch, tmp_path, title="Synced card"):
         registry_path=str(working / "active.json"),
         uploads_dir=str(working / "uploads"),
     )
+    # The CSRF guard compares the X-CSRF-Token header against the per-request
+    # token in g.csrf_token; under TESTING that is app.config["TEST_CSRF_TOKEN"]
+    # (the fixed value Kanban's own tests use).  Without these two config keys
+    # every write here would be rejected with 403.
+    app.config["TESTING"] = True
+    app.config["TEST_CSRF_TOKEN"] = KANBAN_TEST_CSRF_TOKEN
     client = app.test_client()
 
     # The first request binds the live store onto the app's holder.
@@ -109,7 +121,10 @@ def _app_with_card(monkeypatch, tmp_path, title="Synced card"):
     resp = client.post(
         "/api/cards",
         json={"frame_id": frame.id, "title": title, "text": "", "system": "harnessfix"},
-        headers={"X-Requested-With": "XMLHttpRequest"},
+        headers={
+            "X-Requested-With": "XMLHttpRequest",
+            "X-CSRF-Token": KANBAN_TEST_CSRF_TOKEN,
+        },
     )
     assert resp.status_code == 201, resp.get_data(as_text=True)
     return store, resp.get_json()["id"], client
@@ -199,7 +214,10 @@ def test_move_to_finished_resolves_the_issue(shared_queue, tmp_path, monkeypatch
     resp = client.post(
         f"/api/cards/{card_id}/move",
         json={"frame_id": finished.id},
-        headers={"X-Requested-With": "XMLHttpRequest"},
+        headers={
+            "X-Requested-With": "XMLHttpRequest",
+            "X-CSRF-Token": KANBAN_TEST_CSRF_TOKEN,
+        },
     )
     assert resp.status_code == 200, resp.get_data(as_text=True)
 
@@ -277,7 +295,10 @@ def test_mapped_card_move_still_resolves_the_issue(shared_queue, tmp_path, monke
     resp = client.post(
         f"/api/cards/{card_id}/move",
         json={"frame_id": finished.id},
-        headers={"X-Requested-With": "XMLHttpRequest"},
+        headers={
+            "X-Requested-With": "XMLHttpRequest",
+            "X-CSRF-Token": KANBAN_TEST_CSRF_TOKEN,
+        },
     )
     assert resp.status_code == 200, resp.get_data(as_text=True)
 
