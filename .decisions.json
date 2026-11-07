@@ -3115,5 +3115,24 @@
     ],
     "contradictions": [],
     "resolved_by": null
+  },
+  {
+    "id": "138",
+    "date": "2026-11-07T11:55:50Z",
+    "title": "#138 Apply SOLID principles in all code development",
+    "context": "Refactoring churn grows when changes cut across tangled responsibilities and tightly coupled modules. The codebase spans the agent loop, LLM providers, command handlers, and tooling; keeping designs cohesive reduces rework and regression risk.",
+    "decision": "All new code and all modifications MUST follow SOLID: (S) Single Responsibility - each module/class/function owns one reason to change; keep handlers, I/O, parsing, and policy separate. (O) Open/Closed - prefer extension points (small interfaces, dispatch tables, hooks) over editing unrelated core logic when adding behavior. (L) Liskov Substitution - subtypes/providers/command implementations must honor the contracts their callers rely on. (I) Interface Segregation - expose narrow, purpose-specific interfaces; do not force callers to depend on methods/fields they do not use. (D) Dependency Inversion - depend on abstractions at boundaries (protocols/interfaces/injected callables), especially around LLM providers, storage, and external tools; keep concrete wiring at composition edges. When touching existing code, opportunistically move it toward these principles only within the scope of the change - do not trigger broad rewrites.",
+    "rationale": "SOLID keeps changes localized, testable, and composable, which directly reduces the amount of refactoring needed as features (new providers, guards, commands) accumulate.",
+    "affected_files": [],
+    "category": "architecture",
+    "status": "active",
+    "tags": [
+      "SOLID",
+      "design",
+      "maintainability",
+      "refactoring"
+    ],
+    "contradictions": [],
+    "resolved_by": null
   }
 ]
