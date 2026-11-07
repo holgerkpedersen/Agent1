@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import re
 import shutil
 import subprocess
 import sys
+import tomllib
 from typing import TYPE_CHECKING, Any
 
 from agent_core.commands.base import save_file_py
@@ -101,6 +103,39 @@ def _ruff_binary() -> str | None:
     return None
 
 
+def _ruff_config_root(path: str) -> str | None:
+    """Return the directory whose ruff config governs *path*, or None.
+
+    Ruff resolves ``[tool.ruff]`` from the process CWD, not from the linted
+    file — so linting a Kanban file while the agent's CWD is the Agent1
+    checkout applied AGENT1's line-length (88) and reported twenty E501s the
+    Kanban CLI run happily passed (2026-11-07 session, intents 37/44/56).
+    When the file's own tree carries a ruff config (``ruff.toml``,
+    ``.ruff.toml`` or a ``pyproject.toml`` with a ``[tool.ruff]`` table), the
+    child runs from that directory so the TARGET repo's rules apply; only a
+    config-less tree (test fixtures) falls back to the explicit rule set.
+    """
+    current = os.path.dirname(os.path.abspath(path))
+    while True:
+        for name in ("ruff.toml", ".ruff.toml"):
+            if os.path.isfile(os.path.join(current, name)):
+                return current
+        pyproject = os.path.join(current, "pyproject.toml")
+        if os.path.isfile(pyproject):
+            try:
+                # tomllib needs BYTES (UTF-8 invariant: never decode first).
+                with open(pyproject, "rb") as fh:
+                    data = tomllib.load(fh)
+            except (OSError, tomllib.TOMLDecodeError):
+                return None
+            if isinstance(data.get("tool"), dict) and "ruff" in data["tool"]:
+                return current
+        parent = os.path.dirname(current)
+        if parent == current:
+            return None
+        current = parent
+
+
 def _ruff_command(path: str) -> list[str] | None:
     """Return the argv to lint *path*, or None when ruff is unavailable."""
     binary = _ruff_binary()
@@ -110,6 +145,13 @@ def _ruff_command(path: str) -> list[str] | None:
         base = [sys.executable, "-m", "ruff"]
     else:
         return None
+    # A target repo with its OWN [tool.ruff] is linted by its own rules:
+    # _lint_file runs the child from the config root (see _ruff_config_root)
+    # so ruff resolves the repo's real settings — an explicit --select there
+    # would override settings like line-length the repo deliberately chose.
+    root = _ruff_config_root(path)
+    if root is not None:
+        return [*base, "check", "--no-cache", "--output-format=concise", path]
     # Explicit rule set so the result does not depend on an ambient
     # [tool.ruff] block, and so test fixtures lacking pyproject.toml still
     # get the same E/F/W gate CI enforces.
@@ -124,6 +166,11 @@ def _ruff_command(path: str) -> list[str] | None:
     ]
 
 
+#: One line of ruff ``--output-format=concise``: path:line:col: CODE message.
+#: Greedy path so ``C:`` never becomes the first split point on Windows.
+_CONCISE_LINE_RE = re.compile(r"^(?P<path>.+):(?P<line>\d+):(?P<col>\d+): (?P<msg>.+)$")
+
+
 def _format_ruff_violations(stdout: str) -> list[str]:
     """Turn ``--output-format=concise`` output into short ``file:line`` items."""
     items: list[str] = []
@@ -131,11 +178,17 @@ def _format_ruff_violations(stdout: str) -> list[str]:
         line = line.strip()
         if not line or line.startswith(("Found ", "All checks")):
             continue
-        # concise format: path:line:col: CODE message
-        parts = line.split(":", 3)
-        if len(parts) < 4:
+        # concise format: path:line:col: CODE message.  The path is matched
+        # greedily so a Windows drive-letter colon (``C:\dev\x.py:8:5: E501``)
+        # is NOT the split point — a plain split(":", 3) cut at ``C:`` and
+        # rendered every finding as ``C: ...\x.py: <col>: <code>``.
+        m = _CONCISE_LINE_RE.match(line)
+        if m is None:
             continue
-        items.append(f"{os.path.basename(parts[0])}:{parts[1]}: {parts[3].strip()}")
+        items.append(
+            f"{os.path.basename(m.group('path'))}:{m.group('line')}: "
+            f"{m.group('msg').strip()}"
+        )
     return items
 
 
@@ -151,8 +204,13 @@ def _lint_file(path: str) -> str:
     if cmd is None:
         return ""
     try:
+        # cwd = the file's ruff config root (None = inherit): ruff resolves
+        # [tool.ruff] from the CHILD'S cwd, so a cross-repo write is linted
+        # by the repo it lands in, not by the agent's checkout (Kanban
+        # 2026-11-07: 20 phantom E501s per patch, all Agent1's 88-col rules).
         r = subprocess.run(
             cmd,
+            cwd=_ruff_config_root(path),
             capture_output=True,
             text=True,
             encoding="utf-8",

@@ -28,6 +28,7 @@ from agent_core.agent_effects import (
     RUFF_TIMEOUT_S,
     _format_ruff_violations,
     _lint_file,
+    _ruff_config_root,
     _verify_file,
 )
 
@@ -136,8 +137,66 @@ class TestFormatRuffViolations:
             "x.py:9: E501 Line too long (91 > 88)",
         ]
 
+    def test_windows_drive_letter_path_is_not_split_at_the_colon(self) -> None:
+        """Kanban 2026-11-07: split(":", 3) cut ``C:\\...py:89:94: E501`` at
+        the drive colon, rendering every finding as ``C: ...py: <col>: ...``
+        — the model saw 20 unreadable E501s and burned intents re-checking."""
+        stdout = (
+            "C:\\Dev\\Kanban\\src\\agent1\\kanban_sync.py:89:94: "
+            "E501 Line too long (94 > 88)\n"
+        )
+        items = _format_ruff_violations(stdout)
+        assert items == ["kanban_sync.py:89: E501 Line too long (94 > 88)"]
+
     def test_ignores_summary_and_blank_lines(self) -> None:
         assert _format_ruff_violations("All checks passed!\n\n") == []
+
+
+class TestTargetRepoConfig:
+    """A write into a repo with its OWN [tool.ruff] must be linted by that
+    repo's rules.  Kanban 2026-11-07 intents 37/44/56: every patch reported
+    20 E501s from Agent1's 88-col line-length while Kanban's own ruff run
+    passed — the child inherited the agent process's cwd, not the file's."""
+
+    def _make_repo(self, tmp_path: Path, line_length: int) -> Path:
+        (tmp_path / "pyproject.toml").write_text(
+            f"[tool.ruff]\nline-length = {line_length}\n", encoding="utf-8"
+        )
+        target = tmp_path / "mod_long.py"
+        target.write_text(f'X = "a" * 1 + "{_pad(120)}"\n', encoding="utf-8")
+        return target
+
+    def test_repo_config_root_is_found(self, tmp_path: Path) -> None:
+        target = self._make_repo(tmp_path, 200)
+        assert _ruff_config_root(str(target)) == str(tmp_path)
+
+    def test_repo_without_ruff_table_is_not_a_config_root(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "x"\n', encoding="utf-8"
+        )
+        target = tmp_path / "mod.py"
+        target.write_text(CLEAN_SOURCE, encoding="utf-8")
+        assert _ruff_config_root(str(target)) is None
+
+    def test_target_repo_line_length_governs(self, tmp_path: Path) -> None:
+        """A 120-char line is clean under the repo's line-length=200."""
+        target = self._make_repo(tmp_path, 200)
+        out = _lint_file(str(target))
+        assert out == "[verify] ruff ✓", out
+
+    def test_same_file_fails_under_the_default_gate(self, tmp_path: Path) -> None:
+        """Without a repo config the explicit E/F/W gate (88 cols) applies —
+        proving the ✓ above comes from the target repo's rules, not a no-op."""
+        target = self._make_repo(tmp_path, 200)
+        (tmp_path / "pyproject.toml").unlink()
+        out = _lint_file(str(target))
+        assert "E501" in out, out
+
+
+def _pad(n: int) -> str:
+    return "b" * n
 
 
 class TestRealWritePathRunsRuff:
