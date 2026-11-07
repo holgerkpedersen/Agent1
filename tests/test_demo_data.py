@@ -27,11 +27,15 @@ import agent
 
 @pytest.fixture(autouse=True)
 def _reset_shared_collector(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Each test gets a pristine process-wide collector."""
-    import agent_dashboard
+    """Each test gets a pristine process-wide collector.
 
-    monkeypatch.setattr(agent, "_shared_metrics_collector", None)
-    monkeypatch.setattr(agent_dashboard, "_shared_metrics_collector", None)
+    The singleton binding's canonical home is
+    ``agent_core.monitoring.metrics_bridge`` (decision #139 step 1); every
+    consumer resolves through it, so patching the bridge resets all of them.
+    """
+    import agent_core.monitoring.metrics_bridge as _bridge
+
+    monkeypatch.setattr(_bridge, "_shared_metrics_collector", None)
 
 
 def _make_agent() -> "agent.Agent":
@@ -147,10 +151,9 @@ def test_serve_mode_wires_alert_evaluator(
         captured["refresh"] = refresh
         raise KeyboardInterrupt()  # exit run() immediately
 
-    import agent_dashboard
+    import agent_core.monitoring.metrics_bridge as _bridge
 
-    monkeypatch.setattr(agent, "_shared_metrics_collector", None)
-    monkeypatch.setattr(agent_dashboard, "_shared_metrics_collector", None)
+    monkeypatch.setattr(_bridge, "_shared_metrics_collector", None)
     monkeypatch.setattr(DashboardAPIServer, "run", fake_run)
     monkeypatch.setattr(sys, "argv", ["agent.py", "--serve"])
     # run_dashboard_server() deliberately SWALLOWS KeyboardInterrupt (its

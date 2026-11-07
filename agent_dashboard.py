@@ -19,6 +19,18 @@ import sys
 import threading
 from typing import TYPE_CHECKING, Any, Optional, cast
 
+# Shared metrics plumbing: canonical implementation lives in the CORE package
+# at ``agent_core.monitoring.metrics_bridge`` (core -> monitoring, never
+# core -> UI).  This module re-exports it so the dashboard entry points and
+# every existing import / monkeypatch of ``agent_dashboard.<name>`` keep
+# working against the SAME process-wide collector singleton.
+from agent_core.monitoring.metrics_bridge import (  # noqa: F401
+    _emit_command_metrics,
+    _emit_tool_metrics,
+    get_metrics_collector,
+    record_command_metrics,
+)
+
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
@@ -26,79 +38,6 @@ if TYPE_CHECKING:
 
     from agent_core.monitoring import MetricsCollector
     from agent_core.monitoring.types import AlertRule
-
-
-# ---------------------------------------------------------------------------
-# Shared metrics plumbing
-#
-# The TTTHEME dashboard (upstream @LebToki) reads everything from a
-# MetricsCollector instance, but run_dashboard_server() used to build its own
-# EMPTY collector — so the web UI stayed blank even after a full REPL session.
-# This module-level bridge lets the REPL loop feed the SAME collector the
-# dashboard serves, and optionally boots the dashboard in-process.
-# ---------------------------------------------------------------------------
-_shared_metrics_collector: Optional["MetricsCollector"] = None
-
-
-def get_metrics_collector() -> "MetricsCollector":
-    """Return the process-wide collector shared by REPL and dashboard."""
-    global _shared_metrics_collector
-    if _shared_metrics_collector is None:
-        from agent_core.monitoring import MetricsCollector as _MC
-
-        _shared_metrics_collector = _MC()
-    assert _shared_metrics_collector is not None
-    return _shared_metrics_collector
-
-
-def _emit_command_metrics(command: str, elapsed_s: float) -> None:
-    """Write the three dashboard metrics for one command execution.
-
-    Single source of truth for the metric NAMES the TTTHEME UI filters on
-    (see loadCommands() regex in static/index.html): exactly ONE
-    ``command.<name>.count`` counter (the UI's stat card naively sums every
-    counter, so an aggregate counter would double the figure), an
-    elapsed-seconds histogram sample, and the ``last.command.seconds`` gauge.
-    """
-    collector = get_metrics_collector()
-    collector.increment_counter(f"command.{command}.count")
-    collector.record_histogram("command.elapsed.seconds", elapsed_s)
-    collector.set_gauge("last.command.seconds", elapsed_s)
-    # Mirror into the shared event file so a standalone --serve dashboard can
-    # show activity recorded by other sessions (metrics_file replay).
-    from agent_core.monitoring.metrics_file import append_event as _append_event
-
-    _append_event("counter", f"command.{command}.count", 1.0)
-    _append_event("histogram", "command.elapsed.seconds", elapsed_s)
-    _append_event("gauge", "last.command.seconds", elapsed_s)
-
-
-def record_command_metrics(command: str, elapsed_s: float) -> None:
-    """Mirror one real REPL command execution into the shared collector."""
-    _emit_command_metrics(command, elapsed_s)
-
-
-def _emit_tool_metrics(tool_name: str, elapsed_s: float, ok: bool) -> None:
-    """Write the dashboard metrics for one TOOL execution (LLM tool loop).
-
-    Companion to :func:`_emit_command_metrics`: same shape, ``tool.`` prefix
-    instead of ``command.`` so the TTTHEME command view can show both real
-    REPL commands and model-driven tool calls (git, read_file, ...) — its
-    loadCommands() regex already matches ``tool``.  One counter per tool name
-    keeps the stat-card sum honest (no aggregate counters).
-    """
-    collector = get_metrics_collector()
-    collector.increment_counter(f"tool.{tool_name}.count")
-    collector.record_histogram("tool.elapsed.seconds", elapsed_s)
-    if ok:
-        collector.set_gauge("last.tool.seconds", elapsed_s)
-    # Mirror into the shared event file (see _emit_command_metrics).
-    from agent_core.monitoring.metrics_file import append_event as _append_event
-
-    _append_event("counter", f"tool.{tool_name}.count", 1.0)
-    _append_event("histogram", "tool.elapsed.seconds", elapsed_s)
-    if ok:
-        _append_event("gauge", "last.tool.seconds", elapsed_s)
 
 
 def _default_alert_rules() -> "list[AlertRule]":
@@ -246,10 +185,12 @@ def run_dashboard_server() -> None:
         logger.warning("Silenced exception in agent_dashboard.run_dashboard_server")
 
 
-# Re-export _shared_metrics_collector so tests that monkeypatch it via the
-# ``agent`` module's re-export get a consistent object identity.  The functions
-# above reference this module-level binding directly, so patching here is what
-# actually resets state between test runs.
+# The collector singleton and the metric-emission functions now live in
+# ``agent_core.monitoring.metrics_bridge`` (core -> monitoring, never core ->
+# UI).  Tests reset state by monkeypatching the SINGLE canonical binding:
+#   monkeypatch.setattr(agent_core.monitoring.metrics_bridge,
+#                       "_shared_metrics_collector", None)
+# which every consumer (REPL path, tool loop, dashboard) resolves through.
 __all__ = [
     "get_metrics_collector",
     "record_command_metrics",

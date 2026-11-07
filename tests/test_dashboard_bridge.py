@@ -28,11 +28,15 @@ import agent
 
 @pytest.fixture(autouse=True)
 def _reset_shared_collector(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Each test gets a pristine process-wide collector."""
-    import agent_dashboard
+    """Each test gets a pristine process-wide collector.
 
-    monkeypatch.setattr(agent, "_shared_metrics_collector", None)
-    monkeypatch.setattr(agent_dashboard, "_shared_metrics_collector", None)
+    The singleton binding's canonical home is
+    ``agent_core.monitoring.metrics_bridge`` (decision #139 step 1); every
+    consumer resolves through it, so patching the bridge resets all of them.
+    """
+    import agent_core.monitoring.metrics_bridge as _bridge
+
+    monkeypatch.setattr(_bridge, "_shared_metrics_collector", None)
     # main() now also boots the Kanban inbound poller; keep these dashboard
     # tests from spawning a real one via whatever is in the repo .env.
     monkeypatch.setattr(agent, "_start_kanban_inbound", lambda: None)

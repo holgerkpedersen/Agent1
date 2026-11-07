@@ -253,7 +253,6 @@ EXPECTED_IMPORTED = frozenset(
         "_save_memory",
         "_save_verify_note",
         "_shape_run_stderr",
-        "_shared_metrics_collector",
         "_shell_command_hint",
         "_shell_name_token",
         "_signal_break_with_cleanup",

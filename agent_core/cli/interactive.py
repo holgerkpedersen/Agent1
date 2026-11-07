@@ -52,7 +52,7 @@ from agent_core.bootstrap import (
     clear_stop,
     save_meta_policy_weights,
 )
-from agent_dashboard import record_command_metrics
+from agent_core.monitoring.metrics_bridge import record_command_metrics
 from agent_core.colors import blue, cyan, gray, green, yellow
 from agent_core.line_editing import (
     enable as _enable_line_editing,

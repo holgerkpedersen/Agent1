@@ -13,13 +13,18 @@ from agent_dashboard import (  # noqa: F401
     _build_dashboard,
     _dashboard_port,
     _default_alert_rules,
-    _emit_command_metrics,
-    _emit_tool_metrics,
-    _shared_metrics_collector,
     get_metrics_collector,
     record_command_metrics,
     run_dashboard_server,
     start_dashboard_thread,
+)
+
+# Metrics plumbing canonical home: agent_core.monitoring.metrics_bridge
+# (core -> monitoring, never core -> UI, decision #139 step 1).  The
+# singleton binding lives there; monkeypatch it on the bridge module.
+from agent_core.monitoring.metrics_bridge import (  # noqa: F401
+    _emit_command_metrics,
+    _emit_tool_metrics,
 )
 
 from agent_core.cli.interactive import (  # noqa: F401

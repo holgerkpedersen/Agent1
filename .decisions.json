@@ -3134,5 +3134,37 @@
     ],
     "contradictions": [],
     "resolved_by": null
+  },
+  {
+    "id": "139",
+    "date": "2026-11-07T12:17:31Z",
+    "title": "#139 SOLID assessment map: prioritized refactor targets (no broad rewrites)",
+    "context": "AST profile of all 860 source files (excluding stale build/lib copies) against decision #138: line counts, class/function fan-out, longest functions, internal import coupling and fan-in.",
+    "decision": "Refactor backlog recorded in priority order, each item scoped per #138 (opportunistic, no broad rewrites). TIER 1 (high priority): (1) agent_core/agent.py - AgentCore is 1,860 lines / 112 methods with 30 internal deps and imports agent_dashboard (core->UI dependency inversion); keep AgentCore as thin composition root, extract session lifecycle, tool registry, turn driver behind injected collaborators; the agent_dashboard import is the highest-value single fix. (2) agent_core/commands/fix_cmd.py (4,011 ln, 12 hard-coded _fix_* methods) and optimize_cmd.py (2,789 ln, hard-coded optimization passes): introduce a Fixer/pass protocol + registry so adding a fixer never edits the command class (Open/Closed); share the abstraction between the two families. (3) agent_core/handlers/nlp_tools.py - 2,022 ln, 77 top-level functions, 26 internal deps: split by tool family and register handlers via a dispatch table. (4) agent_core/commands/implement_cmd.py - execute() is a 113-line body mixing orchestration, diffing, tracing and prompt building: decompose into named pipeline steps with injected collaborators. TIER 2 (targeted extractions when touched): tool_loop.py (extract compaction + display collaborators), workflow_cmd.py and model_cmd.py (split per subcommand group), opencode_provider.py and lmstudio.py (extract transport, payload mapping, model resolution; they already honor the LLMProvider protocol), decisions.py (split persistence from analysis heuristics). TIER 3 (leave alone - already aligned): patterns.py (pure functions, 0 internal deps), tool_schemas.py (data-only), llm/provider.py (the abstraction boundary, fan-in 31), config.py + constants.py (leaf modules). STEP 1 DONE (2026-11-07): core->UI import fixed - new agent_core/monitoring/metrics_bridge.py is the canonical home of the metrics collector singleton (_shared_metrics_collector) and the emission functions; agent_dashboard.py now re-exports from the bridge (UI->core direction OK); agent_core/agent.py, agent_core/cli/interactive.py and root agent.py import from the bridge. Zero dashboard imports remain in core modules (AST-verified). Remaining for item (1): extract session lifecycle, tool registry and turn driver collaborators behind injection.",
+    "rationale": "Makes the #138 principles actionable: names the concrete violations (God object, closed fixer/passes registries, handler monolith, core->UI import) and orders them by value/risk so future changes pick targeted extractions instead of ad-hoc growth.",
+    "affected_files": [
+      "agent_core/agent.py",
+      "agent_core/handlers/nlp_tools.py",
+      "agent_core/commands/fix_cmd.py",
+      "agent_core/commands/optimize_cmd.py",
+      "agent_core/commands/implement_cmd.py",
+      "agent_core/llm/tool_loop.py",
+      "agent_core/commands/workflow_cmd.py",
+      "agent_core/commands/model_cmd.py",
+      "agent_core/llm/opencode_provider.py",
+      "agent_core/llm/lmstudio.py",
+      "agent_core/decisions.py"
+    ],
+    "category": "architecture",
+    "status": "active",
+    "tags": [
+      "SOLID",
+      "refactoring",
+      "architecture",
+      "assessment",
+      "decision-138"
+    ],
+    "contradictions": [],
+    "resolved_by": null
   }
 ]

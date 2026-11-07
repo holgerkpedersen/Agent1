@@ -215,7 +215,8 @@ from agent_core.run_utils import (
 )
 from agent_core.types import _GOAL_RELATED_THRESHOLD
 from agent_core.llm.client import LLMClient
-from agent_dashboard import (
+from agent_core.monitoring.metrics_bridge import (
+    # Core -> monitoring, never core -> UI (decision #139 step 1).
     _emit_command_metrics,
     _emit_tool_metrics,
     get_metrics_collector,
