@@ -57,12 +57,13 @@ class TestDecisionConstraintsInChat:
 
     def test_never_raises_on_broken_ledger(self, agent_obj: Agent, monkeypatch) -> None:
         agent_obj._files_read.add("agent_core/llm/tool_loop.py")
-        import agent as agent_mod
 
         def boom(*a, **kw):
             raise RuntimeError("ledger corrupt")
 
-        monkeypatch.setattr(agent_mod, "decisions_as_system_prompt", boom)
+        # The RAG implementation resolves constraints via the decisions index;
+        # break that seam to prove a broken ledger never kills a chat turn.
+        monkeypatch.setattr("agent_core.decisions_index.load_or_build_index", boom)
         assert agent_obj._decision_constraints_block() == ""
 
     def test_chat_nlp_rebuilds_system_message_with_block(

@@ -73,29 +73,18 @@ def _decision_constraints_block(agent: "Agent") -> str:
     Never raises: a broken/absent ledger must not kill a chat turn.
     """
     try:
+        if not agent._files_read:
+            return ""
+
         from agent_core.decisions_index import (
             load_or_build_index,
             retrieve_decisions,
         )
 
         index = load_or_build_index(agent.workspace)
+        files = sorted(agent._files_read)
 
-        files = sorted(agent._files_read) if agent._files_read else None
-
-        # Gather tags from active decisions for broader matching.
-        all_tags: list[str] = []
-        try:
-            from agent_core.decisions import STATUS_ACTIVE, load_decisions
-
-            for d in load_decisions(agent.workspace):
-                if d.get("status") == STATUS_ACTIVE:
-                    all_tags.extend(d.get("tags", []))
-        except Exception:
-            pass
-
-        relevant = retrieve_decisions(
-            index, files=files, tags=all_tags, top_k=10
-        )
+        relevant = retrieve_decisions(index, files=files, top_k=10)
 
         if not relevant:
             return ""

@@ -230,16 +230,16 @@ def test_skill_index_is_rebuilt_not_accumulated(tmp_path, monkeypatch) -> None:
 def test_workspace_without_skills_gets_no_index(tmp_path, monkeypatch) -> None:
     """The injection is workspace-derived -- the reason workspace="." broke.
 
-    A workspace with no ``skills/`` directory must yield the untouched base
-    prompt, byte for byte (empty string block, same rule as the decision
-    constraints block).
+    A workspace with no ``skills/`` directory must yield the base prompt
+    (plus the always-on language reminder), byte for byte — no skill index.
     """
+    from agent_core.language import language_block
     from agent_core.skills import SKILL_INDEX_MARKER
     import agent as agent_mod
 
     content = _system_prompt_for(tmp_path, tmp_path, monkeypatch)
     assert SKILL_INDEX_MARKER not in content
-    assert content == agent_mod._SYSTEM_PROMPT
+    assert content == agent_mod._SYSTEM_PROMPT + language_block(None)
 
 
 # ---------------------------------------------------------------------------

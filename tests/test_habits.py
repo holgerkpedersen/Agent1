@@ -189,10 +189,12 @@ def test_empty_workspace_prompt_stays_byte_identical(
     bot._refresh_system_message()
     content = bot._chat_history[0]["content"]
 
+    from agent_core.language import language_block
+
     assert HABITS_MARKER not in content
     assert "USER HABITS" not in content
-    assert content == agent_mod._SYSTEM_PROMPT, (
-        "an empty-workspace prompt must stay byte-identical to the pre-habits baseline"
+    assert content == agent_mod._SYSTEM_PROMPT + language_block(None), (
+        "an empty-workspace prompt must stay at the base + language baseline"
     )
 
 
