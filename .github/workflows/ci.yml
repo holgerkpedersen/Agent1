@@ -75,6 +75,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The cross-repo bridge tests (tests/test_card_modal.py,
+      # test_kanban_roundtrip.py, test_linked_cards.py,
+      # test_kanban_status_contract.py) resolve the Kanban checkout as
+      # AGENT1_ROOT.parent / "Kanban" and skip when it is absent.  Without
+      # this step the whole integration surface runs untested on CI; with
+      # it those tests execute against the real Kanban source.  The action
+      # never fails the job - a missing checkout keeps the clean skips.
+      - name: Check out Kanban (sibling of this workspace)
+        id: kanban
+        uses: ./.github/actions/kanban-checkout
+
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
@@ -84,6 +95,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e .[dev]
+
+      # The Kanban app (src/agent1/app.py) is Flask; the cross-repo tests
+      # launch its create_app() for real.  Agent1's dev extra does not carry
+      # Flask, so install Kanban's pinned deps only when the checkout exists.
+      - name: Install Kanban requirements (cross-repo tests)
+        if: steps.kanban.outputs.available == 'true'
+        run: pip install -r ../Kanban/requirements.txt
 
       - name: Ruff (parse errors + undefined names must be clean)
         run: >

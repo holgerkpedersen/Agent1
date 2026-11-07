@@ -191,6 +191,9 @@ perf_history.json
 .ruff_cache/
 .pytest_cache/
 .pytest_tmp/
+# Same intent, one hyphen: harnessfix target-fixture runs write scratch dirs
+# here (harnessfix_targets_N). It was untracked and showed up in git status.
+.pytest-tmp/
 # `.testmondata*` (no dot before the star): testmon keeps its SQLite index in
 # WAL mode, which also writes `.testmondata-shm` / `.testmondata-wal`.
 .testmondata*

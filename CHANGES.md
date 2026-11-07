@@ -1,3 +1,15 @@
+## 2026-11-07 - ci: run the cross-repo Kanban bridge tests on CI
+
+**Change**: CI now checks out the Kanban repo *next to* the Agent1 workspace, so the four cross-repo test modules execute against the real Kanban source instead of skipping.
+
+1. New composite action `.github/actions/kanban-checkout/action.yml`: `actions/checkout@v4` of `holgerkpedersen/KanbanBoard` into a configurable path (default: parent of the workspace, i.e. exactly where the tests look), plus an `available` output that probes what the tests probe (`src/agent1/kanban_sync.py`, `models.py`, `static/style.css`). The action never fails the job - a missing checkout keeps the clean module-level skips.
+2. `.github/workflows/ci.yml` (test job): the new step after `actions/checkout@v4`, and a conditional `pip install -r ../Kanban/requirements.txt` (Flask + Werkzeug, which Agent1's dev extra does not carry) gated on `steps.kanban.outputs.available == 'true'`.
+3. `.gitignore`: `.pytest-tmp/` (harnessfix target-fixture scratch dirs - untracked noise in `git status`, one hyphen away from the already-ignored `.pytest_tmp/`).
+
+**Reason**: the bridge tests (`tests/test_card_modal.py`, `tests/test_kanban_roundtrip.py`, `tests/test_linked_cards.py`, `tests/test_kanban_status_contract.py`) resolve the Kanban checkout as `AGENT1_ROOT.parent / "Kanban"` and skip at module level when it is absent. The default `actions/checkout@v4` of a second repo lands *inside* the workspace, so on CI every one of them silently skipped - the whole Agent1 <-> Kanban integration surface ran untested. Kanban's own `tests/test_card_integrated_style.py` covers its side; a self-assertion inside Agent1 would be circular, so the pin is to the real checkout.
+
+**Files**: `.github/actions/kanban-checkout/action.yml`, `.github/workflows/ci.yml`, `.gitignore`. Verified: both YAML files parse (`yaml.safe_load`), step order inspected; `python -m pytest tests/test_card_modal.py tests/test_linked_cards.py -q --no-cov` -> 8 passed against the local sibling checkout (the layout CI now reproduces); `git check-ignore -v .pytest-tmp/` confirms the new rule matches.
+
 ## 2026-11-04 - test(session): close the legacy session-manager coverage gap (plan 2026-10-31-session-manager-test)
 
 **Change**: three new suites cover the layer that had no tests: the in-process `agent_core/cli/session/session_manager.py` (`SessionManager`) and its only consumer, the CLI `clear` command (`agent_core/cli/commands/clear.py`).

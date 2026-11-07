@@ -1,0 +1,82 @@
+name: Kanban checkout (sibling of the Agent1 workspace)
+description: >-
+  Check out the KanbanBoard repo next to the current workspace, so the
+  cross-repo tests in tests/ run for real instead of skipping.
+
+# WHY THIS ACTION EXISTS
+# Four test modules pin the Agent1 <-> Kanban bridge against the Kanban
+# source tree:
+#   * tests/test_card_modal.py          - .card-integrated CSS rule
+#   * tests/test_kanban_roundtrip.py    - card-create echo loop
+#   * tests/test_linked_cards.py        - GET /api/cards/linked
+#   * tests/test_kanban_status_contract.py - status/frame mapping tables
+# All four resolve the Kanban checkout as AGENT1_ROOT.parent / "Kanban"
+# (see KANBAN_ROOT in those files) and skip at module level when it is
+# absent.  The default actions/checkout@v4 lands a second repo *inside*
+# the workspace, so CI never satisfied that layout: every bridge test
+# silently skipped and the integration ran untested.
+#
+# Kanban's own tests (Kanban/tests/test_card_integrated_style.py) cover
+# the same CSS rule inside the Kanban repo; a self-assertion in Agent1
+# would be circular, so this action pins the cross-repo coverage to the
+# real checkout instead of duplicating it.
+#
+# INPUTS
+#   path    where the checkout lands (default: parent of the workspace)
+#   token   PAT for private-repo access; defaults to the job's GITHUB_TOKEN
+#           (works while KanbanBoard is public - no secret needed)
+#
+# OUTPUTS
+#   available  "true" when a usable checkout exists at the expected path.
+#              Every consumer MUST gate on this: a hard failure here would
+#              break unrelated Agent1 CI, and the tests already skip
+#              cleanly when the checkout is missing.
+
+inputs:
+  path:
+    description: >-
+      Directory for the Kanban checkout. Must end up as a sibling of the
+      Agent1 workspace (tests resolve it as AGENT1_ROOT.parent / "Kanban").
+    required: false
+    default: ""
+  token:
+    description: PAT for private-repo access (defaults to GITHUB_TOKEN).
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  available:
+    description: '"true" when a Kanban checkout exists at the expected path.'
+    value: ${{ steps.check.outputs.available }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check out KanbanBoard next to this workspace
+      uses: actions/checkout@v4
+      with:
+        repository: holgerkpedersen/KanbanBoard
+        token: ${{ inputs.token }}
+        path: ${{ inputs.path }}
+        persist-credentials: false
+
+    - name: Report whether the checkout is usable
+      id: check
+      shell: bash
+      run: |
+        # A Kanban checkout is only useful to these tests when it carries
+        # src/agent1/ - that package is the bridge surface every cross-repo
+        # test imports.  Probe exactly what the tests probe (kanban_sync.py,
+        # models.py, static/style.css) so CI and local runs agree.
+        root="${{ inputs.path }}"
+        [ -n "$root" ] || root="$(dirname "$GITHUB_WORKSPACE")/Kanban"
+        available=false
+        for probe in src/agent1/kanban_sync.py src/agent1/models.py \
+                     src/agent1/static/style.css; do
+          if [ -f "$root/$probe" ]; then
+            available=true
+            break
+          fi
+        done
+        echo "available=$available" >> "$GITHUB_OUTPUT"
+        echo "kanban checkout: $root (usable: $available)"
