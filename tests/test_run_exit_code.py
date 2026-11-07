@@ -180,3 +180,24 @@ class TestShellHintWordings:
         err = "The term 'nope' is not recognized as the name of a cmdlet."
         out = _shape_run_stderr(err, "", 0)
         assert "Hint" not in out
+
+    def test_git_commit_pathspec_split_gets_commit_F_hint(self) -> None:
+        """Kanban 2026-11-07 intent 73: PowerShell split a multi-paragraph
+        `git commit -m` at inner quotes; git answered with pathspec errors
+        and the rich message was lost to a subject-only fallback commit."""
+        err = (
+            "git : error: pathspec 'mismatches' did not match any file(s) "
+            "known to git\n"
+            "error: pathspec 'fixed' did not match any file(s) known to git\n"
+        )
+        out = _shape_run_stderr(err, "", 1)
+        assert "git commit -F" in out
+        assert "[EXIT CODE: 1]" in out
+
+    def test_plain_pathspec_add_error_gets_hint_too(self) -> None:
+        """The hint fires on the failure SHAPE (pathspec + did not match),
+        e.g. a staged path that does not exist — `-F` guidance is cheap and
+        the real fix is visible in the git error itself."""
+        err = "fatal: pathspec 'src/agent1/app.py' did not match any files"
+        out = _shape_run_stderr(err, "", 1)
+        assert "git commit -F" in out

@@ -488,6 +488,25 @@ _CMD_NOT_FOUND_UNIX_NEEDLES = (
     "nosuchfileordirectory",
 )
 
+#: PowerShell splits a ``git commit -m "..." -m "..."`` whose message body
+#: contains nested double quotes: the inner quotes terminate the argument,
+#: and the leftovers arrive as separate argv entries — git then fails with
+#: ``error: pathspec 'X' did not match any file(s) known to git`` and the
+#: rich commit body is LOST (Kanban 2026-11-07, intent 73: a 3-paragraph
+#: message collapsed to a subject-only fallback commit).
+_GIT_PATHSPEC_NEEDLES = ("pathspec", "didnotmatch")
+
+
+def git_commit_quoting_hint() -> str:
+    """Hint for the PowerShell-mangled-``git commit -m`` failure shape."""
+    return (
+        "\nHint: git received EXTRA arguments — the shell split the command "
+        "line at quotes inside the message. Do NOT fight the quoting: write "
+        "the full commit message to a file with the write tool (UTF-8) and "
+        "run 'git commit -F <that-file>'. Quote PowerShell metacharacters "
+        "like '@{u}' in single quotes."
+    )
+
 
 def shape_run_stderr(
     stderr: Any,
@@ -531,6 +550,11 @@ def shape_run_stderr(
         os.name != "nt" and any(n in nospace for n in _CMD_NOT_FOUND_UNIX_NEEDLES)
     ):
         result += platform_shell_command_hint()
+    if all(n in nospace for n in _GIT_PATHSPEC_NEEDLES):
+        # ``error: pathspec 'X' did not match any file(s) known to git`` on a
+        # commit/add line: the shell split the line at quotes inside the
+        # message, so git saw extra argv.  Steer to ``git commit -F <file>``.
+        result += git_commit_quoting_hint()
     if not out.strip() and not cleaned and returncode == 255 and os.name == "nt":
         # The Windows cmd.exe whole-pipeline failure path: a `|` runs each
         # stage separately and only the LAST stage's code survives, so an
