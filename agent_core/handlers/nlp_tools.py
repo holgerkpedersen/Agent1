@@ -1094,6 +1094,19 @@ async def _nlp_write(agent: "Agent", args: dict[str, Any]) -> str:
         return f"Write error: {e}"
 
 
+#: Child-process env for the run tool.  The parent reads the pipes as UTF-8,
+#: but a Python grandchild (pytest, ``python -c``) picks the Windows ANSI
+#: code page for its stdout — cp1252 — so Danish git/pytest text like
+#: "Adgang nægtet" reached the model as "Adgang n?gtet" (Kanban 2026-11-07,
+#: intents 22/24).  PYTHONUTF8/PYTHONIOENCODING force UTF-8 on every Python
+#: descendant; an explicit operator setting is never overwritten.
+def _run_child_env() -> dict[str, str]:
+    env = dict(os.environ)
+    env.setdefault("PYTHONUTF8", "1")
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    return env
+
+
 async def _nlp_run(agent: "Agent", args: dict[str, Any]) -> str:
     """Execute one shell command with destructive-pattern blocking,
     whole-tree timeout kill, and Unix-ism hints."""
@@ -1201,6 +1214,7 @@ async def _nlp_run(agent: "Agent", args: dict[str, Any]) -> str:
                 encoding="utf-8",
                 errors="replace",
                 cwd=_effective_ws_dir(agent),
+                env=_run_child_env(),
                 creationflags=creationflags,
             )
         else:
@@ -1213,6 +1227,7 @@ async def _nlp_run(agent: "Agent", args: dict[str, Any]) -> str:
                 encoding="utf-8",
                 errors="replace",
                 cwd=_effective_ws_dir(agent),
+                env=_run_child_env(),
                 creationflags=creationflags,
             )
         try:

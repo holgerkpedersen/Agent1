@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -169,6 +170,19 @@ class TestToolArgumentCaps:
         # the command still executes within the clamped budget.
         out = asyncio.run(bot._nlp_run({"command": "echo ok", "timeout": -5}))
         assert "ok" in out
+
+    def test_run_child_python_nonascii_survives(self, bot: Agent) -> None:
+        """Kanban 2026-11-07: pytest/git wrote cp1252 bytes into the pipe the
+        run tool reads as UTF-8, so "Adgang nægtet" reached the model as
+        "Adgang n?gtet".  PYTHONUTF8/PYTHONIOENCODING in the child env make
+        every Python grandchild emit UTF-8."""
+        code = "print('Adgang \\u00e6 \\u00f8 \\u00e5')"
+        out = asyncio.run(
+            bot._nlp_run(
+                {"command": f'"{sys.executable}" -c "{code}"', "timeout": 60}
+            )
+        )
+        assert "Adgang æ ø å" in out
 
     def test_read_limit_capped_at_max_read_lines(
         self,
