@@ -234,6 +234,30 @@ Three-line wrapper: reads all stdin until Ctrl+Z, sets `_nlp_workspace`, calls `
 
 ---
 
+## Session Layer: two managers, one name
+
+There are **two independent "session manager" implementations**; they do not share state and each has its own test surface. Knowing which layer a suite covers avoids reading the wrong module.
+
+| Layer | Module | State | Consumer |
+|-------|--------|-------|----------|
+| Legacy in-process manager | `agent_core/cli/session/session_manager.py` (`SessionManager`) | In-memory message list + stats only — **owns no files** | CLI `clear` command (`agent_core/cli/commands/clear.py`) |
+| Named-session store | `agent_core/session/` (`store.py`, `models.py`, `lock.py`, `context.py`, `cli.py`) | Persisted named sessions on disk, file-locked | `session` command (`agent_core/commands/session_cmd.py`) |
+
+### Test surface and coverage baseline (2026-10-31)
+
+Plan: `docs/plans/2026-10-31-session-manager-test.md`. Measured with
+`python -m pytest tests/test_session_manager.py tests/test_session_manager_clear.py tests/test_session_manager_taskplan.py --cov=agent_core.session --cov=agent_core.cli.commands.clear`:
+
+| Suite | Covers | Notes |
+|-------|--------|-------|
+| `tests/test_session_manager.py` (15 tests) | Legacy `SessionManager` — stats, token arithmetic (`len // 4` per message), UTC clock ordering, idempotent `clear_session`, instance isolation | **100 %** of `session_manager.py` (15/15 statements) |
+| `tests/test_session_manager_clear.py` (19 tests) | `ClearCommand` — stats display, confirmation loop (`y`/`n`/invalid re-prompt/EOF abort), end-to-end `run()`, and isolation: an os-level guard asserts no filesystem call escapes the tmp sandbox, so the legacy clear provably never touches `agent_core/session/` state | **100 %** of `clear.py` (35/35 statements) |
+| `tests/test_session_manager_taskplan.py` (10 tests) | Guard for the plan document itself: parses it with `parse_plan_tasks`, checks task ids, roles via `get_role`, and pushes it through the real `build_and_validate_graph` gate | no product code under test |
+
+Named-session layer coverage is unchanged by this plan (store/lock/cli/context at their prior levels); the gap this plan closed was exactly the legacy manager and its `clear` consumer.
+
+---
+
 ## Core Utilities: `agent_core/`
 
 | Module | Class/Function | Purpose |

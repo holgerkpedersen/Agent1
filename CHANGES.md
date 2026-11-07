@@ -1,3 +1,17 @@
+## 2026-11-04 - test(session): close the legacy session-manager coverage gap (plan 2026-10-31-session-manager-test)
+
+**Change**: three new suites cover the layer that had no tests: the in-process `agent_core/cli/session/session_manager.py` (`SessionManager`) and its only consumer, the CLI `clear` command (`agent_core/cli/commands/clear.py`).
+
+1. `tests/test_session_manager.py` (15 tests) — constructor defaults, message accounting, token arithmetic (`len(text) // 4` per message), UTC clock ordering, stats after mixed activity, and `clear_session` idempotency plus instance isolation.
+2. `tests/test_session_manager_clear.py` (19 tests) — `ClearCommand`: stats display before prompting, the confirmation loop (`y`/`n`, case/whitespace normalisation, invalid-answer re-prompt, single-letter-only acceptance), input errors and `KeyboardInterrupt` propagating untouched, end-to-end `run()` for both answers, factory wiring of an injected manager, and an isolation test that runs the full clear flow under an os-level guard (`open`/`os.remove`/`os.rename`/`os.replace` wrapped to raise if a path escapes the tmp sandbox) proving the legacy clear never touches `agent_core/session/` named-session state.
+3. `tests/test_session_manager_taskplan.py` (10 tests) — guards the plan document itself: parses it with `parse_plan_tasks`, checks task ids, roles via `get_role`, and pushes it through the real `build_and_validate_graph` gate.
+
+Docs: new "Session Layer: two managers, one name" section in `docs/AGENT_ARCHITECTURE.md` — the repo has two unrelated modules both called session manager (legacy in-memory `SessionManager` vs the on-disk named-session store in `agent_core/session/`), each with its own test surface; the table names module, state and consumer so future work reads the right one.
+
+**Reason**: plan `docs/plans/2026-10-31-session-manager-test.md`. Coverage baseline measured before the work: legacy `session_manager.py` and `clear.py` had zero direct coverage; named-session modules kept their prior levels (this plan deliberately scoped to the legacy layer). After: **100 %** of `session_manager.py` (15/15 statements) and **100 %** of `clear.py` (35/35 statements).
+
+**Files**: `tests/test_session_manager.py`, `tests/test_session_manager_clear.py`, `tests/test_session_manager_taskplan.py`, `docs/AGENT_ARCHITECTURE.md`, `CHANGES.md`. Verified: `python -m pytest tests/test_session_manager.py tests/test_session_manager_clear.py tests/test_session_manager_taskplan.py -q --no-cov` -> 44 passed; whole session/clear neighbourhood (`test_clear_command`, `test_clear_history*`, `test_session_cli/cmd/layer/model/switch`) -> 88 passed, no identifier collisions with the 24 pre-existing tests there (checked by name-set comparison); coverage gate as above; `python -m ruff check agent_core harnessfix fixcommand tests` -> All checks passed (the CI lint gate).
+
 ## 2026-11-03 - fix(tests): repo-wide scans stop failing on throwaway scratch files
 
 **Change**: two source-scanning tests were red for reasons that had nothing to do with the code they guard.
