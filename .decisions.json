@@ -3092,5 +3092,28 @@
     ],
     "contradictions": [],
     "resolved_by": null
+  },
+  {
+    "id": "137",
+    "date": "2026-11-07T11:51:32Z",
+    "title": "#137 Jev delivery check for silent-ending answers (one retry, fail-open)",
+    "context": "Kanban 2026-11-07: after real tool work the model could terminate with reason=answer on dangling narration/promised follow-up; _looks_incomplete missed it and the turn ended with no clear final summary.",
+    "decision": "turn_loop asks Jev (yes/no, vote, 3 samples, 25s timeout) whether the final message delivered the request, only when reason==answer, tool work occurred, and heuristics did not already flag needs_more. Confident p(no)>=0.65 triggers ONE synthesis retry with a tagged note; UNKNOWN/error/timeout/abstention fail open. Deterministic empty final text triggers retry in live runs but fails open under AGENT_NO_JEV_DELIVERY_CHECK (test stability). Root conftest sets the kill-switch for the test suite.",
+    "rationale": "Jev 1.5B can be wrong (trivial sanity check returned FALSE at ~0.51), so only a clear confident-NO intervenes and everything else preserves the status quo. Reuses the existing auto-continue/tagged-note path (one-shot flag prevents loops).",
+    "affected_files": [
+      "agent_core/turn_loop.py",
+      "tests/test_delivery_check.py",
+      "conftest.py"
+    ],
+    "category": "reliability",
+    "status": "active",
+    "tags": [
+      "jev",
+      "turn-loop",
+      "delivery-check",
+      "silent-ending"
+    ],
+    "contradictions": [],
+    "resolved_by": null
   }
 ]
