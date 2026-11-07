@@ -3010,5 +3010,26 @@
     "resolved_by": null,
     "status": "active",
     "category": "architecture"
+  },
+  {
+    "id": "133",
+    "date": "2026-11-07T10:37:37+00:00",
+    "title": "#133 Same-RESULT repeat guard for the run tool (self-questioning)",
+    "context": "The Kanban 2026-11-07 session burned intents 87/91/93 re-running the full-suite pytest the gate had already REFUSED. Each retry reworded the command (an extra echo, a different Select-Object tail), so the exact-call duplicate guard (call_key equality) never fired, and the consecutive-failure guard reset on every successful run in between. The loop only ends when the model itself gives up.",
+    "decision": "tool_loop tracks the stripped RESULT of run calls: N consecutive run calls (intervening non-run calls do NOT reset the streak, since the model researched between refused attempts) whose output is byte-identical inject a _SAME_RESULT_NOTE at _SAME_RESULT_REPEAT_LIMIT=3 that forces reflection - honor a refusal/gate text, fix an error cause, or answer; every call still executes (soft steering, like the idempotent self-question note). Keyed on result, not command, so cosmetic rewording cannot dodge it; identical deterministic outputs (All checks passed!, nothing to commit) are exactly the loops this must break, and timing-bearing outputs (N passed in X.XXs) differ naturally so legit test reruns do not fire.",
+    "affected_files": [
+      "agent_core/llm/tool_loop.py",
+      "tests/test_tool_loop_nlp.py"
+    ],
+    "status": "active",
+    "tags": [
+      "tool-loop",
+      "guards",
+      "self-questioning"
+    ],
+    "category": "architecture",
+    "contradictions": [],
+    "rationale": "Keyed on the RESULT, not the command: cosmetic rewording cannot dodge it, deterministic identical outputs (gate refusals, All checks passed!, nothing to commit) are exactly the loops to break, and timing-bearing outputs (N passed in X.XXs) differ so legit test reruns stay silent. Soft steering (note) not hard stop: the model may have a real reason to re-check, and a byte-identical third output is strong evidence it does not.",
+    "resolved_by": null
   }
 ]
