@@ -21,6 +21,19 @@ description: >-
 # would be circular, so this action pins the cross-repo coverage to the
 # real checkout instead of duplicating it.
 #
+# WHY THE CHECKOUT LANDS IN A SIBLING DIRECTORY (not inside the workspace)
+# actions/checkout@v4 with a relative `path` WIPES ITS WORKING DIRECTORY
+# before cloning, and the working directory is the workspace root.  With
+# path: ../Kanban it deletes everything in $GITHUB_WORKSPACE and then
+# clones KanbanBoard *into* the Agent1 checkout (it does not clone into
+# the parent - the repo root follows the existing .git).  Result, observed
+# in CI run 42409020802: pyproject.toml gone -> `pip install -e .[dev]`
+# fails; .github/actions/kanban-checkout/action.yml gone -> the composite
+# action's Post step cannot find its own definition and fails the job.
+# A sibling path is therefore not just layout preference, it is required
+# to keep the Agent1 tree intact.  The runner parent (/home/runner/work)
+# is writable, so ../Kanban works from inside the workspace.
+#
 # INPUTS
 #   path    where the checkout lands (default: parent of the workspace)
 #   token   PAT for private-repo access; defaults to the job's GITHUB_TOKEN
@@ -38,7 +51,7 @@ inputs:
       Directory for the Kanban checkout. Must end up as a sibling of the
       Agent1 workspace (tests resolve it as AGENT1_ROOT.parent / "Kanban").
     required: false
-    default: ""
+    default: "../Kanban"
   token:
     description: PAT for private-repo access (defaults to GITHUB_TOKEN).
     required: false

@@ -1,8 +1,11 @@
 """Regression tests for three failures seen in the Linux CI run."""
 import os
+import pathlib
+import re
 import signal
 
 import pytest
+import yaml
 
 from agent_core import run_utils
 from agent_core.commands.plan_verifier import _norm
@@ -81,3 +84,47 @@ def test_real_child_in_agent_group_is_killed_and_agent_survives():
             proc.wait()
     # Reaching this line proves the agent process was not signalled.
     assert os.getpgrp() > 0
+
+
+class TestKanbanCheckoutKeepsWorkspaceIntact:
+    """CI run 42409020802: `actions/checkout@v4` with a relative `path`
+    wipes its working directory (the workspace root) before cloning, and
+    the repo root follows the existing `.git` - so the Kanban clone landed
+    *inside* the Agent1 checkout after deleting the Agent1 tree.  The
+    install step then died on a missing `pyproject.toml` and the composite
+    action's Post step could not find its own `action.yml`.
+    The sibling layout is load-bearing, so pin it in CI config."""
+
+    ACTION = (
+        pathlib.Path(__file__).resolve().parent.parent
+        / ".github" / "actions" / "kanban-checkout" / "action.yml"
+    )
+
+    def test_action_definition_exists(self):
+        assert self.ACTION.is_file(), f"missing {self.ACTION}"
+
+    def test_default_path_is_a_sibling_not_inside_the_workspace(self):
+        text = self.ACTION.read_text(encoding="utf-8")
+        default = re.search(
+            r"^  path:\n(?:.*\n)*?    default:\s*(\S.*)$", text, re.MULTILINE
+        )
+        assert default is not None, "the action must declare a path default"
+        value = default.group(1).strip().strip('"').strip("'")
+        assert value == "../Kanban", (
+            "the Kanban checkout must land next to the workspace; an empty "
+            "or workspace-relative path makes actions/checkout delete the "
+            f"Agent1 tree (saw: {value!r})"
+        )
+
+    def test_ci_installs_the_package_after_the_kanban_step(self):
+        """Order guard: a checkout that wipes the tree must never run after
+        the step that reads pyproject.toml."""
+        ci = (
+            pathlib.Path(__file__).resolve().parent.parent
+            / ".github" / "workflows" / "ci.yml"
+        )
+        job = yaml.safe_load(ci.read_text(encoding="utf-8"))["jobs"]["test"]
+        steps = [s.get("name", "") for s in job["steps"]]
+        kanban = next(i for i, n in enumerate(steps) if "Check out Kanban" in n)
+        install = next(i for i, n in enumerate(steps) if "Install package" in n)
+        assert kanban < install, "Kanban checkout must precede the pip install"
