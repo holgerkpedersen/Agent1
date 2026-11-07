@@ -1,3 +1,11 @@
+## 2026-11-07 - test(card_modal): skip the Kanban CSS pin when no Kanban checkout exists
+
+**Change**: `tests/test_card_modal.py` gained a module-level guard mirroring the one in `tests/test_linked_cards.py`: when the Kanban checkout (resolved via `KANBAN_REPO_ROOT`, then `REPO.parent / "Kanban"`) is absent, the whole module skips with an explanatory message instead of failing every CSS-pin test on `assert path.is_file()`.
+
+**Reason**: commit `2760379` added the `.card-integrated` CSS markers to this suite, but those assertions read Kanban's `src/agent1/static/style.css` - a cross-repo file. On CI (Agent1 checked out alone) and on any machine without the sibling checkout, the tests failed hard. The CSS pin is only meaningful where both repos exist; a missing checkout is not a contract violation.
+
+**Files**: `tests/test_card_modal.py`. Verified: `python -m pytest tests/test_card_modal.py tests/test_linked_cards.py -q --no-cov` -> 8 passed with the sibling checkout present; module-level skip path matches the pattern already proven in `test_linked_cards.py`.
+
 ## 2026-11-07 - ci: run the cross-repo Kanban bridge tests on CI
 
 **Change**: CI now checks out the Kanban repo *next to* the Agent1 workspace, so the four cross-repo test modules execute against the real Kanban source instead of skipping.
