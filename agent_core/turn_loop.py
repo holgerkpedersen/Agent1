@@ -10,6 +10,7 @@ still live in ``agent.py`` are resolved lazily from the ``agent`` module
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -50,6 +51,76 @@ _SUMMARY_SYSTEM = (
 )
 _SUMMARY_USER = "Visible narration:\n{visible}\n\nHidden reasoning:\n{reasoning}"
 _SUMMARY_INPUT_CAP = 12_000
+
+#: Jev delivery-check (Kanban 2026-11-07, silent-ending: the model promised
+#: follow-up work, emitted a tool call, then the loop ended with no clear
+#: final summary — termination "answer", heuristics missed it).  A confident
+#: "not delivered" verdict triggers ONE synthesis retry; UNKNOWN/error/low
+#: confidence is fail-open (never worse than the status quo).  p(no) must
+#: clear this bar — the Jev 1.5B model can be wrong (a trivial sanity check
+#: returned FALSE at ~0.51), so we only intervene on a clear signal.
+_JEV_DELIVERY_NO_THRESHOLD = 0.65
+_JEV_DELIVERY_TIMEOUT_S = 25.0
+_JEV_DELIVERY_SAMPLES = 3
+_JEV_DELIVERY_TEXT_CAP = 3500
+
+_JEV_DELIVERY_NOTE = (
+    "You ended the turn without a clear final summary of what was "
+    "accomplished. Give a concise final answer NOW (tools are not needed): "
+    "state what you did, any failures or open issues, and the concrete next "
+    "steps — do not promise follow-up work you have not done."
+)
+
+
+async def _jev_answer_delivered(
+    user_input: str, final_text: str, *, workspace: str | None = None
+) -> bool | None:
+    """Jev yes/no: did *final_text* deliver the request?
+
+    Returns ``True`` (delivered / don't intervene), ``False`` (confidently
+    NOT delivered — trigger one synthesis retry), or ``None`` (could not
+    judge: unavailable, timeout, abstained, or ambiguous — fail-open).
+    Never raises: a broken Jev path must never block or degrade the turn.
+    """
+    text = (final_text or "").strip()
+    if not text:
+        # Empty final answer never delivered - but under the test/opt-out
+        # kill-switch, fail-open (no forced retry) to keep scripted tests
+        # deterministic.  Live runs (kill-switch off) catch this.
+        return None if os.getenv("AGENT_NO_JEV_DELIVERY_CHECK") else False
+    # Kill-switch disables the *LLM* judgment.
+    if os.getenv("AGENT_NO_JEV_DELIVERY_CHECK"):
+        return None
+    try:
+        from agent_core.jev_engine import KIND_YESNO, JevQuestion, build_jev_engine
+
+        question = (
+            "Given the user's request and the assistant's final message, did "
+            "the assistant clearly report what was accomplished (and any "
+            "failures or next steps) as a finished response — rather than "
+            "stopping mid-task or leaving promised follow-up work undone?\n\n"
+            f"USER REQUEST (truncated):\n{(user_input or '')[:1200]}\n\n"
+            f"ASSISTANT FINAL MESSAGE (truncated):\n{text[:_JEV_DELIVERY_TEXT_CAP]}"
+        )
+        eng = build_jev_engine(
+            source="delivery-check",
+            mechanism="vote",
+            samples=_JEV_DELIVERY_SAMPLES,
+            timeout=_JEV_DELIVERY_TIMEOUT_S,
+            log_workspace=workspace,
+        )
+        res = await asyncio.wait_for(
+            eng.decide(JevQuestion(kind=KIND_YESNO, text=question)),
+            timeout=_JEV_DELIVERY_TIMEOUT_S + 10.0,
+        )
+        if res.abstentions >= res.n or res.error:
+            return None
+        p_no = float((res.probabilities or {}).get("no", 0.0))
+        if p_no >= _JEV_DELIVERY_NO_THRESHOLD:
+            return False
+        return True
+    except Exception:  # noqa: BLE001 - Jev is advisory; fail-open
+        return None
 
 
 def _agent_mod() -> Any:
@@ -124,6 +195,7 @@ async def _run_chained_tool_loop(
     final_messages = messages
     continuations = 0
     last_answer = ""
+    jev_delivery_checked = False
     with CorrelationIdContext() as turn_cid:
         agent._turn_run_id = turn_cid
         mod._begin_trace_turn()
@@ -204,6 +276,45 @@ async def _run_chained_tool_loop(
                     and mod._looks_incomplete(final_text)
                 )
             )
+            # Jev delivery-check (one-shot, fail-open): catches the silent-ending
+            # case heuristics miss — the loop ended with reason "answer" after real
+            # tool work, but the model never delivered a clear final summary (it
+            # stopped on dangling narration / promised follow-up).  Only intervene
+            # on a CONFIDENT "not delivered" verdict; UNKNOWN/error -> no change.
+            if (
+                not needs_more
+                and reason == "answer"
+                and not llm_error
+                and not jev_delivery_checked
+                and (
+                    getattr(loop, "tool_calls_made", 0) > 0
+                    or not (final_text or "").strip()
+                )
+            ):
+                jev_delivery_checked = True
+                delivered = await _jev_answer_delivered(
+                    user_input,
+                    final_text,
+                    workspace=str(getattr(agent, "workspace", "") or ""),
+                )
+                if delivered is False and continuations < mod._MAX_CHAINED_RUNS:
+                    if display_mode != AgentDisplayMode.QUIET:
+                        print(
+                            magenta("\n  [delivery-check] ")
+                            + yellow(
+                                "final answer looks unfinished"
+                                " — requesting a clear summary.\n"
+                            )
+                        )
+                    continuations += 1
+                    final_messages = list(final_messages) + [
+                        {
+                            "role": "user",
+                            "content": _JEV_DELIVERY_NOTE,
+                            mod._CONTINUE_NOTE_TAG_KEY: mod._CONTINUE_NOTE_TAG,
+                        }
+                    ]
+                    continue
             if needs_more and continuations < mod._MAX_CHAINED_RUNS:
                 if final_text and final_text == last_answer:
                     if display_mode != AgentDisplayMode.QUIET:

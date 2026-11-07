@@ -14,6 +14,11 @@ from pathlib import Path
 import pytest
 
 os.environ.setdefault("AGENT_NO_TRACE", "1")
+# The Jev delivery-check runs a real small-model decision at end-of-turn; in
+# tests it would make "answer after tool work" non-deterministic and slow (or
+# hit LM Studio).  Tests that exercise it monkeypatch _jev_answer_delivered /
+# clear this var explicitly.
+os.environ.setdefault("AGENT_NO_JEV_DELIVERY_CHECK", "1")
 
 
 # ---------------------------------------------------------------------------
