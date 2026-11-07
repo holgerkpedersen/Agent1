@@ -19,6 +19,7 @@ Two invariants are load-bearing and asserted here:
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 
 import pytest
@@ -146,7 +147,17 @@ class TestFormatRuffViolations:
             "E501 Line too long (94 > 88)\n"
         )
         items = _format_ruff_violations(stdout)
-        assert items == ["kanban_sync.py:89: E501 Line too long (94 > 88)"]
+        # The input is a WINDOWS path, so the basename reduction it pins only
+        # applies on Windows: os.path.basename on POSIX does not treat
+        # backslashes as separators, so there the split-position invariant is
+        # all that is platform-independent.
+        assert len(items) == 1
+        item = items[0]
+        assert item.endswith(":89: E501 Line too long (94 > 88)"), item
+        if os.name == "nt":
+            head = item.split(":")[0]
+            assert not item.startswith("C:"), f"split cut at the drive colon: {item}"
+            assert head == "kanban_sync.py", item
 
     def test_ignores_summary_and_blank_lines(self) -> None:
         assert _format_ruff_violations("All checks passed!\n\n") == []

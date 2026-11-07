@@ -349,6 +349,10 @@ class TestEffectiveRepoRoot:
 
     def test_git_bash_mount_style(self, tmp_path) -> None:
         """Git-Bash /c/... paths (the run tool hint shows them) resolve on Windows."""
+        if os.name != "nt":
+            # The mount translation is a Windows-only rule (see
+            # _normalize_cd_target); on POSIX `/c/...` IS an absolute path.
+            pytest.skip("Git-Bash mount style is a Windows-only shape")
         kanban = tmp_path / "kanban"
         (kanban / ".git").mkdir(parents=True)
         norm = os.path.normcase(str(kanban))  # c:\dev\kanban\...
@@ -467,6 +471,12 @@ class TestRunToolGate:
                 return ("38 passed", "")
 
         monkeypatch.setattr(agent.subprocess, "Popen", lambda cmd, **kw: _Ok())
+        # `cd` is a shell BUILTIN: it is not in the run allow-list, so under
+        # AGENT_RUN_SANDBOX=strict (CI's default) the command never reaches
+        # Popen and the gate records nothing.  This test pins the cross-repo
+        # EARNED rule, not the sandbox; dev mode is the documented escape
+        # hatch for a builtin-led command.
+        monkeypatch.setenv("AGENT_RUN_SANDBOX", "dev")
         out = await bot._nlp_run(
             {"command": f"cd {kanban}; python -m pytest -q --no-cov"}
         )

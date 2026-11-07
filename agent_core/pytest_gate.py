@@ -224,9 +224,14 @@ _BASH_MOUNT_RE = re.compile(r"^/([a-z])/(.*)$")
 def _normalize_cd_target(path: str, cwd: str) -> str:
     """Resolve one ``cd`` target *path* against *cwd* to a Windows-style path."""
     target = path.strip().rstrip(";,")
-    mount = _BASH_MOUNT_RE.match(target)
-    if mount:
-        target = f"{mount.group(1).upper()}:\\{mount.group(2)}"
+    # Git-Bash mount style is a WINDOWS-only shape: on POSIX `/c/foo` is a
+    # perfectly ordinary absolute directory.  Translating it there invented
+    # `C:\foo` (CI ubuntu-latest, test_git_bash_mount_style), so the rule is
+    # gated to Windows and POSIX keeps its native paths untouched.
+    if os.name == "nt":
+        mount = _BASH_MOUNT_RE.match(target)
+        if mount:
+            target = f"{mount.group(1).upper()}:\\{mount.group(2)}"
     if target in (".", "..", "", "~"):
         # ``cd ..`` chains are common; ``.``/``~`` are no-ops for repo lookup.
         if target == "..":
