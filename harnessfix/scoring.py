@@ -265,6 +265,66 @@ def is_regression(
     return drop > delta
 
 
+#: Canonical token-metric names for the monitoring collector. Keeping the map
+#: here (not in the collector call sites) means the dashboard histogram picker
+#: and every recorder agree on the names by construction.
+TOKEN_HISTOGRAM_METRICS: dict[str, str] = {
+    "prompt_tokens": "tokens.run.prompt",
+    "completion_tokens": "tokens.run.completion",
+    "total_tokens": "tokens.run.total",
+}
+
+
+def token_histogram_samples(
+    tokens: Mapping[str, Any] | None,
+) -> dict[str, float]:
+    """Map a usage mapping to ``{metric_name: value}`` for histograms (pure).
+
+    Only finite non-negative numbers become samples; a missing key, ``None``
+    (the provider did not report it) or a non-numeric value yields no entry,
+    so absent facts never reach the distribution. An empty dict therefore
+    means "nothing to record" - never invent a zero.
+    """
+    usage = normalize_token_usage(tokens)
+    out: dict[str, float] = {}
+    for key, metric in TOKEN_HISTOGRAM_METRICS.items():
+        value = usage.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, (int, float)) and isfinite(value) and value >= 0:
+            out[metric] = float(value)
+    return out
+
+
+def record_token_histograms(
+    tokens: Mapping[str, Any] | None,
+    *,
+    collector: Any = None,
+) -> dict[str, float]:
+    """Record per-run token samples into the shared metrics collector.
+
+    Returns the samples it recorded (empty when there are no facts). Never
+    raises: a missing/broken collector degrades to a no-op, because metrics
+    bookkeeping must not break the run that produced the facts.
+    """
+    samples = token_histogram_samples(tokens)
+    if not samples or collector is None:
+        return {}
+    try:
+        from agent_core.monitoring.metrics_collector import (
+            MetricsCollector,
+            append_event,
+        )
+
+        target = collector if collector is not None else MetricsCollector.get_instance()
+        for metric, value in samples.items():
+            target.record_histogram(metric, value)
+            append_event("histogram", metric, value)
+    except Exception:  # pragma: no cover - metrics must never break a run
+        return {}
+    return samples
+
+
 def windowed_summary(scores: Sequence[float]) -> dict[str, float | int | None]:
     """Deterministic summary over a score window (pure)."""
     vals = [float(s) for s in scores if isinstance(s, (int, float)) and isfinite(s)]

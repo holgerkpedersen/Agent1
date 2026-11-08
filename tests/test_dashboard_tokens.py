@@ -119,6 +119,10 @@ def _seeded_collector():
     c.set_gauge("last.tokens.plan.total", 2000.0)
     c.record_histogram("plans.efficiency.score", 0.8)
     c.set_gauge("last.plans.efficiency.score", 0.8)
+    # Per-component run histograms (recorded by record_token_histograms).
+    c.record_histogram("tokens.run.prompt", 1000.0)
+    c.record_histogram("tokens.run.prompt", 2000.0)
+    c.record_histogram("tokens.run.completion", 250.0)
     return c
 
 
@@ -169,6 +173,10 @@ def test_api_tokens_totals_and_summaries(base_url: str) -> None:
     assert payload["total_summary"]["count"] == 2.0
     assert payload["total_summary"]["mean"] == 1500.0
     assert payload["score_summary"]["count"] == 1.0
+    # Per-component distributions reach the API (prompt has 2 samples).
+    assert payload["prompt_summary"]["count"] == 2.0
+    assert payload["prompt_summary"]["mean"] == 1500.0
+    assert payload["completion_summary"]["count"] == 1.0
 
 
 def test_api_tokens_history_reads_ledger(base_url: str) -> None:

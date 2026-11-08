@@ -155,6 +155,14 @@ def record_plan_token_metrics(
         collector = get_metrics_collector()
         total = total_tokens_of(tokens)
         if total is not None:
+            # The gate is the TOTAL fact: with a known total, record the
+            # per-component distributions (prompt / completion / total) too,
+            # via the shared helper so metric names agree with every other
+            # recorder by construction. Components the provider did not
+            # report are skipped, never zero-filled.
+            from harnessfix.scoring import record_token_histograms
+
+            record_token_histograms(tokens, collector=collector)
             tasks = collector.get_counter_value("plans.finished.count")
             per_task = total / tasks if tasks and tasks > 0 else None
             collector.increment_counter("tokens.plan.total", float(total))

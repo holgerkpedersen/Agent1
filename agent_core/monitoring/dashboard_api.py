@@ -432,6 +432,11 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
             "last_score": gauges.get("last.plans.efficiency.score"),
             "total_summary": _summary("tokens.plan.total"),
             "per_task_summary": _summary("tokens.plan.per_task"),
+            # Per-component distributions (prompt / completion) recorded by
+            # record_token_histograms; summaries of empty histograms are
+            # count=0, so the panel shows nothing until facts exist.
+            "prompt_summary": _summary("tokens.run.prompt"),
+            "completion_summary": _summary("tokens.run.completion"),
             "score_summary": _summary("plans.efficiency.score"),
             "history": self._token_history(limit=20),
         }
