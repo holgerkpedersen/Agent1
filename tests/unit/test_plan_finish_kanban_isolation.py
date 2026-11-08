@@ -345,3 +345,75 @@ class TestPlanFinishEnqueuesNothing:
         assert record["score"] == 0
         for q in ("queue-kanban-to-agent1", "queue-agent1-to-kanban"):
             assert (kanban_data / q / "messages.jsonl").read_text() == ""
+
+
+# --------------------------------------------------------------------------
+# Phase 3: the low-grade alert path is part of plan-finish, so it inherits
+# the same isolation contract — no bridge import, no queue/board/map writes.
+# --------------------------------------------------------------------------
+
+class TestPhase3AlertPathIsKanbanIsolated:
+    def test_alert_recorder_source_has_no_kanban_reference(self) -> None:
+        """The module-level alert recorder is Kanban-free (AST over the whole file)."""
+        module = REPO_ROOT / "agent_core" / "plan_execution" / "plan_finish_eval.py"
+        tree = ast.parse(module.read_text(encoding="utf-8"))
+        kanbanish = [m for m in _imported_modules(tree) if "kanban" in m.lower()]
+        assert not kanbanish, (
+            f"{module.name} imports Kanban surface {kanbanish}; the Phase 3 "
+            f"alert path must stay isolated from harnessfix.kanban_bridge"
+        )
+
+    def test_low_grade_alert_touches_no_kanban_surface(self, tmp_path, monkeypatch):
+        """Drive a real low-grade plan-finish; Kanban surface stays untouched.
+
+        A failed plan scores 0 (under the 0.5 threshold), so this run also
+        exercises ``record_plan_grade_alert`` — the gauge/alert bookkeeping —
+        through the same path Phase 2 uses, with the bridge tripwire armed.
+        """
+        workspace = _make_workspace(tmp_path)
+        kanban_data = tmp_path / "kanban_data"
+        plan_dir = workspace / ".docs" / "2026-11-08_12-00-00"
+
+        calls = _install_instrumented_bridge(monkeypatch)
+        before = _snapshot(_kanban_files(workspace, kanban_data))
+
+        from agent_core.plan_execution import plan_finish_eval
+
+        summary = plan_finish_eval.write_evaluation_for_plan(
+            plan_dir, workspace, success=False
+        )
+        assert summary.startswith("Evaluation: score=")
+
+        # The alert path DID run (grade 0 < threshold 0.5): gauge recorded.
+        from agent_core.monitoring.metrics_bridge import get_metrics_collector
+
+        gauge = get_metrics_collector().get_gauge_value(
+            "last.plans.efficiency.score"
+        )
+        assert gauge == pytest.approx(0.0)
+
+        # ...and the bridge saw nothing, Kanban files are unchanged.
+        assert calls == [], f"bridge callables touched: {calls}"
+        assert _snapshot(_kanban_files(workspace, kanban_data)) == before
+        for q in ("queue-kanban-to-agent1", "queue-agent1-to-kanban"):
+            assert (kanban_data / q / "messages.jsonl").read_text() == ""
+
+    def test_grade_alert_functions_never_import_bridge_dynamically(
+        self, monkeypatch
+    ) -> None:
+        """Calling the alert recorders directly must not import the bridge."""
+        calls = _install_instrumented_bridge(monkeypatch)
+        from agent_core.plan_execution.plan_finish_eval import (
+            plan_grade_alert_threshold,
+            record_plan_grade_alert,
+        )
+
+        assert callable(plan_grade_alert_threshold)
+        # Score above threshold -> silent no-op; below -> gauge path.
+        assert record_plan_grade_alert("iso-good", 0.9) is False
+        assert record_plan_grade_alert("iso-bad", 0.1) is True
+        assert calls == []
+        assert KANBAN_MODULE not in [
+            m for m in sys.modules if "kanban" in m.lower() and m != KANBAN_MODULE
+        ]
+

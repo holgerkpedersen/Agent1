@@ -214,6 +214,104 @@ def test_api_tokens_history_missing_ledger_is_empty(tmp_path) -> None:
 
 
 # --------------------------------------------------------------------------
+# 2b. Low-grade plan alert (Phase 3 t2)
+# --------------------------------------------------------------------------
+
+def test_grade_alert_threshold_default_and_disable() -> None:
+    """Config threshold drives the alert; 0.0 disables it entirely."""
+    from agent_core.plan_execution.plan_finish_eval import plan_grade_alert_threshold
+
+    assert plan_grade_alert_threshold() == pytest.approx(0.5)
+
+
+def test_record_plan_grade_alert_only_fires_below_threshold(
+    tmp_path, monkeypatch
+) -> None:
+    """Gauge recorded ONLY for grades under the threshold; good plans silent."""
+    from agent_core.monitoring.metrics_collector import MetricsCollector
+    import agent_core.monitoring.metrics_bridge as mb
+    import agent_core.plan_execution.plan_finish_eval as pfe
+
+    collector = MetricsCollector()
+    monkeypatch.setattr(mb, "get_metrics_collector", lambda: collector)
+    # Keep the shared event file inside tmp so the test never touches the repo.
+    events = tmp_path / "events.jsonl"
+    monkeypatch.setattr(
+        pfe,
+        "plan_grade_alert_threshold",
+        lambda: 0.5,
+        raising=False,
+    )
+    import agent_core.monitoring.metrics_file as mf
+
+    monkeypatch.setattr(mf, "default_events_path", lambda: events)
+
+    # Good grade: no gauge, no event line.
+    assert pfe.record_plan_grade_alert("p-good", 0.85) is False
+    assert collector.get_gauge_value("last.plans.efficiency.score") is None
+    assert not events.exists()
+
+    # Low grade: gauge recorded and mirrored to the shared event file.
+    assert pfe.record_plan_grade_alert("p-bad", 0.31) is True
+    gauge = collector.get_gauge_value("last.plans.efficiency.score")
+    assert gauge == pytest.approx(0.31)
+    lines = events.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 1
+    ev = json.loads(lines[0])
+    assert ev["kind"] == "gauge"
+    assert ev["name"] == "last.plans.efficiency.score"
+    assert ev["value"] == pytest.approx(0.31)
+
+    # Threshold 0.0 disables the alert even for a grade of 0.
+    monkeypatch.setattr(pfe, "plan_grade_alert_threshold", lambda: 0.0)
+    assert pfe.record_plan_grade_alert("p-off", 0.0) is False
+
+
+def test_record_plan_grade_alert_degrades_silently(monkeypatch) -> None:
+    """No collector, no score, junk score -> silent no-op, never raises."""
+    import agent_core.monitoring.metrics_bridge as mb
+    import agent_core.plan_execution.plan_finish_eval as pfe
+
+    def _boom() -> None:
+        raise RuntimeError("collector unavailable")
+
+    monkeypatch.setattr(mb, "get_metrics_collector", _boom)
+    assert pfe.record_plan_grade_alert("p-x", 0.1) is False
+    assert pfe.record_plan_grade_alert("p-x", None) is False
+    assert pfe.record_plan_grade_alert("p-x", "junk") is False
+    assert pfe.record_plan_grade_alert("p-x", True) is False
+
+
+def test_dashboard_has_low_plan_grade_rule() -> None:
+    """The dashboard evaluates a low-grade plan alert against the score gauge."""
+    import agent_dashboard
+
+    rules = {r.name: r for r in agent_dashboard._default_alert_rules()}
+    rule = rules["low_plan_grade"]
+    assert rule.metric_name == "last.plans.efficiency.score"
+    assert rule.comparison_operator == "less_than"
+    assert rule.threshold == pytest.approx(0.5)
+    assert rule.severity in ("warning", "critical")
+
+
+def test_low_plan_grade_alert_fires_end_to_end() -> None:
+    """Record a low grade -> AlertSystem.evaluate fires the dashboard rule."""
+    from agent_core.monitoring.alert_system import AlertSystem
+    from agent_core.monitoring.metrics_collector import MetricsCollector
+    import agent_dashboard
+
+    collector = MetricsCollector()
+    collector.set_gauge("last.plans.efficiency.score", 0.2)
+    system = AlertSystem(collector)
+    for rule in agent_dashboard._default_alert_rules():
+        system.add_rule(rule)
+    events = system.evaluate()
+    fired = [e for e in events if e.rule_name == "low_plan_grade"]
+    assert len(fired) == 1
+    assert fired[0].current_value == pytest.approx(0.2)
+
+
+# --------------------------------------------------------------------------
 # 3. Frontend scaffolding
 # --------------------------------------------------------------------------
 
@@ -230,3 +328,29 @@ def test_index_has_token_panel_scaffolding() -> None:
         "Token Efficiency",
     ):
         assert needle in html, f"index.html missing token panel marker: {needle}"
+
+
+def test_index_has_token_trend_chart() -> None:
+    """Phase 3 t1: the tokens panel carries a pure-CSS per-plan trend strip.
+
+    Contract: a trend container exists, loadTokens feeds it from d.history
+    via renderTokTrend, and the renderer degrades to an explicit empty
+    state when there is no history (no invented bars).
+    """
+    html = open(INDEX, encoding="utf-8").read()
+    for needle in (
+        'id="tok-trend"',
+        ".tok-trend-chart",
+        ".tok-trend-inner",
+        ".tok-trend-empty",
+        "function renderTokTrend",
+        "renderTokTrend(hist, fmtTok)",
+        "No plan evaluations recorded yet",
+    ):
+        assert needle in html, f"index.html missing token trend marker: {needle}"
+    # The renderer must be defined before loadTokens uses it and must key
+    # bar heights off the ledger history (tokens), not invented values.
+    assert html.index("function renderTokTrend") < html.index(
+        "renderTokTrend(hist, fmtTok)"
+    )
+    assert "Number(h.tokens)" in html

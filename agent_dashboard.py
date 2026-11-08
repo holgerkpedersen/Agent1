@@ -69,6 +69,18 @@ def _default_alert_rules() -> "list[AlertRule]":
             severity="critical",
             cooldown_seconds=300,
         ),
+        AlertRule(
+            # Phase 3 t2: the plan-finish evaluator records this gauge ONLY
+            # when a finished plan's grade is under the config threshold
+            # (AGENT_PLAN_GRADE_ALERT_THRESHOLD, default 0.5), so the rule
+            # fires on bad plans and stays silent on good ones.
+            name="low_plan_grade",
+            metric_name="last.plans.efficiency.score",
+            threshold=0.5,
+            comparison_operator="less_than",
+            severity="warning",
+            cooldown_seconds=120,
+        ),
     ]
 
 

@@ -24,9 +24,12 @@ crash because bookkeeping failed, and it must touch no Kanban surface
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 #: Lines written by ``plan_step``: ``- [t1] completed (role: implementer)``.
 _REPORT_LINE_RE = re.compile(
@@ -185,6 +188,69 @@ def record_plan_token_metrics(
         pass
 
 
+def plan_grade_alert_threshold() -> float:
+    """Config-overridable grade threshold for the low-grade plan alert.
+
+    ``AGENT_PLAN_GRADE_ALERT_THRESHOLD`` env / settings field; anything
+    unparseable degrades to the 0.5 default, and 0.0 disables the alert.
+    """
+    try:
+        from agent_core.config import DEFAULT_SETTINGS, load_agent_settings
+
+        value = load_agent_settings().plan_grade_alert_threshold
+    except Exception:
+        try:
+            value = DEFAULT_SETTINGS.plan_grade_alert_threshold
+        except Exception:
+            value = 0.5
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return 0.5
+    return float(value)
+
+
+def record_plan_grade_alert(
+    plan_id: str, score: float | None, threshold: float | None = None
+) -> bool:
+    """Record the low-grade alert gauge for one finished plan.
+
+    Phase 3 t2: a grade under the config threshold (< 0.5 by default) is a
+    fact worth alerting on, so the score gauge is recorded ONLY in that case
+    — a good plan leaves it untouched and ``/api/alerts`` stays silent.
+    The dashboard's ``low_plan_grade`` rule compares
+    ``last.plans.efficiency.score`` with ``less_than``, so the event fires
+    on the next poll; the gauge value itself is mirrored into the shared
+    event file so a standalone ``--serve`` dashboard sees it too.
+
+    Best-effort like every other recorder here: any failure (no collector,
+    unwritable event file) degrades to a silent no-op and never crashes
+    plan finishing.  Returns True when the gauge was recorded.
+    """
+    if not isinstance(score, (int, float)) or isinstance(score, bool):
+        return False
+    try:
+        limit = plan_grade_alert_threshold() if threshold is None else float(threshold)
+    except Exception:
+        return False
+    if limit <= 0.0 or float(score) >= limit:
+        return False
+    try:
+        from agent_core.monitoring.metrics_bridge import get_metrics_collector
+        from agent_core.monitoring.metrics_file import append_event
+
+        collector = get_metrics_collector()
+        collector.set_gauge("last.plans.efficiency.score", float(score))
+        append_event("gauge", "last.plans.efficiency.score", float(score))
+        logger.debug(
+            "plan grade alert armed: %s score=%.3f < threshold %.3f",
+            plan_id,
+            float(score),
+            limit,
+        )
+        return True
+    except Exception:
+        return False
+
+
 def write_evaluation_for_plan(plan_dir: Path, workspace: Path, success: bool) -> str:
     """Write the plan evaluation artifact + ledger line; return a report line.
 
@@ -218,6 +284,11 @@ def write_evaluation_for_plan(plan_dir: Path, workspace: Path, success: bool) ->
         record_plan_token_metrics(
             Path(plan_dir).name, tokens, record.get("score") if record else None
         )
+        # Phase 3 t2: a grade under the config threshold arms the dashboard
+        # alert (gauge recorded only for low grades; good plans stay silent).
+        record_plan_grade_alert(
+            Path(plan_dir).name, record.get("score") if record else None
+        )
         return _fmt_summary(record)
     except Exception:
         return ""
@@ -227,5 +298,7 @@ __all__ = [
     "collect_task_counts",
     "collect_trace_token_facts",
     "record_plan_token_metrics",
+    "record_plan_grade_alert",
+    "plan_grade_alert_threshold",
     "write_evaluation_for_plan",
 ]

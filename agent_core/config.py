@@ -279,6 +279,16 @@ class AgentSettings:
             os.environ.get("AGENT_STREAM_FINAL_ANSWER"), False
         )
     )
+    #: Grade below which a finished plan raises a dashboard alert
+    #: (Token-efficiency self-evaluation, Phase 3 t2).  The plan-finish
+    #: evaluator records the score gauge only when the grade is under this
+    #: threshold, so ``/api/alerts`` fires on bad plans and stays silent on
+    #: good ones.  Set to 0.0 to disable the alert entirely.
+    plan_grade_alert_threshold: float = field(
+        default_factory=lambda: _parse_float(
+            os.environ.get("AGENT_PLAN_GRADE_ALERT_THRESHOLD"), 0.5
+        )
+    )
 
     def __post_init__(self) -> None:
         # Enforce the invariant on every construction (not just at the two
@@ -687,6 +697,11 @@ def load_agent_settings(env_path: Path | None = None) -> AgentSettings:
             os.environ.get("AGENT_STREAM_FINAL_ANSWER")
             or env_vars.get("AGENT_STREAM_FINAL_ANSWER"),
             False,
+        ),
+        plan_grade_alert_threshold=_parse_float(
+            os.environ.get("AGENT_PLAN_GRADE_ALERT_THRESHOLD")
+            or env_vars.get("AGENT_PLAN_GRADE_ALERT_THRESHOLD"),
+            0.5,
         ),
     )
 

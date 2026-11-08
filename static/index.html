@@ -168,6 +168,23 @@
     [data-theme="light"] .hgram-bar:hover::after {
       background: var(--neutral-900, #111827);
     }
+    /* ---- Token trend strip (pure CSS column chart, hgram pattern) ---- */
+    .tok-trend-chart { display: block; }
+    .tok-trend-inner {
+      display: flex;
+      align-items: stretch;
+      gap: 6px;
+      height: 120px;
+      padding: 12px 8px 0 8px;
+      border-bottom: 1px solid var(--border-color, #d1d5db80);
+    }
+    .tok-trend-empty {
+      height: 120px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-secondary-light, #94a3b8);
+    }
   </style>
 </head>
 <body>
@@ -564,6 +581,9 @@
                 <span id="tok-h-min">-</span>, mean <span id="tok-h-mean">-</span>,
                 max <span id="tok-h-max">-</span>.
               </p>
+              <p class="text-sm text-secondary-light mt-16 mb-4">Tokens per plan (newest last, score per point):</p>
+              <div id="tok-trend" class="tok-trend-chart" role="img"
+                   aria-label="Tokens per plan trend"></div>
             </div>
           </div>
         </div>
@@ -929,6 +949,32 @@
       return sortedAsc[lo] + (sortedAsc[hi] - sortedAsc[lo]) * (pos - lo);
     }
 
+    function renderTokTrend(hist, fmtTok) {
+      const el = document.getElementById('tok-trend');
+      if (!el) return;
+      if (!hist.length) {
+        el.innerHTML = '<div class="tok-trend-empty">No plan evaluations recorded yet</div>';
+        return;
+      }
+      const maxTok = Math.max.apply(null, hist.map(function (h) {
+        return Number(h.tokens) || 0;
+      }));
+      const inner = document.createElement('div');
+      inner.className = 'tok-trend-inner';
+      hist.forEach(function (h) {
+        const tok = Number(h.tokens) || 0;
+        const pct = maxTok > 0 ? Math.max(4, Math.round((tok / maxTok) * 100)) : 4;
+        const score = (h.score === null || h.score === undefined) ? '-' : Number(h.score).toFixed(2);
+        const bar = document.createElement('div');
+        bar.className = 'hgram-bar';
+        bar.style.height = pct + '%';
+        bar.title = (h.plan_id || '-') + ': ' + fmtTok(tok) + ' tokens, score ' + score;
+        inner.appendChild(bar);
+      });
+      el.innerHTML = '';
+      el.appendChild(inner);
+    }
+
     async function loadTokens() {
       try {
         const d = await fetchJSON(API.tokens);
@@ -951,6 +997,7 @@
         });
         const tbody = document.getElementById('tbl-tokens');
         const hist = d.history || [];
+        renderTokTrend(hist, fmtTok);
         if (!hist.length) {
           tbody.innerHTML = '<tr><td colspan="6" class="text-center text-secondary-light">No plan evaluations recorded yet</td></tr>';
           return;
