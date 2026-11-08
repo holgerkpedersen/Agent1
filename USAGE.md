@@ -674,7 +674,7 @@ Agent Memory Status
   Files read: 7 (1 stale)
   Working memory: 3 items
   Semantic index: 142 entries
-  Knowledge graph: 8 relationships
+  Knowledge graph: 8 entries in 3 sections
 Clear all? (y/N): n
 Not cleared.
 
@@ -684,6 +684,13 @@ Not cleared.
 > clear --force
 # Clears everything without asking
 ```
+
+The knowledge-graph line counts **entries** across its sections, not just
+sections. A fresh workspace starts with an empty graph — the counter shows 0
+and `clear` prints a hint on how to populate it: add entries with `kg add
+fact <key> <value>` (see above) or seed the curated starter set with
+`python scripts/seed_kg.py`. The working-memory and semantic-index lines are
+only shown when they hold data.
 
 Knowledge-graph entries are stored in `agent_memory.json` under the
 `knowledge_graph` key with schema `{section: {key: {"value", "ts"}}}` —

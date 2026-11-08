@@ -62,6 +62,7 @@ def _persist_plan_answer(agent: "Agent", plan_text: str) -> None:
 def memory_stats(agent: "Agent") -> dict[str, Any]:
     """Return summary of current memory state."""
     stale = getattr(agent, "check_stale_files")()
+    kg = getattr(agent, "_knowledge_graph", {})
     return {
         "chat_history": len(agent._chat_history),
         "files_read": len(agent._files_read),
@@ -69,7 +70,11 @@ def memory_stats(agent: "Agent") -> dict[str, Any]:
         "history": len(agent._history),
         "working_memory": len(agent._working_memory),
         "semantic_index": len(agent._semantic_index),
-        "knowledge_graph": len(agent._knowledge_graph),
+        "knowledge_graph": len(kg),
+        # Entries across sections: the unit users read in ``clear`` stats.
+        "knowledge_graph_entries": sum(
+            len(v) for v in kg.values() if isinstance(v, dict)
+        ),
     }
 
 

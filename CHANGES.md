@@ -1,3 +1,11 @@
+## 2026-11-08 - fix(commands): `clear` explains its counters; knowledge graph counted in entries
+
+**Change**: `agent_core/commands/clear_cmd.py` — the knowledge-graph line now prints `N entries in M sections` (was `M sections`), an empty graph prints a one-line hint (`kg add fact <key> <value>` / `python scripts/seed_kg.py`), and the working-memory / semantic-index lines only show when non-zero. The "Nothing to clear." check now uses entry count. `agent_core/memory/persistence.py:memory_stats()` gained `knowledge_graph_entries` (sum of per-section entry counts, tolerant of non-dict sections); `knowledge_graph` (section count) is unchanged for existing consumers (`kg` command docs, MCP `memory_stats`, seed tests).
+
+**Reason**: Kanban card "Agent1 clear command" (`iss-general-kanban_f01a7cb8fb514e7d8e48f8d224b66d24`) asked why the knowledge-graph line is always 0. Root cause: the counter was `len(_knowledge_graph)` — a dict of four *sections* (`facts`/`files`/`tags`/`symbols`) that stays empty in a fresh workspace because nothing writes into it until the user runs `kg add …` or seeds `scripts/seed_kg.py`; "0 sections" was also the wrong unit for the question. The other zero lines had their own causes: `_files_read` is populated during turns and wiped by `clear_history()`, and `_working_memory`/`_semantic_index` have no writer in normal operation (they persist/restore only), so advertising permanent zeros was misleading.
+
+**Files**: `agent_core/commands/clear_cmd.py`, `agent_core/memory/persistence.py`, `tests/test_clear_command.py` (+4 regression tests: entries line, empty-graph hint, KG-only state prompts confirmation, missing-key tolerance), `tests/test_kg_seed.py` (+1 `memory_stats` entries test), `USAGE.md`. Verified red-first: 3 new tests failed before the change; after: `python -m pytest tests/test_clear_command.py tests/test_kg_seed.py tests/test_kg_command.py -q --no-cov` -> 32 passed.
+
 ## 2026-11-08 - ci(fix): the Kanban fallback fetch never worked (contents API returns no blobs)
 
 **Change**: `.github/actions/kanban-checkout/action.yml` — the non-writable-sibling fallback now downloads a single **zipball** (`codeload.github.com/<owner>/<repo>/zip/<sha>`, token in the URL) and extracts it with a small Python script written by `printf '%s\n'`, into `$GITHUB_WORKSPACE/.kanban`. The old per-file fetcher is gone.

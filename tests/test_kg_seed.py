@@ -28,6 +28,8 @@ _spec = importlib.util.spec_from_file_location(
 seed_kg = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(seed_kg)
 
+from agent_core.memory import persistence  # noqa: E402  (after sys.path setup)
+
 
 class _FakeAgent:
     def __init__(self):
@@ -126,6 +128,19 @@ class SeedKgTests(unittest.TestCase):
             persistence._load_memory(agent)
         stats = persistence.memory_stats(_FakeStatsAgent(agent._knowledge_graph))
         self.assertEqual(stats["knowledge_graph"], len(seed_kg.SECTIONS))
+
+    def test_memory_stats_counts_knowledge_graph_entries(self) -> None:
+        """``knowledge_graph_entries`` sums entries across sections; it is
+        the number the ``clear`` command prints (issue: 'always showing 0
+        entries')."""
+        graph = {
+            "facts": {"a": {"value": 1}, "b": {"value": 2}},
+            "files": {"x.py": {"value": ""}},
+            "junk": "not-a-dict",  # tolerated: counts as 0, never crashes
+        }
+        stats = persistence.memory_stats(_FakeStatsAgent(graph))
+        self.assertEqual(stats["knowledge_graph"], 3)
+        self.assertEqual(stats["knowledge_graph_entries"], 3)
 
 
 class _FakeStatsAgent:

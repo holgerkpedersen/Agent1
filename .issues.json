@@ -177,14 +177,14 @@
     "locations": [
       "kanban:f01a7cb8fb514e7d8e48f8d224b66d24"
     ],
-    "status": "open",
+    "status": "resolved",
     "autonomy_level": 1,
-    "evidence": "",
+    "evidence": "[note] Root cause: clear counted len(_knowledge_graph)=sections, and nothing writes into the graph in a fresh workspace (kg add / scripts/seed_kg.py populate it). Fix: clear now counts ENTRIES across sections, prints a populate hint when empty, hides dead stores; memory_stats gained knowledge_graph_entries. Tests: +5 regression tests; full suite 4679 passed.",
     "suggested_approach": "",
     "decision_ref": null,
     "repair_ref": null,
     "created_at": "2026-10-09T15:33:20+00:00",
-    "resolved_at": null
+    "resolved_at": "2026-11-08T11:33:35+00:00"
   },
   {
     "id": "iss-context-budget-agent_core_llm_tool_loop_py_614",
