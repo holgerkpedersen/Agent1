@@ -440,6 +440,7 @@ async def run_parallel(
                 loop = ToolLoopRunner(
                     max_iterations=max_tool_iterations,
                     display_mode="quiet",
+                    usage_provider=provider,
                 )
                 final_text, _ = await loop.run(
                     messages=model_messages,

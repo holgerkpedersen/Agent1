@@ -58,6 +58,10 @@ KIND_LOOP_END = "loop_end"
 #: the user prompt, model and profile so a trace is self-describing for the
 #: human review gate and cross-model corpus comparison (decision #050).
 KIND_TASK_BEGIN = "task_begin"
+#: Emitted once per run by the tool loop when the attached provider reports
+#: real usage counts (plan ARCH item 14).  Token facts, never estimates: no
+#: event is written when the provider omits usage.
+KIND_TOKEN_USAGE = "token_usage"
 KINDS: frozenset[str] = frozenset(
     {
         KIND_STEP_START,
@@ -68,6 +72,7 @@ KINDS: frozenset[str] = frozenset(
         KIND_GUARD_TRIGGERED,
         KIND_LOOP_END,
         KIND_TASK_BEGIN,
+        KIND_TOKEN_USAGE,
     }
 )
 

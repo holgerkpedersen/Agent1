@@ -145,6 +145,73 @@ def iter_run_scores(
         yield task_id, score_run(events, latency_budget_s, penalty_weight)
 
 
+def _run_total_tokens(events: Sequence[dict[str, Any]]) -> int | None:
+    """Sum provider-reported token facts in a run's events, or ``None``.
+
+    Reads the per-run ``token_usage`` event when present (emitted by the tool
+    loop only when the provider reported usage — plan ARCH item 14); falls
+    back to summing per-iteration counts on ``llm_response`` events.  Missing
+    facts stay ``None``: they are never guessed and never treated as zero.
+    """
+    from .scoring import normalize_token_usage, total_tokens_of
+
+    for ev in events:
+        if ev.get("kind") == "token_usage":
+            norm = normalize_token_usage(
+                usage={
+                    "prompt_tokens": ev.get("prompt_tokens"),
+                    "completion_tokens": ev.get("completion_tokens"),
+                    "total_tokens": ev.get("total_tokens"),
+                }
+            )
+            total = total_tokens_of(norm)
+            if total is not None:
+                return total
+    p = 0
+    c = 0
+    seen = False
+    for ev in events:
+        if ev.get("kind") != "llm_response":
+            continue
+        pt = ev.get("prompt_tokens")
+        ct = ev.get("completion_tokens")
+        if isinstance(pt, int) and not isinstance(pt, bool):
+            p += pt
+            seen = True
+        if isinstance(ct, int) and not isinstance(ct, bool):
+            c += ct
+            seen = True
+    return (p + c) if seen else None
+
+
+def score_run_tokens(
+    events: Sequence[dict[str, Any]],
+    latency_budget_s: float = DEFAULT_LATENCY_BUDGET_S,
+    penalty_weight: float = DEFAULT_PENALTY_WEIGHT,
+    delivered_base: float = DEFAULT_DELIVERED_BASE,
+) -> tuple[float, int | None]:
+    """Return ``(outcome_score, total_tokens)`` for one run.
+
+    ``outcome_score`` is the authoritative :func:`score_run` (success +
+    latency penalty).  ``total_tokens`` are provider FACTS from the trace
+    (see :func:`_run_total_tokens`) — ``None`` when the run has no token
+    facts, in which case downstream efficiency scoring stays neutral.
+    Composition with the Phase 0 efficiency contract is done by
+    :func:`harnessfix.scoring.efficiency_score`, which gates on outcome:
+    tokens can modulate a successful run's score within its band but can
+    never credit a failed one.
+    """
+    return (
+        score_run(
+            events,
+            latency_budget_s=latency_budget_s,
+            penalty_weight=penalty_weight,
+            delivered_base=delivered_base,
+        ),
+        _run_total_tokens(events),
+    )
+
+
 class EvolutionMetricsScorer:
     """Sliding-window quality scorer over HarnessFix run traces.
 

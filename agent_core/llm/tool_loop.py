@@ -13,7 +13,7 @@ from typing import Any, Awaitable, Callable
 
 from agent_core.constants import LOOP_NOTE_TAG_KEY
 from agent_core.llm.context_budget import char_budget_for_limit
-from agent_core.llm.provider import is_provider_error
+from agent_core.llm.provider import get_last_metrics, is_provider_error
 from harnessfix.tracing import (
     GUARD_BUDGET,
     GUARD_DEADLINE,
@@ -23,6 +23,7 @@ from harnessfix.tracing import (
     KIND_LLM_RESPONSE,
     KIND_LOOP_END,
     KIND_STEP_START,
+    KIND_TOKEN_USAGE,
     KIND_TOOL_CALL,
     KIND_TOOL_ERROR,
     KIND_TOOL_RESULT,
@@ -792,6 +793,7 @@ class ToolLoopRunner:
         compact_max_messages: int = _IN_LOOP_MAX_MESSAGES,
         compact_char_budget: int | None = None,
         context_limit_tokens: int | None = None,
+        usage_provider: Any = None,
     ):
         self.max_iterations = max_iterations
         #: In-run context compaction (decision #B-5-compact): drop the oldest
@@ -885,6 +887,11 @@ class ToolLoopRunner:
         self.final_answer_streamed: bool = False
         #: Set by :meth:`run`; the optional streaming path for the final answer.
         self._stream_fn: Callable[[list[dict[str, Any]]], Awaitable[str]] | None = None
+        #: Provider whose ``last_response_metrics`` the loop reads after every
+        #: LLM call (plan ARCH item 14).  Token counts are provider FACTS, never
+        #: estimates; when None or when the provider omits usage, the loop emits
+        #: no token events and scoring stays token-neutral.
+        self._usage_provider = usage_provider
         #: Set by :meth:`run`; optional ``(reasoning, visible) -> summary``
         #: callback used when a model leaks a ``<think>`` block into content.
         #: The summary replaces the raw reasoning on screen; without a callback
@@ -958,6 +965,10 @@ class ToolLoopRunner:
         self._effects_fn = self._effects_fn if effects_fn is None else effects_fn
         self._stream_fn = stream_fn
         self._reasoning_summary_fn = reasoning_summary_fn
+        #: Per-run token totals from provider facts (plan item 14); emitted as
+        #: one token_usage event by _emit_loop_end when non-zero.
+        self._run_prompt_tokens = 0
+        self._run_completion_tokens = 0
         try:
             return await self._run_traced(
                 messages, llm_chat_fn, execute_tool_fn, tools, seen_calls
@@ -1036,6 +1047,18 @@ class ToolLoopRunner:
             outcome=outcome,
             termination_reason=self.termination_reason,
         )
+        #: Run-level token facts (plan item 14): provider-reported totals for
+        #: this run, written only when the provider actually reported usage.
+        if self._run_prompt_tokens or self._run_completion_tokens:
+            self._emit(
+                KIND_TOKEN_USAGE,
+                LAYER_OBSERVABILITY,
+                prompt_tokens=self._run_prompt_tokens,
+                completion_tokens=self._run_completion_tokens,
+                total_tokens=(
+                    self._run_prompt_tokens + self._run_completion_tokens
+                ),
+            )
 
     async def _run_traced(
         self,
@@ -1063,6 +1086,10 @@ class ToolLoopRunner:
         self.last_tool_call = ""
         self.iterations_used = 0
         self._mutated_files.clear()
+        #: Per-run token totals (provider facts, plan item 14) — reset so a
+        #: reused runner never carries the previous run's counts into loop_end.
+        self._run_prompt_tokens = 0
+        self._run_completion_tokens = 0
 
         all_text_parts = []
         current_messages = [dict(m) for m in messages]
@@ -1236,6 +1263,10 @@ class ToolLoopRunner:
             # Call LLM
             response_text, updated_messages = await llm_chat_fn(current_messages, tools)
             current_messages = updated_messages
+            #: Provider token facts for THIS call (plan item 14): read right
+            #: after the chat so per-iteration counts are exact, and handed to
+            #: the response event below.  None when no provider is attached.
+            call_metrics = get_last_metrics(self._usage_provider)
 
             if response_text:
                 all_text_parts.append(response_text)
@@ -1251,7 +1282,21 @@ class ToolLoopRunner:
                 tool_calls_requested=len(tool_calls)
                 if isinstance(tool_calls, list)
                 else 0,
+                **(
+                    {
+                        "prompt_tokens": call_metrics.prompt_tokens,
+                        "completion_tokens": call_metrics.completion_tokens,
+                        "total_tokens": call_metrics.total_tokens,
+                    }
+                    if call_metrics is not None
+                    else {}
+                ),
             )
+            if call_metrics is not None:
+                self._run_prompt_tokens += int(call_metrics.prompt_tokens or 0)
+                self._run_completion_tokens += int(
+                    call_metrics.completion_tokens or 0
+                )
 
             # No tool calls - we're done
             if not tool_calls:
