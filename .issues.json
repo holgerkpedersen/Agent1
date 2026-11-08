@@ -364,13 +364,13 @@
     "locations": [
       "kanban:eb3471f1797d4b8f8f6622d6f2fbe689"
     ],
-    "status": "open",
+    "status": "resolved",
     "autonomy_level": 1,
-    "evidence": "",
+    "evidence": "[note] Kanban card coloring implemented: GET /api/cards/linked endpoint, .card-integrated color + badge (all 4 themes), Integrated filter chip; tests green (plan 2026-11-04_23-02-44 executed).",
     "suggested_approach": "Workspace C:\\Dev\\Kanban. When a kanban card is already integrated with agent1, make the card color different than the default color, and make sure there's a filter option to select integrated kanban cards.",
     "decision_ref": null,
     "repair_ref": null,
     "created_at": "2026-11-04T20:47:32+00:00",
-    "resolved_at": null
+    "resolved_at": "2026-11-08T10:58:31+00:00"
   }
 ]
