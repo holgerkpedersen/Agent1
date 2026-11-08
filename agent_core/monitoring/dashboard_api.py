@@ -49,6 +49,8 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
             self._send_json(self._gauges())
         elif path == "/api/histograms":
             self._send_json(self._histogram(params))
+        elif path == "/api/tokens":
+            self._send_json(self._tokens())
         elif path == "/api/alerts":
             self._send_json(self._alerts())
         elif path == "/api/log":
@@ -397,6 +399,107 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
         typed_snapshot: Dict[str, Any] = snapshot
         typed_snapshot["status"] = "ok"
         return typed_snapshot
+
+    def _tokens(self) -> Dict[str, Any]:
+        """Token efficiency: live collector metrics + read-only ledger history.
+
+        Counters/histograms come from the shared MetricsCollector (fed by
+        ``record_plan_token_metrics`` at plan finish, mirrored across
+        processes via the event file).  The per-plan history is read from the
+        ``executions.jsonl`` ledger lines written by ``write_plan_evaluation``
+        - strictly read-only: this endpoint never writes any file and touches
+        no Kanban surface.
+        """
+        if self._collector is None:
+            return {"error": "metrics collector unavailable"}
+        snapshot = self._collector.snapshot()
+        counters = self._extract_metrics(snapshot, "counters")
+        gauges = self._extract_metrics(snapshot, "gauges")
+
+        def _summary(name: str) -> Dict[str, float]:
+            return self._collector.histogram_summary(name)
+
+        plans_finished = counters.get("plans.finished.count", 0.0)
+        tokens_total = counters.get("tokens.plan.total", 0.0)
+        response: Dict[str, Any] = {
+            "plans_finished": plans_finished,
+            "tokens_total": tokens_total,
+            # Mean tokens per finished plan (facts only; 0 plans -> None).
+            "tokens_per_plan": (
+                tokens_total / plans_finished if plans_finished else None
+            ),
+            "last_tokens": gauges.get("last.tokens.plan.total"),
+            "last_score": gauges.get("last.plans.efficiency.score"),
+            "total_summary": _summary("tokens.plan.total"),
+            "per_task_summary": _summary("tokens.plan.per_task"),
+            "score_summary": _summary("plans.efficiency.score"),
+            "history": self._token_history(limit=20),
+        }
+        return response
+
+    #: Ledger note format written by harnessfix.plan_eval.write_plan_evaluation.
+    _TOKEN_NOTE_RE = None  # compiled lazily below
+
+    @classmethod
+    def _token_note_re(cls):
+        if cls._TOKEN_NOTE_RE is None:
+            import re as _re
+
+            cls._TOKEN_NOTE_RE = _re.compile(
+                r"plan (?P<plan_id>.*?): score=(?P<score>[\d.]+) "
+                r"tasks=(?P<completed>\S+)/(?P<planned>\S+) "
+                r"tokens=(?P<tokens>\d+|None)"
+            )
+        return cls._TOKEN_NOTE_RE
+
+    def _token_history(self, limit: int = 20) -> List[Dict[str, Any]]:
+        """Newest ``limit`` plan evaluations from the execution ledger.
+
+        Parses the note of every ``plan_evaluation`` line in
+        ``reports/history/executions.jsonl`` (the artifact Phase 1/2 write).
+        Read-only; any unreadable/corrupt source degrades to an empty list.
+        """
+        import json as _json
+        import os as _os
+
+        ledger = _os.path.join(
+            self._base_dir, "reports", "history", "executions.jsonl"
+        )
+        records: List[Dict[str, Any]] = []
+        try:
+            with open(ledger, "r", encoding="utf-8") as fh:
+                lines = fh.readlines()
+        except OSError:
+            return records
+        rx = self._token_note_re()
+        for raw in reversed(lines):
+            try:
+                line = _json.loads(raw)
+            except Exception:
+                continue
+            if not isinstance(line, dict) or line.get("command") != "plan_evaluation":
+                continue
+            m = rx.search(str(line.get("note", "")))
+            if not m:
+                continue
+
+            def _num(text: str):
+                return None if text == "None" else int(text)
+
+            records.append(
+                {
+                    "ts": line.get("ts"),
+                    "plan_id": m.group("plan_id"),
+                    "outcome": line.get("outcome"),
+                    "score": float(m.group("score")),
+                    "tasks_completed": _num(m.group("completed")),
+                    "tasks_planned": _num(m.group("planned")),
+                    "tokens": _num(m.group("tokens")),
+                }
+            )
+            if len(records) >= limit:
+                break
+        return records
 
     def _extract_metrics(self, snapshot: Dict[str, Any], key: str) -> Dict[str, float]:
         raw = snapshot.get(key, {})

@@ -2016,6 +2016,16 @@ async def _nlp_plan_finish(agent: "Agent", args: dict[str, Any]) -> str:
 
     final_status = "executed" if success else "failed"
     lines = [f"Plan marked as {final_status}.", f"File: {dst}"]
+
+    # Phase 2 wiring: write the fact-based evaluation artifact + ledger line.
+    # Best-effort — bookkeeping must never crash plan finishing, and it is
+    # additive only (no Kanban surface is touched; see isolation tests).
+    from agent_core.plan_execution.plan_finish_eval import write_evaluation_for_plan
+
+    summary = write_evaluation_for_plan(plan_dir, Path(agent.workspace), success)
+    if summary:
+        lines.append(summary)
+
     if reason:
         lines.append(f"Reason: {reason}")
     return "\n".join(lines)

@@ -146,6 +146,25 @@
       font-weight: 600;
       font-size: var(--font-md, 1rem);
     }
+    /* Token Efficiency panel chips (same layout, own class so the
+       histogram chart tests keep seeing exactly 6 .hgram-stats chips) */
+    .tok-stats { row-gap: 8px; }
+    .tok-stats > div {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 64px;
+    }
+    .tok-stat-label {
+      font-size: var(--font-xs, 0.75rem);
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      color: var(--text-secondary-light, #94a3b8);
+    }
+    .tok-stat-value {
+      font-weight: 600;
+      font-size: var(--font-md, 1rem);
+    }
     [data-theme="light"] .hgram-bar:hover::after {
       background: var(--neutral-900, #111827);
     }
@@ -522,6 +541,60 @@
           </div>
         </div>
       </div>
+
+      <!-- Token efficiency: plan token facts from the shared collector + ledger -->
+      <div class="row gy-4" data-view-panel="tokens" hidden>
+        <div class="col-xxl-5">
+          <div class="card shadow-none border h-100">
+            <div class="card-header py-16 border-bottom d-flex align-items-center justify-content-between gap-16 flex-wrap">
+              <h6 class="fw-semibold mb-0">Token Efficiency</h6>
+              <span class="badge bg-primary-focus text-primary-main rounded-pill" id="badge-token-plans">-</span>
+            </div>
+            <div class="card-body p-24">
+              <div class="d-flex flex-wrap gap-24 tok-stats">
+                <div><span class="tok-stat-label">plans finished</span><span class="tok-stat-value" id="tok-plans">-</span></div>
+                <div><span class="tok-stat-label">total tokens</span><span class="tok-stat-value" id="tok-total">-</span></div>
+                <div><span class="tok-stat-label">tokens / plan</span><span class="tok-stat-value" id="tok-per-plan">-</span></div>
+                <div><span class="tok-stat-label">last plan tokens</span><span class="tok-stat-value" id="tok-last">-</span></div>
+                <div><span class="tok-stat-label">last score</span><span class="tok-stat-value" id="tok-score">-</span></div>
+              </div>
+              <p class="text-sm text-secondary-light mt-16 mb-0">
+                Mean per-plan token histogram (from finished plans):
+                samples <span id="tok-h-count">-</span>, min
+                <span id="tok-h-min">-</span>, mean <span id="tok-h-mean">-</span>,
+                max <span id="tok-h-max">-</span>.
+              </p>
+            </div>
+          </div>
+        </div>
+        <div class="col-xxl-7">
+          <div class="card shadow-none border h-100">
+            <div class="card-header py-16 border-bottom d-flex align-items-center justify-content-between gap-16 flex-wrap">
+              <h6 class="fw-semibold mb-0">Per-plan history</h6>
+              <span class="text-sm text-secondary-light">read-only ledger (reports/history/executions.jsonl)</span>
+            </div>
+            <div class="card-body p-0">
+              <div class="table-responsive">
+                <table class="table mb-0">
+                  <thead>
+                    <tr>
+                      <th>Plan</th>
+                      <th>When</th>
+                      <th>Outcome</th>
+                      <th class="text-end">Tasks</th>
+                      <th class="text-end">Tokens</th>
+                      <th class="text-end">Score</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tbl-tokens">
+                    <tr><td colspan="6" class="text-center text-secondary-light">Loading...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -540,6 +613,7 @@
       gauges: 'api/gauges',
       alerts: 'api/alerts',
       histograms: 'api/histograms',
+      tokens: 'api/tokens',
     };
 
     async function fetchJSON(url) {
@@ -855,8 +929,49 @@
       return sortedAsc[lo] + (sortedAsc[hi] - sortedAsc[lo]) * (pos - lo);
     }
 
+    async function loadTokens() {
+      try {
+        const d = await fetchJSON(API.tokens);
+        const fmtTok = function (v) {
+          if (v === null || v === undefined) return '-';
+          const n = Number(v);
+          if (!isFinite(n)) return '-';
+          return n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(Math.round(n));
+        };
+        document.getElementById('badge-token-plans').textContent = d.plans_finished ?? '-';
+        document.getElementById('tok-plans').textContent = d.plans_finished ?? '-';
+        document.getElementById('tok-total').textContent = fmtTok(d.tokens_total);
+        document.getElementById('tok-per-plan').textContent = fmtTok(d.tokens_per_plan);
+        document.getElementById('tok-last').textContent = fmtTok(d.last_tokens);
+        document.getElementById('tok-score').textContent =
+          (d.last_score === null || d.last_score === undefined) ? '-' : Number(d.last_score).toFixed(2);
+        const hs = d.total_summary || {};
+        ['count', 'min', 'mean', 'max'].forEach(function (k) {
+          document.getElementById('tok-h-' + k).textContent = fmtTok(hs[k]);
+        });
+        const tbody = document.getElementById('tbl-tokens');
+        const hist = d.history || [];
+        if (!hist.length) {
+          tbody.innerHTML = '<tr><td colspan="6" class="text-center text-secondary-light">No plan evaluations recorded yet</td></tr>';
+          return;
+        }
+        tbody.innerHTML = hist.map(function (h) {
+          const tasks = (h.tasks_completed ?? '-') + '/' + (h.tasks_planned ?? '-');
+          return '<tr><td><span class="fw-semibold">' + (h.plan_id || '-') + '</span></td>' +
+            '<td>' + fmtTime(h.ts) + '</td>' +
+            '<td>' + (h.outcome || '-') + '</td>' +
+            '<td class="text-end">' + tasks + '</td>' +
+            '<td class="text-end">' + fmtTok(h.tokens) + '</td>' +
+            '<td class="text-end">' + (h.score ?? '-') + '</td></tr>';
+        }).join('');
+      } catch (e) {
+        document.getElementById('tbl-tokens').innerHTML =
+          '<tr><td colspan="6" class="text-center text-danger-main">' + e.message + '</td></tr>';
+      }
+    }
+
     async function refresh() {
-      await Promise.all([loadSnapshot(), loadCounters(), loadAlerts(), loadCommands(), loadHistogram(), loadLog()]);
+      await Promise.all([loadSnapshot(), loadCounters(), loadAlerts(), loadCommands(), loadHistogram(), loadTokens(), loadLog()]);
     }
 
     function openView(name) {
@@ -870,12 +985,13 @@
       });
       if (name === 'gauges') loadGauges();
       if (name === 'histogram') loadHistogram();
+      if (name === 'tokens') loadTokens();
       if (name === 'commands') loadCommands();
       if (name === 'log') loadLog();
       if (name === 'alerts') loadAlerts();
       const title = document.getElementById('pageTitle');
       if (title) {
-        const labels = { dashboard: 'Dashboard', commands: 'Command Summary', log: 'Execution Log', alerts: 'Active Alerts', gauges: 'Gauges', histogram: 'Histogram' };
+        const labels = { dashboard: 'Dashboard', commands: 'Command Summary', log: 'Execution Log', alerts: 'Active Alerts', gauges: 'Gauges', histogram: 'Histogram', tokens: 'Token Efficiency' };
         title.textContent = labels[name] || 'Dashboard';
       }
     }
