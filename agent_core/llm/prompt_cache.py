@@ -12,6 +12,39 @@ from .db_io import (
 )
 
 
+# Module-level "current command" context so template-cache lookups can be
+# attributed to the REPL command that triggered them (surfaced in the perf view).
+# Set/cleared by the command execution path; None means unattributed.
+_current_command: str | None = None
+
+
+def set_current_command(command: str | None) -> str | None:
+    """Set the command context for per-command prompt-cache attribution.
+
+    Returns the previous value so callers can restore it.
+    """
+    global _current_command
+    previous = _current_command
+    _current_command = command
+    return previous
+
+
+def get_current_command() -> str | None:
+    """Return the active command context (or None)."""
+    return _current_command
+
+
+def _stats_dict(hits: int, misses: int) -> dict[str, float | int]:
+    total = hits + misses
+    hit_rate = round(hits / max(total, 1) * 100.0, 2)
+    return {
+        "hits": hits,
+        "misses": misses,
+        "total_lookups": total,
+        "hit_rate_pct": hit_rate,
+    }
+
+
 class PromptCache:
     """In-memory + SQLite-backed cache of versioned prompt templates.
 
@@ -21,12 +54,26 @@ class PromptCache:
     evicted.
 
     Hit/miss counters track template-cache performance (plan CACHE item 1).
+    When a command context is active (see :func:`set_current_command`), lookups
+    are also attributed per command so the perf view can report hit % per
+    command.
     """
 
     def __init__(self) -> None:
         self._store: dict[tuple[str, str], tuple[int, str]] = {}
         self._hits: int = 0
         self._misses: int = 0
+        self._by_command: dict[str, dict[str, int]] = {}
+
+    def _record(self, *, hit: bool) -> None:
+        if hit:
+            self._hits += 1
+        else:
+            self._misses += 1
+        cmd = _current_command
+        if cmd:
+            bucket = self._by_command.setdefault(cmd, {"hits": 0, "misses": 0})
+            bucket["hits" if hit else "misses"] += 1
 
     def get_template(self, task_type: str, profile_type: str) -> str:
         """Return the latest template for *task_type*+*profile_type*.
@@ -36,10 +83,10 @@ class PromptCache:
         key = (task_type, profile_type)
         cached = self._store.get(key)
         if cached is not None:
-            self._hits += 1
+            self._record(hit=True)
             return cached[1]
 
-        self._misses += 1
+        self._record(hit=False)
         version = get_latest_version(task_type, profile_type)
         if version is not None:
             text = load_template(task_type, profile_type, version)
@@ -60,14 +107,26 @@ class PromptCache:
         and ``hit_rate_pct`` (percentage).  When no lookups have been made,
         *hit_rate_pct* is reported as ``0.0``.
         """
-        total = self._hits + self._misses
-        hit_rate = round(self._hits / max(total, 1) * 100.0, 2)
-        return {
-            "hits": self._hits,
-            "misses": self._misses,
-            "total_lookups": total,
-            "hit_rate_pct": hit_rate,
-        }
+        return _stats_dict(self._hits, self._misses)
+
+    def get_command_stats(self) -> dict[str, dict[str, float | int]]:
+        """Return per-command hit/miss statistics (sorted by lookups desc).
+
+        Only commands that triggered at least one template lookup while the
+        command context was set are included.
+        """
+        items = [
+            (cmd, _stats_dict(b["hits"], b["misses"]))
+            for cmd, b in self._by_command.items()
+        ]
+        items.sort(key=lambda kv: -int(kv[1]["total_lookups"]))
+        return dict(items)
+
+    def reset_stats(self) -> None:
+        """Clear cumulative hit/miss counters (keeps cached templates)."""
+        self._hits = 0
+        self._misses = 0
+        self._by_command.clear()
 
     def put_template(
         self,
@@ -124,3 +183,33 @@ _DEFAULT_TEMPLATES: dict[tuple[str, str], str] = {
         "Apply the minimal change needed to resolve this issue: {task}"
     ),
 }
+
+
+# Process-wide singleton: the observable/wired prompt cache surfaced by the
+# perf view and the monitoring dashboard.  Production code that resolves a
+# prompt template should prefer this instance so cache effectiveness is
+# measurable; fresh PromptCache() instances remain available for isolated use.
+_prompt_cache: PromptCache | None = None
+
+
+def get_prompt_cache() -> PromptCache:
+    """Return the process-wide PromptCache singleton."""
+    global _prompt_cache
+    if _prompt_cache is None:
+        _prompt_cache = PromptCache()
+    return _prompt_cache
+
+
+def reset_prompt_cache() -> None:
+    """Replace the singleton (test/helper use)."""
+    global _prompt_cache
+    _prompt_cache = None
+
+
+def get_prompt_cache_stats() -> dict[str, Any]:
+    """Return the singleton's overall + per-command stats for dashboards."""
+    pc = get_prompt_cache()
+    return {
+        "overall": pc.get_stats(),
+        "by_command": pc.get_command_stats(),
+    }

@@ -23,6 +23,26 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def _prompt_cache_stats() -> dict[str, Any]:
+    """Return prompt-cache stats (overall + per command), or empty on failure."""
+    try:
+        from agent_core.llm.prompt_cache import get_prompt_cache_stats
+
+        return get_prompt_cache_stats()
+    except Exception:
+        logger.debug("prompt cache stats unavailable", exc_info=True)
+        return {}
+
+
+def _reset_prompt_cache_stats() -> None:
+    try:
+        from agent_core.llm.prompt_cache import get_prompt_cache
+
+        get_prompt_cache().reset_stats()
+    except Exception:
+        logger.debug("prompt cache stats reset failed", exc_info=True)
+
 #: Command-timing history in the same state dir as ``CHAT_HISTORY_JSON_PATH``
 #: (B5): loaded at first use and written back after every record, so timings
 #: survive a restart.  Atomic tmp + os.replace, bounded to the newest
@@ -123,6 +143,7 @@ class PerfTracker:
         cls._ensure_loaded()
         cls._records.clear()
         cls._save()
+        _reset_prompt_cache_stats()
 
 
 class PerfCommand(Command):
@@ -136,16 +157,48 @@ class PerfCommand(Command):
     def help_text(self) -> str:
         return "perf [--detail|--reset|--html] - Command performance dashboard"
 
+    @staticmethod
+    def _print_prompt_cache() -> None:
+        data = _prompt_cache_stats()
+        overall = (data.get("overall") or {}) if isinstance(data, dict) else {}
+        by_cmd = (data.get("by_command") or {}) if isinstance(data, dict) else {}
+        hits = int(overall.get("hits", 0) or 0)
+        misses = int(overall.get("misses", 0) or 0)
+        total = int(overall.get("total_lookups", 0) or 0)
+        hit_rate = overall.get("hit_rate_pct", 0.0)
+        print("  Prompt cache (templates):")
+        print(
+            f"    Overall: {hits} hits / {misses} misses  "
+            f"({total} lookups, {hit_rate}% hit rate)"
+        )
+        if by_cmd:
+            print(
+                f"    {'command':<14} {'hits':>6} {'misses':>8} "
+                f"{'lookups':>9} {'hit %':>8}"
+            )
+            print(f"    {'─' * 49}")
+            for cmd, st in by_cmd.items():
+                print(
+                    f"    {cmd:<14} {int(st.get('hits', 0)):>6} "
+                    f"{int(st.get('misses', 0)):>8} "
+                    f"{int(st.get('total_lookups', 0)):>9} "
+                    f"{st.get('hit_rate_pct', 0.0):>7}%"
+                )
+        else:
+            print("    Per-command: no attributed template lookups yet.")
+        print()
+
     async def execute(self, args: list[str], agent: "Agent") -> bool:
         if "--reset" in args:
             PerfTracker.reset()
-            print("  Performance stats cleared.")
+            print("  Performance and prompt-cache stats cleared.")
             return True
 
         if "--detail" in args:
             records = PerfTracker.detail()
             if not records:
                 print("  No commands executed yet.")
+                self._print_prompt_cache()
                 return True
             print(f"\n  Execution log ({len(records)} entries):\n")
             for r in records:
@@ -158,10 +211,14 @@ class PerfCommand(Command):
                     f"  {ts}  {r['command']:<12} "
                     f"{r['elapsed_s']:>8.1f}s  ({r['input_len']} chars)"
                 )
+            print()
+            self._print_prompt_cache()
             return True
 
         if "--html" in args:
-            html = self._build_html(PerfTracker.summary(), PerfTracker.detail())
+            html = self._build_html(
+                PerfTracker.summary(), PerfTracker.detail(), _prompt_cache_stats()
+            )
             path = "performance_dashboard.html"
             with open(path, "w", encoding="utf-8") as f:
                 f.write(html)
@@ -171,6 +228,7 @@ class PerfCommand(Command):
         summary = PerfTracker.summary()
         if not summary:
             print("  No commands executed yet.")
+            self._print_prompt_cache()
             return True
 
         total_calls = sum(s["calls"] for s in summary)
@@ -202,11 +260,15 @@ class PerfCommand(Command):
                 f"{s['avg']:>8} {s['max']:>8} {s['last']:>8}"
             )
         print()
+        self._print_prompt_cache()
 
         return True
 
     def _build_html(
-        self, summary: list[dict[str, Any]], detail: list[dict[str, Any]]
+        self,
+        summary: list[dict[str, Any]],
+        detail: list[dict[str, Any]],
+        cache_stats: dict[str, Any] | None = None,
     ) -> str:
         rows = "\n".join(
             f"<tr><td>{s['command']}</td><td>{s['calls']}</td><td>{s['total']}</td><td>{s['avg']}</td><td>{s['max']}</td><td>{s['last']}</td></tr>"
@@ -218,6 +280,27 @@ class PerfCommand(Command):
         )
         total_calls = sum(s["calls"] for s in summary)
         total_time = sum(float(s["total"].rstrip("s")) for s in summary)
+
+        cache_stats = cache_stats or {}
+        overall = cache_stats.get("overall") or {}
+        by_cmd = cache_stats.get("by_command") or {}
+        cache_hits = int(overall.get("hits", 0) or 0)
+        cache_misses = int(overall.get("misses", 0) or 0)
+        cache_lookups = int(overall.get("total_lookups", 0) or 0)
+        cache_hit_rate = overall.get("hit_rate_pct", 0.0)
+        cache_rows = "\n".join(
+            f"<tr><td>{cmd}</td><td>{int(st.get('hits', 0))}</td>"
+            f"<td>{int(st.get('misses', 0))}</td>"
+            f"<td>{int(st.get('total_lookups', 0))}</td>"
+            f"<td>{st.get('hit_rate_pct', 0.0)}%</td></tr>"
+            for cmd, st in by_cmd.items()
+        )
+        if not cache_rows:
+            cache_rows = (
+                '<tr><td colspan="5" style="color:var(--text-muted);">'
+                "No attributed template lookups yet.</td></tr>"
+            )
+
         return f"""<!DOCTYPE html>
 <html lang="en" data-theme="dark">
 <head>
@@ -280,10 +363,37 @@ class="icon-chart"></div>
                     <div \
 style="font-size:11px;color:var(--text-muted);">Command Types</div>
                 </div>
+                <div \
+style="flex:1;min-width:160px;background:var(--input-bg);border-radius:12px;\
+padding:14px;border:1px solid var(--border);text-align:center;">
+                    <div \
+style="font-size:28px;color:var(--accent);line-height:1;margin-bottom:6px;" \
+class="icon-cache"></div>
+                    <div style="font-size:22px;font-weight:700;">{cache_hit_rate}%</div>
+                    <div \
+style="font-size:11px;color:var(--text-muted);">Prompt Cache Hit</div>
+                </div>
             </div>
             <table class="issues-table">
                 <thead><tr><th>Command</th><th>Calls</th><th>Total</th><th>Avg</th><th>Max</th><th>Last</th></tr></thead>
                 <tbody>{rows}</tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="panel" style="position:static;margin:0 0 12px 0;min-width:0;">
+        <div class="panel-header">
+            <h6 class="fw-semibold mb-0">Prompt Cache (templates)</h6>
+        </div>
+        <div class="panel-content">
+            <p style="margin:0 0 10px 0;color:var(--text-muted);font-size:13px;">
+                Overall: {cache_hits} hits / {cache_misses} misses
+                ({cache_lookups} lookups, {cache_hit_rate}% hit rate)
+            </p>
+            <table class="issues-table">
+                <thead><tr><th>Command</th><th>Hits</th><th>Misses</th>
+                <th>Lookups</th><th>Hit %</th></tr></thead>
+                <tbody>{cache_rows}</tbody>
             </table>
         </div>
     </div>
@@ -332,6 +442,8 @@ document.querySelector('.icon-cpu').innerHTML = iconify('tabler:cpu', 28);
 document.querySelector('.icon-clock').innerHTML \
 = iconify('solar:clock-circle-bold', 28);
 document.querySelector('.icon-chart').innerHTML = iconify('solar:chart-2-bold', 28);
+var cacheIcon = document.querySelector('.icon-cache');
+if (cacheIcon) cacheIcon.innerHTML = iconify('solar:database-bold', 28);
 document.getElementById('ghIcon').innerHTML = iconify('mdi:github', 18);
 function toggleTheme() {{
     currentTheme = currentTheme === 'dark' ? 'light' : 'dark';

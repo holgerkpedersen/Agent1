@@ -58,6 +58,7 @@ from agent_core.line_editing import (
     enable as _enable_line_editing,
     save_history as _save_line_history,
 )
+from agent_core.llm.prompt_cache import set_current_command
 from agent_core.signal_handlers import (
     current_git_branch as _current_git_branch,
     install as _install_signal_handlers,
@@ -446,6 +447,7 @@ async def run_interactive() -> None:
                 _start = _time.perf_counter()
                 print(f"  [cmd] {cyan(command)} running...")
                 clear_stop()
+                _prev_cache_cmd = set_current_command(command)
                 _llm = getattr(agent, "llm", None)
                 _chat = getattr(_llm, "chat", None)
                 if _llm is not None and _chat is not None:
@@ -458,6 +460,7 @@ async def run_interactive() -> None:
                 finally:
                     if _llm is not None and _chat is not None:
                         _llm.chat = _chat
+                    set_current_command(_prev_cache_cmd)
                 elapsed = _time.perf_counter() - _start
                 print(f"  [cmd] {cyan(command)} done in {green(f'{elapsed:.2f}s')}")
                 PerfTracker.record(command, elapsed, user_input)

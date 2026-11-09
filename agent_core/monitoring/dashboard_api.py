@@ -51,6 +51,8 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
             self._send_json(self._histogram(params))
         elif path == "/api/tokens":
             self._send_json(self._tokens())
+        elif path == "/api/prompt_cache":
+            self._send_json(self._prompt_cache())
         elif path == "/api/alerts":
             self._send_json(self._alerts())
         elif path == "/api/log":
@@ -505,6 +507,24 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
             if len(records) >= limit:
                 break
         return records
+
+    def _prompt_cache(self) -> Dict[str, Any]:
+        """Prompt/template-cache hit-miss stats (overall + per command)."""
+        try:
+            from agent_core.llm.prompt_cache import get_prompt_cache_stats
+
+            data = get_prompt_cache_stats()
+            if not isinstance(data, dict):
+                data = {}
+            data.setdefault("overall", {})
+            data.setdefault("by_command", {})
+            return data
+        except Exception as exc:
+            return {
+                "error": f"{type(exc).__name__}: {exc}",
+                "overall": {},
+                "by_command": {},
+            }
 
     def _extract_metrics(self, snapshot: Dict[str, Any], key: str) -> Dict[str, float]:
         raw = snapshot.get(key, {})

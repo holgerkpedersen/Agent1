@@ -341,6 +341,39 @@
       </div>
 
       <div class="row gy-4 mt-2" data-view-panel="dashboard">
+        <div class="col-12">
+          <div class="card shadow-none border h-100">
+            <div class="card-header py-16 border-bottom d-flex align-items-center justify-content-between gap-16 flex-wrap">
+              <h6 class="fw-semibold mb-0">Prompt Cache (templates)</h6>
+              <span class="badge bg-info-focus text-info-main rounded-pill" id="badge-prompt-cache">-</span>
+            </div>
+            <div class="card-body p-0">
+              <div class="px-16 py-12 border-bottom">
+                <span class="text-sm text-secondary-light">Overall:</span>
+                <span class="fw-semibold ms-1" id="prompt-cache-overall">-</span>
+              </div>
+              <div class="table-responsive">
+                <table class="table mb-0">
+                  <thead>
+                    <tr>
+                      <th>Command</th>
+                      <th class="text-end">Hits</th>
+                      <th class="text-end">Misses</th>
+                      <th class="text-end">Lookups</th>
+                      <th class="text-end">Hit %</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tbl-prompt-cache">
+                    <tr><td colspan="5" class="text-center text-secondary-light">Loading...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="row gy-4 mt-2" data-view-panel="dashboard">
         <div class="col-xxl-7">
           <div class="card shadow-none border h-100">
             <div class="card-header py-16 border-bottom d-flex align-items-center justify-content-between gap-16 flex-wrap">
@@ -634,6 +667,7 @@
       alerts: 'api/alerts',
       histograms: 'api/histograms',
       tokens: 'api/tokens',
+      promptCache: 'api/prompt_cache',
     };
 
     async function fetchJSON(url) {
@@ -1017,8 +1051,45 @@
       }
     }
 
+    async function loadPromptCache() {
+      try {
+        const d = await fetchJSON(API.promptCache);
+        const overall = d.overall || {};
+        const byCmd = d.by_command || {};
+        const hits = Number(overall.hits || 0);
+        const misses = Number(overall.misses || 0);
+        const lookups = Number(overall.total_lookups || 0);
+        const rate = (overall.hit_rate_pct === null || overall.hit_rate_pct === undefined) ? '0.0' : overall.hit_rate_pct;
+        const badge = document.getElementById('badge-prompt-cache');
+        if (badge) badge.textContent = rate + '% hit';
+        const summaryEl = document.getElementById('prompt-cache-overall');
+        if (summaryEl) {
+          summaryEl.textContent = hits + ' hits / ' + misses + ' misses (' + lookups + ' lookups, ' + rate + '% hit rate)';
+        }
+        const tbody = document.getElementById('tbl-prompt-cache');
+        if (!tbody) return;
+        const cmds = Object.keys(byCmd);
+        if (!cmds.length) {
+          tbody.innerHTML = '<tr><td colspan="5" class="text-center text-secondary-light">No attributed template lookups yet</td></tr>';
+          return;
+        }
+        tbody.innerHTML = cmds.map(function (cmd) {
+          const s = byCmd[cmd] || {};
+          const r = (s.hit_rate_pct === null || s.hit_rate_pct === undefined) ? '0.0' : s.hit_rate_pct;
+          return '<tr><td><span class="fw-semibold">' + cmd + '</span></td>' +
+            '<td class="text-end">' + (s.hits ?? 0) + '</td>' +
+            '<td class="text-end">' + (s.misses ?? 0) + '</td>' +
+            '<td class="text-end">' + (s.total_lookups ?? 0) + '</td>' +
+            '<td class="text-end">' + r + '%</td></tr>';
+        }).join('');
+      } catch (e) {
+        const tbody = document.getElementById('tbl-prompt-cache');
+        if (tbody) tbody.innerHTML = '<tr><td colspan="5" class="text-center text-danger-main">' + e.message + '</td></tr>';
+      }
+    }
+
     async function refresh() {
-      await Promise.all([loadSnapshot(), loadCounters(), loadAlerts(), loadCommands(), loadHistogram(), loadTokens(), loadLog()]);
+      await Promise.all([loadSnapshot(), loadCounters(), loadAlerts(), loadCommands(), loadHistogram(), loadTokens(), loadPromptCache(), loadLog()]);
     }
 
     function openView(name) {

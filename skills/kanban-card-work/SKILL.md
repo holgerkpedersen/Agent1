@@ -77,6 +77,31 @@ kanban queue           # unprocessed messages both ways, each resolved to an iss
 - Dead letters mean repeated failures; read the quarantined payload before
   re-applying anything by hand.
 
+## Verified facts (issue `iss-general-kanban_8e3dcc6f84384dce9e0dae34db13a324`)
+
+- A ledger status of `resolved` does **not** imply the board card is `resolved`.
+  The board only moves when the outbound `issue_resolve` message is applied by
+  the Kanban side on its own poll. A card can stay `open` on the board while the
+  issue is `resolved` in `.issues.json` — check `kanban card <id>` (column +
+  status) before claiming closure.
+- If the card is **deleted or unreachable** on the board, no further board-side
+  action is possible from Agent1; report that and stop instead of retrying.
+- `card_move: no matching issue for <id>` with `_process_card_move returned False`
+  and a dead-letter after 3 retries is **not** the "never bridged" case. It
+  means the card IS in `.card_id_map`/`locations` but the underlying issue is
+  missing — a stale mapping. The never-bridged case is a quiet no-op.
+- In `harnessfix/kanban_bridge.py`, `_lookup_issue_for` returns `None` for a
+  never-bridged card; `_apply_card_update` (~572), `_apply_card_move` (~686)
+  and `_apply_card_delete` (~740) then log "is not tracked by the bridge —
+  nothing to apply" and return `True`. Only the mapped-but-missing case returns
+  `False` + warning + retry. Do not "fix" a quiet no-op by forcing a retry.
+- Regression guards for the above: `tests/test_kanban_card_move_errors.py`
+  (8), `tests/test_kanban_bridge.py` (40), `tests/test_kanban_roundtrip.py`
+  (10). Run all three before claiming the move path is healthy.
+- The kanban fix note is committed in HEAD (`.issues.json`); `git status` may
+  still show unrelated pending changes — verify what is actually staged before
+  attributing work to a card.
+
 ## Step 4 — do the work, then close the loop
 
 Work the issue with the normal tools (`issue show`, `fix`, `implement`). When
