@@ -129,6 +129,7 @@ class IssueCommand(Command):
             severity=severity,
             suggested_approach=approach,
             autonomy_level=level,
+            emit_child_card=True,
         )
         if issue_store.upsert(issues, issue):
             issue_store.save_issues(issues)

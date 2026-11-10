@@ -84,11 +84,21 @@ def _should_sync() -> bool:
         return False
 
 
-def _enqueue_sync(op: str, source_id: str, payload: dict[str, Any]) -> None:
+def _enqueue_sync(
+    op: str, source_id: str, payload: dict[str, Any], emit_child_card: bool = False
+) -> None:
     """Best-effort Kanban enqueue. Never raises into the caller.
 
     Syncing to Kanban is a side-effect of the issue ledger; a broken bridge
     or a full disk must not abort the primary operation (issue create/resolve).
+
+    A card-attributable issue op (one whose payload carries ``parent_card_id``
+    or a ``kanban:<card_id>`` location) additionally enqueues a child-card
+    payload so the work performed on that card is visible on the board as a
+    child card under the parent (see :func:`_emit_child_card_for`). The
+    ``emit_child_card`` flag is set only for genuine work issues; the bridge
+    mirror (Kanban→Agent1) must not emit a child card, or the echo path
+    would create a spurious child card on every card-create round trip.
     """
     try:
         if not _should_sync():
@@ -96,12 +106,95 @@ def _enqueue_sync(op: str, source_id: str, payload: dict[str, Any]) -> None:
         kb = _get_kanban_bridge()
         if kb is not None:
             kb.enqueue({"op": op, "source_id": source_id, "payload": payload})
+            if emit_child_card:
+                _emit_child_card_for(payload)
     except Exception as exc:  # noqa: BLE001 — deliberately swallow, sync is optional
         import logging
 
         logging.getLogger(__name__).warning(
             "Kanban sync failed for %s (%s): %s", op, source_id, exc
         )
+
+
+def _card_id_from_locations(payload: dict[str, Any]) -> str | None:
+    """Extract a card id from a payload's ``kanban:<card_id>`` location.
+
+    The bridge records ``kanban:<card_id>`` locations on issues it created from
+    a Kanban card, so this is the fallback when ``parent_card_id`` is absent.
+    Returns ``None`` when the payload carries no such location.
+    """
+    for loc in payload.get("locations") or []:
+        if isinstance(loc, str) and loc.startswith("kanban:"):
+            return loc[len("kanban:"):]
+    return None
+
+
+def _emit_child_card_for(payload: dict[str, Any]) -> None:
+    """Best-effort: emit a child-card payload for work on a synchronized card.
+
+    Only work-on-card issues (those attributable to a card via ``parent_card_id``
+    or a ``kanban:<card>`` location) get a child-card payload; non-card issues
+    are left as-is.  Any failure degrades to a no-op so it can never abort the
+    primary issue op that triggered the emission.
+
+    The child-card payload carries the work record (title/text = work summary,
+    evidence/approach, plus issue id/status/op/ts metadata) and ``parent_id``
+    = the card it belongs to, so the Kanban reader (Component 2) can nest the
+    child card under the parent.  The work itself is also captured on the Agent1
+    issue ledger (``.issues.json``); the payload just surfaces it on the board.
+    """
+    card_id = payload.get("parent_card_id") or _card_id_from_locations(payload)
+    if not card_id:
+        return
+
+    issue_id = payload.get("id")
+    issue_status = payload.get("status", "open")
+    summary = _work_summary_for_child_card(payload)
+
+    kb = _get_kanban_bridge()
+    if kb is None:
+        return
+    try:
+        kb.enqueue(
+            {
+                "op": "child_card_create",
+                "source_id": issue_id or card_id,
+                "payload": {
+                    "parent_id": card_id,
+                    "title": summary,
+                    "text": summary,
+                    "issue_id": issue_id,
+                    "op": payload.get("op", ""),
+                    "status": issue_status,
+                    "created_at": payload.get("created_at") or _now(),
+                    "system": "harnessfix",
+                },
+            }
+        )
+    except Exception:  # noqa: BLE001 — child-card emission must never break the op
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "Child-card emission failed for issue %s (card %s); parent op still synced",
+            issue_id,
+            card_id,
+        )
+
+
+def _work_summary_for_child_card(payload: dict[str, Any]) -> str:
+    """Build the child-card title/text from the work record.
+
+    Title carries the work id + status (the work identity); text carries the
+    evidence/approach body so the work is visible on the board alone.
+    """
+    parts: list[str] = []
+    if payload.get("evidence"):
+        parts.append(payload["evidence"])
+    if payload.get("suggested_approach"):
+        parts.append(f"Approach:\n{payload['suggested_approach']}")
+    body = "\n\n---\n".join(parts)
+    title = f"[work] {payload.get('id')} ({payload.get('status', 'open')})"
+    return title + (f"\n\n---\n{body}" if body else "")
 
 
 def _now() -> str:
@@ -155,6 +248,8 @@ def make_issue(
     suggested_approach: str = "",
     decision_ref: str | None = None,
     autonomy_level: int = DEFAULT_AUTONOMY_LEVEL,
+    parent_card_id: str | None = None,
+    emit_child_card: bool = False,
 ) -> dict[str, Any]:
     issue = {
         "id": _slug(category, locations),
@@ -171,10 +266,14 @@ def make_issue(
         "created_at": _now(),
         "resolved_at": None,
     }
+    if parent_card_id:
+        issue["parent_card_id"] = parent_card_id
 
     # Enqueue creation to Kanban if sync is enabled (best-effort side-effect)
     payload = {k: v for k, v in issue.items() if k != "repair_ref"}
-    _enqueue_sync("issue_create", issue["id"], payload)
+    _enqueue_sync(
+        "issue_create", issue["id"], payload, emit_child_card=emit_child_card
+    )
 
     return issue
 

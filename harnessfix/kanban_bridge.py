@@ -394,6 +394,9 @@ def issue_to_card_data(issue: dict[str, Any]) -> dict[str, Any]:
         "text": text,
         "tags": tags,
         "system": "harnessfix",
+        # Carried so Kanban can nest the resulting card under a parent card
+        # (e.g. a "work done" child card under the card Agent1 resolved).
+        "parent_id": issue.get("parent_card_id") or issue.get("parent_id", "") or "",
     }
 
 
@@ -444,6 +447,8 @@ def card_to_issue_data(card: dict[str, Any]) -> dict[str, Any]:
         "description": str(text).strip(),
         "status": status,
         "tags": card.get("tags", []),
+        # Durable parent link so Agent1 can echo it back when mirroring.
+        "parent_id": str(card.get("parent_id") or ""),
     }
 
 
@@ -550,6 +555,13 @@ def _apply_card_create(payload: dict[str, Any]) -> bool:
         suggested_approach=suggested,
         autonomy_level=1,  # Kanban cards default to auto-safe
     )
+    # Remember the originating card so Agent1 can spawn child cards (work-done
+    # records) under it when it resolves the issue.
+    card_id = payload.get("id", "")
+    if card_id:
+        issue["parent_card_id"] = card_id
+    if data.get("parent_id"):
+        issue["parent_card_id"] = data["parent_id"]
 
     # Persist the issue before recording the mapping.  ``make_issue`` only
     # *builds* the dict — it does not write the ledger (the repo-scan collector
