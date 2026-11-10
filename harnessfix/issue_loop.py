@@ -575,7 +575,11 @@ def resolve_issue(
         return {"verdict": "gates_failed", "accepted": False, "issue_id": issue["id"]}
 
     issue_store.resolve(
-        issues, issue["id"], "resolved", note="autonomous fix passed gates"
+        issues,
+        issue["id"],
+        "resolved",
+        note="autonomous fix passed gates",
+        emit_child_card=True,
     )
     issue_store.save_issues(issues)
     return {

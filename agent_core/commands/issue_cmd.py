@@ -209,7 +209,9 @@ class IssueCommand(Command):
             if i + 1 < len(args):
                 note = args[i + 1]
         issues = issue_store.load_issues()
-        if issue_store.resolve(issues, issue_id, disposition, note=note):
+        if issue_store.resolve(
+            issues, issue_id, disposition, note=note, emit_child_card=True
+        ):
             issue_store.save_issues(issues)
             print(f"Resolved {issue_id} as {disposition}")
         else:

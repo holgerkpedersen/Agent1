@@ -295,10 +295,18 @@ def resolve(
     issue_id: str,
     disposition: str = "resolved",
     note: str = "",
+    emit_child_card: bool = False,
 ) -> bool:
     it = find_by_id(issues, issue_id)
     if it is None:
         return False
+    prior_status = it.get("status")
+    # Only emit a work card on a genuine transition into a resolved state.
+    should_emit = bool(
+        emit_child_card
+        and disposition in RESOLVED_STATUSES
+        and prior_status not in RESOLVED_STATUSES
+    )
     it["status"] = disposition
     it["resolved_at"] = _now() if disposition in RESOLVED_STATUSES else None
     if note:
@@ -307,7 +315,10 @@ def resolve(
     # Enqueue resolution to Kanban if sync is enabled (best-effort side-effect)
     payload = dict(it)  # copy of the resolved issue
     payload["disposition"] = disposition
-    _enqueue_sync("issue_resolve", issue_id, payload)
+    payload["op"] = "issue_resolve"
+    _enqueue_sync(
+        "issue_resolve", issue_id, payload, emit_child_card=should_emit
+    )
 
     return True
 
