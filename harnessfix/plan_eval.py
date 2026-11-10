@@ -19,6 +19,7 @@ Principles (identical to :mod:`harnessfix.scoring`):
 from __future__ import annotations
 
 import json
+import math
 import time
 from pathlib import Path
 from typing import Any, Mapping
@@ -38,6 +39,13 @@ HISTORY_SUBDIR = "history"
 EXECUTIONS_FILE = "executions.jsonl"
 #: Command tag for this record kind in the ledger.
 LEDGER_COMMAND = "plan_eval"
+
+#: Aggregated plan-evaluation report file (gap 2). Append-only: one line per
+#: finished plan, so all evaluations live in a single aggregated report file
+#: alongside the per-plan ``.docs/<ts>/evaluation.json`` artifacts.
+PLAN_EVALUATIONS_FILE = "plan_evaluations.jsonl"
+#: Cumulative prompt/completion token-split summary across runs (gap 3).
+PLAN_TOKEN_AGGREGATE_FILE = "plan_token_aggregate.json"
 
 
 def build_plan_evaluation(facts: Mapping[str, Any]) -> dict[str, Any]:
@@ -153,6 +161,161 @@ def write_plan_evaluation(
         return record
     except OSError:
         return None
+
+
+def append_plan_evaluation_aggregate(
+    workspace: str | Path,
+    record: Mapping[str, Any],
+) -> bool:
+    """Append one aggregated plan-evaluation line to ``reports/plan_evaluations.jsonl``.
+
+    Best-effort and append-only: creates ``reports/`` if needed, appends (never
+    rewrites) one JSON line summarising the evaluation, and returns True on
+    success. Never crashes the caller and never writes outside an existing
+    workspace — evaluation bookkeeping must never break plan finishing.
+    """
+    try:
+        root = Path(workspace)
+        if not root.is_dir():
+            return False
+        report_path = root / "reports" / PLAN_EVALUATIONS_FILE
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        line = {
+            "ts": time.time(),
+            "kind": "plan_evaluation_aggregate",
+            "plan_id": record.get("plan_id"),
+            "tasks_planned": record.get("tasks_planned"),
+            "tasks_completed": record.get("tasks_completed"),
+            "success": record.get("success"),
+            "score": record.get("score"),
+            "tokens": record.get("tokens"),
+            "tokens_total": _tokens_total(record.get("tokens")),
+            "path": record.get("path"),
+        }
+        with report_path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(line, ensure_ascii=False) + "\n")
+        return True
+    except Exception:
+        return False
+
+
+def _tokens_total(tokens: Mapping[str, Any] | None) -> int | None:
+    from .scoring import total_tokens_of
+
+    if not tokens:
+        return None
+    return total_tokens_of(tokens)
+
+
+def write_plan_token_aggregate(workspace: str | Path) -> dict[str, Any] | None:
+    """Recompute the cumulative prompt/completion token-split across runs.
+
+    Reads every line of ``reports/plan_evaluations.jsonl`` (gap 2's aggregated
+    file) and sums prompt/completion/total token facts, None-safe (missing facts
+    stay None, never 0), writing the cumulative summary to
+    ``reports/plan_token_aggregate.json``. Best-effort and additive: returns the
+    summary on success, ``None`` when the workspace is missing/unwritable.
+
+    Prompt/completion split is per-run (``token_usage`` events + per-run
+    histograms); this aggregates the totals across runs into a single
+    fact-based summary, so the split is no longer "totals only".
+    """
+    try:
+        root = Path(workspace)
+        if not root.is_dir():
+            return None
+        report_path = root / "reports" / PLAN_EVALUATIONS_FILE
+        if not report_path.is_file():
+            summary = _empty_token_aggregate()
+            _write_json(root, PLAN_TOKEN_AGGREGATE_FILE, summary)
+            return summary
+        total_prompt: float | None = None
+        total_completion: float | None = None
+        total_tokens: float | None = None
+        count = 0
+        with report_path.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    ev = json.loads(line)
+                except json.JSONDecodeError:
+                    continue  # corrupt line skipped, never guessed
+                toks = ev.get("tokens")
+                if not isinstance(toks, Mapping):
+                    continue
+                prompt = _finite(toks.get("prompt_tokens"))
+                completion = _finite(toks.get("completion_tokens"))
+                total_t = _finite(toks.get("total_tokens"))
+                if prompt is None and completion is None and total_t is None:
+                    continue  # line without usable token facts: not a plan eval
+                if prompt is not None:
+                    total_prompt = _sum(total_prompt, prompt)
+                if completion is not None:
+                    total_completion = _sum(total_completion, completion)
+                if total_t is not None:
+                    total_tokens = _sum(total_tokens, total_t)
+                count += 1
+        summary = _token_aggregate(
+            prompt=total_prompt,
+            completion=total_completion,
+            total=total_tokens,
+            count=count,
+        )
+        _write_json(root, PLAN_TOKEN_AGGREGATE_FILE, summary)
+        return summary
+    except OSError:
+        return None
+    except Exception:
+        return None
+
+
+def _empty_token_aggregate() -> dict[str, Any]:
+    return _token_aggregate(
+        prompt=None, completion=None, total=None, count=0
+    )
+
+
+def _token_aggregate(
+    prompt: float | None,
+    completion: float | None,
+    total: float | None,
+    count: int,
+) -> dict[str, Any]:
+    return {
+        "schema_version": SCORING_SCHEMA_VERSION,
+        "kind": "plan_token_aggregate",
+        "prompt_tokens": prompt,
+        "completion_tokens": completion,
+        "total_tokens": total,
+        "plan_evaluations": count,
+    }
+
+
+def _finite(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    value = float(value)
+    if not math.isfinite(value) or value < 0:
+        return None
+    return value
+
+
+def _sum(current: float | None, value: float) -> float | None:
+    """Add *value* to *current*; ``None`` accumulates to ``None`` (no facts
+    seen yet — never guessed as zero)."""
+    if current is None:
+        return value
+    return current + value
+
+
+def _write_json(root: Path, filename: str, obj: dict[str, Any]) -> None:
+    path = root / "reports" / filename
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(obj, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
 
 
 def _int_or_none(value: Any) -> int | None:

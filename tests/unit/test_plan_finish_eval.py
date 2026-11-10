@@ -150,6 +150,70 @@ class TestWriteEvaluationForPlan:
         missing = tmp_path / "no-such-workspace"
         assert write_evaluation_for_plan(plan_dir, missing, success=True) == ""
 
+    def test_write_evaluation_for_plan_appends_aggregate_report(
+        self, tmp_path: Path
+    ) -> None:
+        # Gap 2: a single aggregated report file (append-only), alongside the
+        # per-plan artifact + executions ledger line.
+        plan_dir = _make_plan_dir(
+            tmp_path, report="- [t1] completed (role: implementer)\n"
+        )
+        _write_trace(tmp_path, "run1", [{"kind": "token_usage", "total_tokens": 420}])
+
+        write_evaluation_for_plan(plan_dir, tmp_path, success=True)
+
+        agg = tmp_path / "reports" / "plan_evaluations.jsonl"
+        assert agg.is_file()
+        lines = agg.read_text(encoding="utf-8").strip().splitlines()
+        assert len(lines) == 1
+        entry = json.loads(lines[0])
+        assert entry["kind"] == "plan_evaluation_aggregate"
+        assert entry["plan_id"] == "2026-11-08_12-00-00"
+        assert entry["tokens_total"] == 420
+        # Additive: per-plan artifact + ledger unchanged.
+        assert (plan_dir / "evaluation.json").is_file()
+        ledger = tmp_path / "reports" / "history" / "executions.jsonl"
+        assert len(ledger.read_text(encoding="utf-8").strip().splitlines()) == 1
+
+    def test_write_evaluation_for_plan_writes_token_aggregate_split(
+        self, tmp_path: Path
+    ) -> None:
+        # Gap 3: prompt/completion split aggregated across runs (totals only ->
+        # split) as a cumulative summary.
+        plan_dir = _make_plan_dir(
+            tmp_path, report="- [t1] completed (role: implementer)\n"
+        )
+        _write_trace(tmp_path, "run1", [
+            {"kind": "token_usage", "prompt_tokens": 100, "completion_tokens": 40,
+             "total_tokens": 140}
+        ])
+
+        write_evaluation_for_plan(plan_dir, tmp_path, success=True)
+
+        agg = tmp_path / "reports" / "plan_token_aggregate.json"
+        assert agg.is_file()
+        summary = json.loads(agg.read_text(encoding="utf-8"))
+        assert summary["kind"] == "plan_token_aggregate"
+        assert summary["prompt_tokens"] == 100
+        assert summary["completion_tokens"] == 40
+        assert summary["total_tokens"] == 140
+        assert summary["plan_evaluations"] == 1
+
+    def test_write_evaluation_for_plan_aggregate_is_best_effort_silent(
+        self, tmp_path: Path
+    ) -> None:
+        # Missing trace -> tokens None; the aggregate must still be written with
+        # None-safe (never 0) token totals and must not raise.
+        plan_dir = _make_plan_dir(tmp_path)
+        summary = write_evaluation_for_plan(plan_dir, tmp_path, success=True)
+        assert "Evaluation:" in summary
+
+        agg = tmp_path / "reports" / "plan_token_aggregate.json"
+        assert agg.is_file()
+        summary_json = json.loads(agg.read_text(encoding="utf-8"))
+        assert summary_json["total_tokens"] is None
+        assert summary_json["plan_evaluations"] == 0
+
 
 class TestPlanFinishHook:
     """The real code path: _nlp_plan_finish appends the evaluation summary."""

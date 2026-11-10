@@ -95,6 +95,8 @@ def collect_trace_token_facts(workspace: Path) -> dict[str, Any] | None:
     if not trace_dir.is_dir():
         return None
 
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
     total: int | None = None
     for path in sorted(trace_dir.glob("*.jsonl")):
         try:
@@ -107,13 +109,53 @@ def collect_trace_token_facts(workspace: Path) -> dict[str, Any] | None:
             continue
         run_total = _run_total_tokens(events)
         if run_total is not None:
+            # Capture the per-run prompt/completion split (the token_usage
+            # event carries it) alongside the total. Missing components stay
+            # None — never guessed, never zero.
+            norm = _run_token_usage_norms(events)
+            if norm is not None:
+                if prompt_tokens is None:
+                    prompt_tokens = norm.get("prompt_tokens")
+                if completion_tokens is None:
+                    completion_tokens = norm.get("completion_tokens")
             total = (total or 0) + run_total
 
     if total is None:
         return None
-    # Provider facts are totals; prompt/completion split is not aggregated
-    # across runs, so it stays None and normalize_token_usage keeps the total.
-    return {"prompt_tokens": None, "completion_tokens": None, "total_tokens": total}
+    # Provider facts are totals; the prompt/completion split is per-run and is
+    # carried here so gap 3 can aggregate it across runs. Missing components
+    # stay None (never guessed, never zero).
+    return {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total,
+    }
+
+
+def _run_token_usage_norms(
+    events: list[dict[str, Any]]
+) -> dict[str, int | None] | None:
+    """Return the normalized prompt/completion/total of the first usable
+    ``token_usage`` event in a run, or ``None`` when none is present.
+
+    Uses :func:`harnessfix.scoring.normalize_token_usage` so a missing/invalid
+    component stays ``None`` (never fabricated as zero) and the total is
+    derived from prompt+completion when the event omits it.
+    """
+    from harnessfix.scoring import normalize_token_usage
+
+    for ev in events:
+        if ev.get("kind") == "token_usage":
+            norm = normalize_token_usage(
+                usage={
+                    "prompt_tokens": ev.get("prompt_tokens"),
+                    "completion_tokens": ev.get("completion_tokens"),
+                    "total_tokens": ev.get("total_tokens"),
+                }
+            )
+            if norm is not None:
+                return norm
+    return None
 
 
 def _fmt_summary(record: dict[str, Any] | None) -> str:
@@ -260,7 +302,11 @@ def write_evaluation_for_plan(plan_dir: Path, workspace: Path, success: bool) ->
     silent and safe.
     """
     try:
-        from harnessfix.plan_eval import write_plan_evaluation
+        from harnessfix.plan_eval import (
+            append_plan_evaluation_aggregate,
+            write_plan_evaluation,
+            write_plan_token_aggregate,
+        )
 
         planned, completed = collect_task_counts(plan_dir)
         tokens = collect_trace_token_facts(workspace)
@@ -278,6 +324,14 @@ def write_evaluation_for_plan(plan_dir: Path, workspace: Path, success: bool) ->
             "tokens": tokens,
         }
         record = write_plan_evaluation(workspace, Path(plan_dir).name, facts)
+        # Gap 2: single aggregated report file (append-only), alongside the
+        # per-plan artifact + ledger line above. Best-effort: only appended when
+        # the evaluation record was written.
+        if record is not None:
+            append_plan_evaluation_aggregate(workspace, record)
+        # Gap 3: cumulative prompt/completion token-split across runs (totals
+        # only -> split). Recomputed from the aggregated file above; best-effort.
+        write_plan_token_aggregate(workspace)
         # Dashboard token metrics: emitted right where the token facts live.
         # Counters are emitted BEFORE the efficiency score so the per-task
         # histogram divides by this plan's own plans.finished.count.
