@@ -262,14 +262,14 @@
     "locations": [
       "kanban:deb4445272a74800af91885ddcba454d"
     ],
-    "status": "open",
+    "status": "resolved",
     "autonomy_level": 1,
-    "evidence": "[note] Root cause: the harness is English end to end (system prompt, tool schemas, tool results, logs) and the only language instruction was one clause at the end of a long rules list, so after long English tool loops the model drifted to English and answered non-English users in English. Fixed: agent_core/language.py is now the single owner of the reply-language policy - deterministic best-effort detector (script evidence first, then function-word markers; ties and one-marker cases stay inconclusive) plus the AGENT1_LANGUAGE override. The per-turn reminder is appended LAST in the system message on both rebuild paths, closest to the conversation, and run_utils.strip_dynamic_system_blocks cuts it at LANGUAGE_MARKER so exactly one copy exists per rebuild. English or undecidable turns add nothing: the prompt stays byte-identical to the baseline. Regression tests in tests/test_response_language.py.",
+    "evidence": "[note] Root cause: the harness is English end to end (system prompt, tool schemas, tool results, logs) and the only language instruction was one clause at the end of a long rules list, so after long English tool loops the model drifted to English and answered non-English users in English. Fixed: agent_core/language.py is now the single owner of the reply-language policy - deterministic best-effort detector (script evidence first, then function-word markers; ties and one-marker cases stay inconclusive) plus the AGENT1_LANGUAGE override. The per-turn reminder is appended LAST in the system message on both rebuild paths, closest to the conversation, and run_utils.strip_dynamic_system_blocks cuts it at LANGUAGE_MARKER so exactly one copy exists per rebuild. English or undecidable turns add nothing: the prompt stays byte-identical to the baseline. Regression tests in tests/test_response_language.py.\n[note] Language-drift fix landed and is contract-tested. agent_core/language.py is the single owner of reply-language policy; AGENT1_LANGUAGE is read live from os.environ at prompt-build time so it is always communicated to every LLM turn; the per-turn block is rebuilt last and stripped on rebuild (never accumulates). tests/test_response_language.py (34 tests) is green.",
     "suggested_approach": "",
     "decision_ref": null,
     "repair_ref": "agent_core/prompts/context_blocks.py:_language_block",
     "created_at": "2026-11-02T12:41:43+00:00",
-    "resolved_at": "2026-11-02T20:24:10+00:00"
+    "resolved_at": "2026-11-10T11:05:55+00:00"
   },
   {
     "id": "iss-general-kanban_059375f7c246475dac5585be3ba90afe",
@@ -347,14 +347,14 @@
     "locations": [
       "kanban:1514d5d399a348659f6b6fe084fcd5dd"
     ],
-    "status": "open",
+    "status": "resolved",
     "autonomy_level": 1,
-    "evidence": "",
+    "evidence": "[note] Language-drift fix landed and is contract-tested. agent_core/language.py is the single owner of reply-language policy; AGENT1_LANGUAGE is read live from os.environ at prompt-build time so it is always communicated to every LLM turn; the per-turn block is rebuilt last and stripped on rebuild (never accumulates). tests/test_response_language.py (34 tests) is green.",
     "suggested_approach": "Always keep the language in the Agent chat as a default language. I suggest we make a test which should be enforced.\n\nLanguage is handled in this test file: C:\\Dev\\Agent1\\tests\\test_response_language.py\n\nSetup the use of the AGENT1_LANGUAGE environment setting. Make sure the setting is ALWAYS communicated to the LLMs, so they know the official language of choice.",
     "decision_ref": null,
     "repair_ref": null,
     "created_at": "2026-11-04T18:06:16+00:00",
-    "resolved_at": null
+    "resolved_at": "2026-11-10T11:05:55+00:00"
   },
   {
     "id": "iss-general-kanban_eb3471f1797d4b8f8f6622d6f2fbe689",
