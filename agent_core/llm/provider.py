@@ -175,9 +175,9 @@ def _split_entry(entry: str) -> tuple[str, str | None]:
     """Split a failover-chain entry into ``(provider, model_or_None)``.
 
     Supports an optional per-entry model override so the same provider can
-    appear twice in different modes — e.g. ``opencode:opencode-zen/hy3-free``
-    (keyless free tier) and ``opencode:opencode-go/deepseek-v4-flash`` (keyed
-    tier) are BOTH the ``opencode`` provider but in different modes.  The model
+    appear twice in different slots — e.g. ``opencode:opencode-go/
+    deepseek-v4-flash`` (pinned cloud model) and a bare ``opencode`` entry
+    (provider default) are BOTH the ``opencode`` provider.  The model
     is split on the FIRST colon only, so OpenRouter model ids that contain
     ``:free`` are not mangled.  Returns ``(provider, None)`` when no override
     is present.
@@ -269,9 +269,9 @@ def build_provider(
 
     Each chain entry may carry a per-entry model override of the form
     ``provider:model`` (split on the first colon).  This lets the same
-    provider appear twice in different modes — e.g. ``opencode:opencode-zen/
-    hy3-free`` (keyless free tier, primary cloud) followed by ``opencode:
-    opencode-go/deepseek-v4-flash`` (keyed tier, secondary cloud).  When an
+    provider appear twice with different pinned models — e.g. ``opencode:
+    opencode-go/deepseek-v4-flash`` (primary cloud) followed by ``opencode:
+    opencode-go/mimo-v2.5`` (alternate).  When an
     entry has no override, the active ``model_name`` is used only if it
     already targets that provider (so a chosen zen model drives the zen slot
     and a chosen go model drives the go slot); otherwise the provider falls

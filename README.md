@@ -117,7 +117,7 @@ The agent supports multiple LLM providers with automatic failover. The provider 
 OPENCODE_API_KEY=sk-...
 ```
 
-Default model: `opencode-go/deepseek-v4-flash`. The free tier (`opencode-zen/hy3-free`) works without an API key — set `AGENT_LLM_PROVIDER=opencode` and the agent auto-selects a free model.
+Default model: `opencode-go/deepseek-v4-flash`. Set `AGENT_LLM_PROVIDER=opencode` and the agent uses the keyed opencode-go gateway.
 
 ### OpenRouter
 
@@ -146,7 +146,7 @@ Default endpoint: `http://localhost:8080/v1`.
 The agent automatically retries on a different provider when the active one is unreachable. Configure the chain in `.env`:
 
 ```
-AGENT_LLM_PROVIDERS=opencode:opencode-zen/hy3-free,opencode:opencode-go/deepseek-v4-flash,lmstudio,llama
+AGENT_LLM_PROVIDERS=opencode:opencode-go/deepseek-v4-flash,lmstudio,llama
 ```
 
 When a failover actually happens, the agent prints one line naming the model that answered and what was skipped, so you are never silently answered by a different model than the one you selected:
