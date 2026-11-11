@@ -10,6 +10,9 @@ Usage:
     issue list
     issue show <id>
     issue resolve <id> [resolved|deferred|wontfix] [--note "..."]
+    issue note <id> "text"
+    issue update <id> [--evidence "..."] [--approach "..."] [--status S]
+        [--note "..."]
     issue promote <id> <0|1|2>
     issue autonomy
 """
@@ -41,6 +44,15 @@ _ISSUE_HELP = """issue - Track systematic, autonomous-handled work items (.issue
 
   issue resolve <id> [resolved|deferred|wontfix] [--note "..."]
       Mark an issue done/shelved (human decision).
+
+  issue note <id> "text"
+      Append an intermediate work note (card-attributable issues also
+      update their child card on the Kanban board).
+
+  issue update <id> [--evidence "..."] [--approach "..."] [--status S]
+      [--note "..."]
+      Mutate the work fields; syncs issue_update to Kanban and updates the
+      child card for card-attributable issues.
 
   issue promote <id> <0|1|2>
       Raise/lower the autonomy_level. 0 = human-only, 1 = auto-safe,
@@ -80,6 +92,10 @@ class IssueCommand(Command):
             return self._cmd_show(args[1:])
         if sub == "resolve":
             return self._cmd_resolve(args[1:], agent)
+        if sub == "note":
+            return self._cmd_note(args[1:], agent)
+        if sub == "update":
+            return self._cmd_update(args[1:], agent)
         if sub == "promote":
             return self._cmd_promote(args[1:], agent)
         if sub == "autonomy":
@@ -216,6 +232,77 @@ class IssueCommand(Command):
             print(f"Resolved {issue_id} as {disposition}")
         else:
             self.error(f"No issue {issue_id}")
+        return True
+
+    # ── note ─────────────────────────────────────────────────────────────
+
+    def _cmd_note(self, args: list[str], agent: "Agent") -> bool:
+        if is_plan_mode(agent.mode):
+            self.error("issue note is blocked in plan mode (read-only session).")
+            return True
+        if len(args) < 2:
+            self.error('Usage: issue note <id> "text"')
+            return True
+        issue_id = args[0]
+        note = " ".join(args[1:]).strip()
+        if not note:
+            self.error('Usage: issue note <id> "text"')
+            return True
+        issues = issue_store.load_issues()
+        ok, msg = issue_store.update_issue(
+            issues, issue_id, note=note, emit_child_card=True
+        )
+        if ok:
+            issue_store.save_issues(issues)
+        print(msg)
+        return True
+
+    # ── update ───────────────────────────────────────────────────────────
+
+    def _cmd_update(self, args: list[str], agent: "Agent") -> bool:
+        if is_plan_mode(agent.mode):
+            self.error("issue update is blocked in plan mode (read-only session).")
+            return True
+        if not args:
+            self.error(
+                'Usage: issue update <id> [--evidence "..."] [--approach "..."] '
+                '[--status S] [--note "..."]'
+            )
+            return True
+        issue_id = args[0]
+        evidence = None
+        approach = None
+        status = None
+        note = ""
+        if "--evidence" in args:
+            i = args.index("--evidence")
+            if i + 1 < len(args):
+                evidence = args[i + 1]
+        if "--approach" in args:
+            i = args.index("--approach")
+            if i + 1 < len(args):
+                approach = args[i + 1]
+        if "--status" in args:
+            i = args.index("--status")
+            if i + 1 < len(args):
+                status = args[i + 1]
+        if "--note" in args:
+            i = args.index("--note")
+            if i + 1 < len(args):
+                note = args[i + 1]
+        issues = issue_store.load_issues()
+        ok, msg = issue_store.update_issue(
+            issues,
+            issue_id,
+            evidence=evidence,
+            suggested_approach=approach,
+            status=status,
+            note=note,
+            emit_child_card=True,
+        )
+        if ok:
+            issue_store.save_issues(issues)
+        print(msg)
         return True
 
     # ── promote ──────────────────────────────────────────────────────────

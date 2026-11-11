@@ -519,6 +519,63 @@ def resolve(
     return True
 
 
+def update_issue(
+    issues: list[dict[str, Any]],
+    issue_id: str,
+    *,
+    evidence: str | None = None,
+    suggested_approach: str | None = None,
+    status: str | None = None,
+    note: str = "",
+    emit_child_card: bool = False,
+) -> tuple[bool, str]:
+    """Mutate an existing issue record (intermediate work milestone).
+
+    Only fields explicitly provided (not ``None``) are touched, so a partial
+    update never clobbers a field the caller did not intend to change.  A
+    ``note`` is appended to ``evidence`` as a ``[note]`` line (matching
+    ``resolve``), so the trail stays chronological.
+
+    When ``emit_child_card`` is set and the issue is card-attributable, a
+    ``child_card_create`` is enqueued describing this milestone, so the board
+    shows intermediate work, not just intake and resolution.  The parent op
+    is ``issue_update`` (the existing Kanban contract).
+
+    Returns ``(ok, message)``.
+    """
+    it = find_by_id(issues, issue_id)
+    if it is None:
+        return False, f"no such issue {issue_id!r}"
+
+    if evidence is not None:
+        it["evidence"] = evidence
+    if suggested_approach is not None:
+        it["suggested_approach"] = suggested_approach
+    if status is not None:
+        it["status"] = status
+        if status in RESOLVED_STATUSES:
+            it["resolved_at"] = _now()
+            _release_claim_for_resolved(it)
+        elif it.get("resolved_at") is not None:
+            # Re-opening a previously resolved item clears the terminal stamp.
+            it["resolved_at"] = None
+    if note:
+        it["evidence"] = f"{it.get('evidence', '')}\n[note] {note}".strip()
+    it["updated_at"] = _now()
+
+    # The child card only makes sense for work-on-card issues; _emit_child_card_for
+    # gates on parent_card_id / kanban: location, so pass the flag only when the
+    # issue is card-attributable (the parent issue_update op always syncs).
+    card_id = it.get("parent_card_id") or _card_id_from_locations(it)
+    should_emit = bool(emit_child_card and card_id)
+
+    payload = dict(it)
+    payload["op"] = "issue_update"
+    _enqueue_sync("issue_update", issue_id, payload, emit_child_card=should_emit)
+
+    return True, f"updated {issue_id}"
+
+
 def promote(
     issues: list[dict[str, Any]],
     issue_id: str,
