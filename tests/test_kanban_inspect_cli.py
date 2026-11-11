@@ -133,6 +133,86 @@ def test_card_subcommand_shows_both_sides_and_the_description(
     assert "locations" in full["issue"]
 
 
+def test_card_subcommand_shows_the_work_log_of_linked_work(sandbox, capsys) -> None:
+    """``card`` answers "what did the Agent1 session do to this card?".
+
+    The child work record carries ``parent_card_id`` = the card, so it must
+    show up in the view's work log next to the card's own issue.
+    """
+    kb._apply_card_create(
+        {
+            "id": "ccli",
+            "title": "CLI card under test",
+            "text": "the description the bridge used to drop",
+            "frame_id": "f2",
+            "tags": [],
+        }
+    )
+    issues = issue_store.load_issues()
+    child = issue_store.make_issue(
+        "kanban-card-work",
+        "Add child card emission",
+        ["harnessfix/issues.py"],
+        evidence="emitted child card for card ccli",
+        suggested_approach="enqueue child_card_create with parent_id",
+        parent_card_id="ccli",
+    )
+    issues.append(child)
+    issue_store.resolve(issues, child["id"], "resolved", note="done")
+    issue_store.save_issues(issues)
+
+    full = _run(capsys, ["card", "ccli", "--full"])
+
+    log = full["work_log"]
+    assert any(rec["issue_id"] == child["id"] for rec in log), log
+    rec = next(r for r in log if r["issue_id"] == child["id"])
+    assert rec["status"] == "resolved"
+    assert rec["resolved_at"]
+    assert "emitted child card for card ccli" in rec["evidence"]
+    assert "enqueue child_card_create with parent_id" in rec["suggested_approach"]
+    # Chronological: the card's own issue was created before the child work.
+    ids = [r["issue_id"] for r in log]
+    assert ids[0] != child["id"] and ids[-1] == child["id"]
+
+
+def test_card_subcommand_reports_no_work_log_when_there_is_none(
+    sandbox, capsys
+) -> None:
+    """An unlinked card says so plainly instead of inventing work."""
+    view = _run(capsys, ["card", "ccli"])
+    assert view["work_log"] == []
+
+
+def test_work_log_for_card_matches_parent_id_and_location(sandbox) -> None:
+    """Both link forms count: ``parent_card_id`` and a ``kanban:<card>`` location."""
+    issues = [
+        {
+            "id": "by-parent",
+            "title": "via parent_card_id",
+            "status": "open",
+            "created_at": "2026-11-10T10:00:00+00:00",
+            "parent_card_id": "ccli",
+        },
+        {
+            "id": "by-location",
+            "title": "via kanban: location",
+            "status": "resolved",
+            "created_at": "2026-11-10T09:00:00+00:00",
+            "locations": ["kanban:ccli"],
+        },
+        {
+            "id": "unrelated",
+            "title": "other card",
+            "status": "open",
+            "created_at": "2026-11-10T08:00:00+00:00",
+            "parent_card_id": "other",
+        },
+    ]
+    log = issue_store.work_log_for_card(issues, "ccli")
+    assert [it["id"] for it in log] == ["by-location", "by-parent"]
+    assert issue_store.work_log_for_card(issues, "") == []
+
+
 def test_card_subcommand_resolves_a_title_the_user_typed(sandbox, capsys) -> None:
     """A human types the card's words, not its guid."""
     view = _run(capsys, ["card", "cli card under"])

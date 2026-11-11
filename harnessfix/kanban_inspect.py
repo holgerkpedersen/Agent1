@@ -397,7 +397,13 @@ def issue_view(key: str) -> dict[str, Any]:
     this view shows the raw text too, so nothing is hidden from the reader.
     """
     link = resolve(key)
-    out: dict[str, Any] = {"link": link, "issue": None, "card": None, "queue": []}
+    out: dict[str, Any] = {
+        "link": link,
+        "issue": None,
+        "card": None,
+        "queue": [],
+        "work_log": [],
+    }
 
     if link.get("issue_id"):
         issue = issue_store.find_by_id(issue_store.load_issues(), link["issue_id"])
@@ -417,6 +423,7 @@ def issue_view(key: str) -> dict[str, Any]:
                 f"card {card_id} is linked but is not on the active board "
                 "(deleted, or another board is active)"
             )
+        out["work_log"] = work_log(card_id)
 
     for direction, queue_dir in (
         ("kanban→agent1", kb.QUEUE_KANBAN_TO_AGENT1),
@@ -425,6 +432,33 @@ def issue_view(key: str) -> dict[str, Any]:
         for msg in pending_messages(queue_dir):
             if msg.get("source_id") in (card_id, link.get("issue_id")):
                 out["queue"].append({"direction": direction, "message": msg})
+    return out
+
+
+def work_log(card_id: str) -> list[dict[str, Any]]:
+    """The chronological trail of work done on *card_id*, from the ledger.
+
+    Each entry is a compact record — id, title, status, evidence, approach,
+    timestamps — ordered oldest first, so ``kanban card <id>`` can answer
+    "what did the Agent1 session do to this card?" without reading
+    ``.issues.json`` by hand.  Empty when the card has no linked work.
+    """
+    if not card_id:
+        return []
+    records = issue_store.work_log_for_card(issue_store.load_issues(), card_id)
+    out: list[dict[str, Any]] = []
+    for it in records:
+        out.append(
+            {
+                "issue_id": it.get("id"),
+                "title": it.get("title"),
+                "status": it.get("status"),
+                "evidence": it.get("evidence") or "",
+                "suggested_approach": it.get("suggested_approach") or "",
+                "created_at": it.get("created_at"),
+                "resolved_at": it.get("resolved_at"),
+            }
+        )
     return out
 
 

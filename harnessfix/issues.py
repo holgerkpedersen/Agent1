@@ -84,6 +84,40 @@ def _should_sync() -> bool:
         return False
 
 
+def _agent_identity():
+    """Lazy-load the session identity module (stdlib-only; no import cycle).
+
+    Returns ``None`` when the module is unavailable — identity stamping is a
+    best-effort side-effect and must never break an issue op.
+    """
+    try:
+        from agent_core.session import identity  # type: ignore[import-not-found,unused-import]
+
+        return identity
+    except Exception:  # noqa: BLE001 — sync-side metadata must not break the ledger
+        return None
+
+
+def _stamp_identity(payload: dict[str, Any]) -> dict[str, Any]:
+    """Copy *payload* with the acting session's identity fields added.
+
+    Field names are the cross-repo contract (``agent1_session``,
+    ``agent1_label``, ``claimed_at``) — see
+    ``agent_core/session/identity.py``.  The stamp is applied to every
+    outbound Kanban payload so the board shows *which* Agent1 session did the
+    work; failures degrade to the un-stamped payload.
+    """
+    ident = _agent_identity()
+    if ident is None:
+        return dict(payload)
+    try:
+        stamped = dict(payload)
+        stamped.update(ident.identity_payload())
+        return stamped
+    except Exception:  # noqa: BLE001 — identity metadata must not break the op
+        return dict(payload)
+
+
 def _enqueue_sync(
     op: str, source_id: str, payload: dict[str, Any], emit_child_card: bool = False
 ) -> None:
@@ -105,9 +139,11 @@ def _enqueue_sync(
             return
         kb = _get_kanban_bridge()
         if kb is not None:
-            kb.enqueue({"op": op, "source_id": source_id, "payload": payload})
+            kb.enqueue(
+                {"op": op, "source_id": source_id, "payload": _stamp_identity(payload)}
+            )
             if emit_child_card:
-                _emit_child_card_for(payload)
+                _emit_child_card_for(payload, op=op)
     except Exception as exc:  # noqa: BLE001 — deliberately swallow, sync is optional
         import logging
 
@@ -129,7 +165,7 @@ def _card_id_from_locations(payload: dict[str, Any]) -> str | None:
     return None
 
 
-def _emit_child_card_for(payload: dict[str, Any]) -> None:
+def _emit_child_card_for(payload: dict[str, Any], op: str = "") -> None:
     """Best-effort: emit a child-card payload for work on a synchronized card.
 
     Only work-on-card issues (those attributable to a card via ``parent_card_id``
@@ -138,10 +174,23 @@ def _emit_child_card_for(payload: dict[str, Any]) -> None:
     primary issue op that triggered the emission.
 
     The child-card payload carries the work record (title/text = work summary,
-    evidence/approach, plus issue id/status/op/ts metadata) and ``parent_id``
+    evidence/approach, plus issue id/status/op metadata) and ``parent_id``
     = the card it belongs to, so the Kanban reader (Component 2) can nest the
     child card under the parent.  The work itself is also captured on the Agent1
     issue ledger (``.issues.json``); the payload just surfaces it on the board.
+
+    **One child card per work item**: the op is ``child_card_create`` with
+    ``source_id`` = the issue id, so one work item maps to exactly one child
+    card.  The Kanban reader (Component 2) creates it on first sight and
+    updates it in place on every later emission for the same ``source_id``
+    (milestones keep the same card).  The payload carries the acting session's
+    identity (``agent1_session``/``agent1_label``) so the board shows who did
+    the work.
+
+    The op name is part of the **cross-repo contract**: the reader dispatches
+    ``child_card_create`` and ignores ops it does not know, so renaming this
+    op silently drops every child card.  Change it only together with
+    ``src/agent1/kanban_sync.py`` in the Kanban repo.
     """
     card_id = payload.get("parent_card_id") or _card_id_from_locations(payload)
     if not card_id:
@@ -150,10 +199,20 @@ def _emit_child_card_for(payload: dict[str, Any]) -> None:
     issue_id = payload.get("id")
     issue_status = payload.get("status", "open")
     summary = _work_summary_for_child_card(payload)
+    op_val = (op or payload.get("op") or "").strip()
 
     kb = _get_kanban_bridge()
     if kb is None:
         return
+    ident = _agent_identity()
+    sess = ""
+    label = ""
+    if ident is not None:
+        try:
+            sess, label = ident.session_id(), ident.agent_label()
+        except Exception:  # noqa: BLE001 — badge metadata is optional
+            pass
+    sess_tag = f"[{sess}]" if sess else ""
     try:
         kb.enqueue(
             {
@@ -161,13 +220,19 @@ def _emit_child_card_for(payload: dict[str, Any]) -> None:
                 "source_id": issue_id or card_id,
                 "payload": {
                     "parent_id": card_id,
-                    "title": summary,
+                    "title": f"[Agent1 work]{sess_tag} {issue_id} ({issue_status})",
                     "text": summary,
                     "issue_id": issue_id,
-                    "op": payload.get("op", ""),
+                    "op": op_val,
                     "status": issue_status,
                     "created_at": payload.get("created_at") or _now(),
                     "system": "harnessfix",
+                    # Session identity for the board (cross-repo contract).
+                    "agent1_session": sess,
+                    "agent1_label": label,
+                    # Badge tags so the child card is identifiable as a child of
+                    # the parent (and by its author) in flat views.
+                    "tags": [f"[card:{card_id}]"] + ([sess_tag] if sess_tag else []),
                 },
             }
         )
@@ -182,19 +247,122 @@ def _emit_child_card_for(payload: dict[str, Any]) -> None:
 
 
 def _work_summary_for_child_card(payload: dict[str, Any]) -> str:
-    """Build the child-card title/text from the work record.
+    """Build the child-card body from the work record.
 
-    Title carries the work id + status (the work identity); text carries the
-    evidence/approach body so the work is visible on the board alone.
+    The body leads with a header line naming the work item and its status, so
+    the card text is self-describing on the board (a reader sees which issue and
+    how far it got without opening the Agent1 ledger).  Evidence and approach
+    follow.  Empty fields are skipped — a missing fact stays absent, never a
+    placeholder.
     """
     parts: list[str] = []
+    header = " ".join(
+        str(v) for v in (payload.get("id"), payload.get("status")) if v
+    )
+    if header:
+        parts.append(header)
     if payload.get("evidence"):
         parts.append(payload["evidence"])
     if payload.get("suggested_approach"):
         parts.append(f"Approach:\n{payload['suggested_approach']}")
     body = "\n\n---\n".join(parts)
-    title = f"[work] {payload.get('id')} ({payload.get('status', 'open')})"
-    return title + (f"\n\n---\n{body}" if body else "")
+    return body
+
+
+def _claim_for_card(card_id: str, payload: dict[str, Any]) -> tuple[bool, dict]:
+    """First-writer-wins claim on *card_id* for this session (best-effort).
+
+    Returns ``(acquired, record)``.  When the card is live-claimed by a foreign
+    session, returns ``(False, their_record)`` and enqueues a ``card_claimed``
+    message naming the FOREIGN owner so the board records who claimed it first
+    (the claim protocol: Kanban-side assignment emits the same op).
+    """
+    ident = _agent_identity()
+    if ident is None:
+        return True, {}
+    try:
+        acquired, record = ident.claim_card(card_id)
+    except Exception:  # noqa: BLE001 — claim bookkeeping must not break the op
+        return True, {}
+    if not acquired:
+        kb = _get_kanban_bridge()
+        if kb is not None:
+            try:
+                kb.enqueue(
+                    {
+                        "op": "card_claimed",
+                        "source_id": card_id,
+                        "payload": {
+                            "card_id": card_id,
+                            "owner": record.get("owner"),
+                            "label": record.get("label"),
+                            "claimed_at": record.get("claimed_at"),
+                            "attempted_by": ident.session_id(),
+                            "issue_id": payload.get("id"),
+                            "system": "harnessfix",
+                        },
+                    }
+                )
+            except Exception:  # noqa: BLE001 — notification is best-effort
+                pass
+    return acquired, record
+
+
+def claim_card_for_work(issue_id: str) -> tuple[bool, str]:
+    """Claim-before-work entry point for card-attributed issues (Task 3).
+
+    Call this BEFORE starting work on an issue that came from a Kanban card.
+    It resolves the issue's card id, applies the first-writer-wins claim, and
+    enqueues a ``card_claimed`` message so the board records the owner.
+
+    Returns ``(acquired, message)``:
+      * ``(True,  "claimed card <id> ...")`` — this session owns the card; proceed.
+      * ``(True,  "not card-attributed ...")`` — no card link; nothing to claim.
+      * ``(False, "card <id> is claimed by ...")`` — a foreign live session
+        holds it; the caller MUST NOT start work (hard block).
+
+    Sync-off is a no-op success: with no board there is nothing to claim.
+    """
+    if not _should_sync():
+        return True, "sync disabled — nothing to claim"
+    issues = load_issues()
+    it = find_by_id(issues, issue_id)
+    if it is None:
+        return False, f"no issue {issue_id} in the ledger"
+    card_id = it.get("parent_card_id") or _card_id_from_locations(it)
+    if not card_id:
+        return True, "not card-attributed — nothing to claim"
+    ident = _agent_identity()
+    if ident is None:
+        return True, "identity unavailable — claim skipped"
+    acquired, record = _claim_for_card(card_id, it)
+    if not acquired:
+        owner = record.get("owner") or record.get("label") or "unknown"
+        return (
+            False,
+            f"card {card_id} is claimed by session '{owner}' "
+            f"(claimed_at {record.get('claimed_at')}) — do not start work",
+        )
+    kb = _get_kanban_bridge()
+    if kb is not None:
+        try:
+            kb.enqueue(
+                {
+                    "op": "card_claimed",
+                    "source_id": card_id,
+                    "payload": {
+                        "card_id": card_id,
+                        "owner": ident.session_id(),
+                        "label": ident.agent_label(),
+                        "claimed_at": record.get("claimed_at"),
+                        "issue_id": issue_id,
+                        "system": "harnessfix",
+                    },
+                }
+            )
+        except Exception:  # noqa: BLE001 — claim notification is best-effort
+            pass
+    return True, f"claimed card {card_id} for session {ident.session_id()}"
 
 
 def _now() -> str:
@@ -290,6 +458,26 @@ def upsert(issues: list[dict[str, Any]], issue: dict[str, Any]) -> bool:
     return True
 
 
+def _release_claim_for_resolved(issue: dict[str, Any]) -> None:
+    """Release the card claim held by this session for *issue*'s card.
+
+    Best-effort and idempotent: a no-op when the issue is not card-attributed,
+    when identity is unavailable, or when this session holds no claim.  Only
+    the owner's claim is released (``identity.release_card`` checks ownership),
+    so resolving an issue can never steal a foreign session's claim.
+    """
+    card_id = issue.get("parent_card_id") or _card_id_from_locations(issue)
+    if not card_id:
+        return
+    ident = _agent_identity()
+    if ident is None:
+        return
+    try:
+        ident.release_card(card_id)
+    except Exception:  # noqa: BLE001 — claim bookkeeping must not break the op
+        pass
+
+
 def resolve(
     issues: list[dict[str, Any]],
     issue_id: str,
@@ -311,6 +499,14 @@ def resolve(
     it["resolved_at"] = _now() if disposition in RESOLVED_STATUSES else None
     if note:
         it["evidence"] = f"{it.get('evidence', '')}\n[note] {note}".strip()
+
+    # Release this issue's claim on the card it belongs to.  Without this the
+    # claim outlives the work: ``release_card`` has no other automatic caller,
+    # so a completed card stays claimed and every later visit to the same card
+    # is refused as "claimed by <old session>".  The lease must end with the
+    # work; the TTL in ``identity.claim_owner`` stays as the crash safety net.
+    if disposition in RESOLVED_STATUSES:
+        _release_claim_for_resolved(it)
 
     # Enqueue resolution to Kanban if sync is enabled (best-effort side-effect)
     payload = dict(it)  # copy of the resolved issue
@@ -344,6 +540,36 @@ def promote(
     _enqueue_sync("issue_update", issue_id, dict(it))
 
     return True, f"promoted {issue_id} to autonomy_level={level}"
+
+
+def work_log_for_card(
+    issues: list[dict[str, Any]],
+    card_id: str,
+) -> list[dict[str, Any]]:
+    """Every ledger record whose work belongs to *card_id*, oldest first.
+
+    This is the Agent1-side answer to "what did the session do to this Kanban
+    card?".  The issue ledger already IS the work ledger — it carries status,
+    evidence, suggested_approach and resolved_at per work item — so no second
+    store is needed; what was missing is the card→issues query.
+
+    A record belongs to the card when ``parent_card_id`` matches (set by the
+    bridge when a card is linked) or a ``kanban:<card_id>`` location matches
+    (the fallback used for cards bridged before ``parent_card_id`` existed).
+    The parent issue itself is included first when it is the card's own record,
+    followed by any child work items. Ordering is by ``created_at`` then id so
+    the trail reads chronologically and stays stable across runs.
+    """
+    if not card_id:
+        return []
+    out = [
+        it
+        for it in issues
+        if it.get("parent_card_id") == card_id
+        or _card_id_from_locations(it) == card_id
+    ]
+    out.sort(key=lambda it: (str(it.get("created_at") or ""), str(it.get("id") or "")))
+    return out
 
 
 def open_issues(
