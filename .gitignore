@@ -173,10 +173,15 @@ checkpoints/
 # sibling Kanban checkout's data/, but a local override (or an older default)
 # can create one here; queue state is machine-local and never source.
 data/
+# In-flight card claims written by the claim logic during normal use — runtime
+# state, machine-local, never source.
+.card_claims.json
 pytest_out.txt
 performance_dashboard.html
 model.json
 reports/benchmark_*.json
+reports/plan_evaluations.jsonl
+reports/plan_token_aggregate.json
 turn_log.jsonl
 meta_policy.json
 perf_history.json
