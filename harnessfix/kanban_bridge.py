@@ -784,6 +784,43 @@ def _apply_card_delete(payload: dict[str, Any]) -> bool:
     return True
 
 
+def _apply_card_work(payload: dict[str, Any]) -> bool:
+    """Handle a Kanban "Work" request: claim the card's issue before work starts.
+
+    The Kanban side sends ``card_work`` when a user asks Agent1 to take a card.
+    The request is consumed in every outcome, so a refusal is never retried:
+
+    * untracked card (no issue in the ledger): nothing to work on, no-op;
+    * foreign live claim: ``claim_card_for_work`` refuses, so work must not start;
+    * claim acquired: this session owns the card and may start work.
+
+    Only the claim is applied here. Executing the issue is left to the caller
+    that checks the claim.
+    """
+    from . import issues as issue_store  # lazy import to avoid cycles
+
+    source_id = payload.get("source_id", "")
+    if not source_id:
+        return False
+
+    existing, resolved, _issues = _lookup_issue_for(source_id)
+    if existing is None:
+        logger.info(
+            "card_work: %s is not tracked by the bridge — nothing to work on",
+            source_id,
+        )
+        return True
+
+    issue_id = resolved if resolved is not None else existing["id"]
+    acquired, message = issue_store.claim_card_for_work(issue_id)
+    if not acquired:
+        logger.warning("card_work refused for %s: %s", source_id, message)
+        return True
+
+    logger.info("card_work accepted for %s: %s", source_id, message)
+    return True
+
+
 # --- Inbound processor ---------------------------------------------------------
 
 
@@ -800,6 +837,8 @@ def _process_single_message(msg: dict[str, Any]) -> bool:
         return _apply_card_move(msg)
     elif op == "card_delete":
         return _apply_card_delete(msg)
+    elif op == "card_work":
+        return _apply_card_work(msg)  # reads the top-level source_id
     else:
         logger.warning("Unknown inbound op: %s", op)
         return False

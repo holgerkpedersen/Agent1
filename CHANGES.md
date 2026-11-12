@@ -1,3 +1,13 @@
+## 2026-11-12 - feat(kanban): handle `card_work` requests from the board's Work button
+
+**Change**: `harnessfix/kanban_bridge.py` dispatches the new inbound op `card_work` to `_apply_card_work`. The handler resolves the card to its issue via `_lookup_issue_for`, then calls `issues.claim_card_for_work` (claim-before-work, first-writer-wins). It consumes the message in every outcome: an untracked card is a quiet no-op, a foreign live claim is logged and refused, and a missing `source_id` is a failure. The handler applies only the claim; it does not start work.
+
+**Reason**: Kanban card "Work button" (`5275aa3f18d24b279ef904b6e78c1bdd`). The Kanban board's `POST /api/cards/<id>/work` queues `card_work`, but Agent1 had no consumer, so the message was logged as an unknown op.
+
+**Files**: `harnessfix/kanban_bridge.py` (`_apply_card_work`, dispatch branch), `tests/test_kanban_card_work.py` (new, 4 regression tests drive `process_inbound` against a temp queue and check consumption through `read_queue`).
+
+**Verification**: `python -m pytest tests/test_kanban_card_work.py` → 4 passed; related Kanban tests (72) passed; full suite → 4800 passed, 23 skipped.
+
 ## 2026-11-10 - feat(kanban): session identity, card claims and child cards for board visibility
 
 **Change**: every outbound Kanban payload now carries the acting Agent1 session's identity — `agent1_session` (slug), `agent1_label` (`<slug>@<host>`) and `claimed_at` — stamped centrally in `harnessfix/issues.py::_enqueue_sync` via `_stamp_identity`. New module `agent_core/session/identity.py` resolves the identity once per process (`AGENT1_SESSION_ID` env / repo `.env` → process-active session → `default`) and owns the local claim mirror `.card_claims.json`: `claim_card` is first-writer-wins (a live foreign claim is refused; claims expire after `CLAIM_TTL_SECONDS`=24 h, with a ×`REMOTE_LIVENESS_GRACE` grace for claims stamped on another host, which cannot be liveness-probed), `release_card` is owner-only. The REPL/issue commands claim the card before work starts (`claim_card_for_work`) and refuse to begin on a foreign live claim, emitting a `card_claimed` notification; resolving a card-attributed issue releases the owner's claim and never steals a foreign one. Child cards gained a `[<session>]` badge in the title (and `[session:<slug>]` tag), are deduped by `source_id`, and sync-off remains a strict no-op.
