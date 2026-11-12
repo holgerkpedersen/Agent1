@@ -298,6 +298,17 @@ into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`
 
 ## Verification commands
 
+- **pytest exit noise from a wedged `pytest-current` link (2026-11-12, SOLVED)**:
+  a wedged `%TEMP%\pytest-of-<user>\pytest-current` symlink (delete-pending —
+  enumerable but every open/stat/delete gets WinError 5) made pytest's atexit
+  `cleanup_dead_symlinks` sweep raise `PermissionError` on EVERY tmp-using run
+  ("Exception ignored in atexit callback"; exit code stayed 0). Both repos now
+  arm `_harden_pytest_temp_cleanup()` from conftest (wraps
+  `_pytest.pathlib.cleanup_dead_symlinks`, OSError-only, idempotent) — do NOT
+  remove it. The wedged name itself clears at reboot (delete-pending) and an
+  unprivileged shell cannot recreate `pytest-current` (`os.symlink` ->
+  WinError 1314), so the artifact is a one-off of a crashed/privileged run.
+  Old workaround `--basetemp=C:\Dev\Kanban\.pytest_tmp_recover` is obsolete.
 - **Test efficiently — never pay for the whole suite twice.**
   - **Full-suite gate (2026-09-30)** `agent_core/pytest_gate.py`: a
     WHOLE-SUITE run (no test path, or `tests`/`.` spelled out) is REFUSED by

@@ -12,6 +12,14 @@
 - Child cards: `child_card_create` with `parent_id`, title `[Agent1 work][<session>] <issue-id> (<status>)`, tags `[card:<id>]` and `[session:<slug>]`; one child card per issue, updated in place by dedup on the envelope's `source_id`.
 - **Not shipped**: `child_card_update` and `card_released` ops (the plan listed them; the implementation uses `source_id` dedup for update-in-place and releases claims locally without a board op). The Kanban reader must not require them.
 
+## 2026-11-12 - fix(tests): guard the pytest atexit temp sweep against a wedged pytest-current link
+
+**Change**: `conftest.py` gains `_harden_pytest_temp_cleanup()` (armed at conftest import): it wraps `_pytest.pathlib.cleanup_dead_symlinks` — the atexit temp sweep — so an entry that is enumerable but not stat-able is skipped instead of raising at interpreter exit. Regression tests in `tests/test_pytest_temp_cleanup_guard.py` (5).
+
+**Reason**: every tmp-using pytest run on the machine ended with `Exception ignored in atexit callback` + `PermissionError: [WinError 5] ... pytest-current`: `cleanup_numbered_dir` (registered via atexit by `make_numbered_dir_with_cleanup`) calls `cleanup_dead_symlinks(root)`, whose `left_dir.resolve().exists()` re-raises WinError 5 for the wedged `pytest-current` symlink in the machine-global `%TEMP%\pytest-of-<user>` root (enumerable via directory listing but every open/stat/`DeleteFileW`/`RemoveDirectoryW`/`MoveFileEx` gets error 5 — a delete-pending reparse point left by a crashed or privileged run; note `os.symlink` fails with WinError 1314 in a normal shell here, so an unprivileged run cannot recreate the link). Exit code stayed 0, but the stderr noise made run wrappers report failures and confused the agent loop. The guard makes runs immune now and after the wedged name clears (delete-pending names vanish at reboot and nothing unprivileged can recreate them). The swallow is OSError-only and the wrap is idempotent + no-op if pytest renames the function.
+
+**Files**: `conftest.py`, `tests/test_pytest_temp_cleanup_guard.py` (new), CHANGES.md. Verified: the guard tests pass in both repos and a full tmp-using run (`tests/test_kanban_child_card_emission.py`) now exits without any atexit traceback.
+
 ## 2026-11-08 - fix(commands): `clear` explains its counters; knowledge graph counted in entries
 
 **Change**: `agent_core/commands/clear_cmd.py` — the knowledge-graph line now prints `N entries in M sections` (was `M sections`), an empty graph prints a one-line hint (`kg add fact <key> <value>` / `python scripts/seed_kg.py`), and the working-memory / semantic-index lines only show when non-zero. The "Nothing to clear." check now uses entry count. `agent_core/memory/persistence.py:memory_stats()` gained `knowledge_graph_entries` (sum of per-section entry counts, tolerant of non-dict sections); `knowledge_graph` (section count) is unchanged for existing consumers (`kg` command docs, MCP `memory_stats`, seed tests).

@@ -535,6 +535,42 @@ def _watchdog_loop(started: float, budget: float, stop: threading.Event) -> None
             os._exit(124)  # 124 = timeout, same convention as `timeout(1)`
 
 
+def _harden_pytest_temp_cleanup() -> None:
+    """Neutralize a wedge in pytest's atexit temp-dir cleanup on Windows.
+
+    ``_pytest.pathlib.make_numbered_dir_with_cleanup`` registers
+    ``cleanup_numbered_dir`` via ``atexit``; it ends with an unguarded
+    ``cleanup_dead_symlinks(root)`` sweep whose
+    ``left_dir.resolve().exists()`` RE-RAISES ``[WinError 5]`` for an entry
+    that is enumerable but not stat-able (observed 2026-11-12: a wedged
+    ``pytest-current`` symlink in the machine-global
+    ``%TEMP%\\pytest-of-<user>`` root, delete-pending after a crashed or
+    privileged run).  Python 3.12 then prints "Exception ignored in atexit
+    callback" on EVERY tmp-using run, and run wrappers read that as a
+    failure.  Wrapping the sweep so an unstatable entry is skipped (a
+    delete-pending name clears when the OS releases it; nothing userspace
+    can do sooner) removes the noise deterministically.  Idempotent and
+    defensive: a no-op if pytest ever renames the function.
+    """
+    import _pytest.pathlib as _pl
+
+    orig = getattr(_pl, "cleanup_dead_symlinks", None)
+    if orig is None or getattr(orig, "_temp_cleanup_hardened", False):
+        return
+
+    def _safe_cleanup_dead_symlinks(root: object) -> None:
+        try:
+            orig(root)
+        except OSError:
+            pass  # wedged entry: leave it for the OS, never raise at exit
+
+    _safe_cleanup_dead_symlinks._temp_cleanup_hardened = True  # type: ignore[attr-defined]
+    _pl.cleanup_dead_symlinks = _safe_cleanup_dead_symlinks  # type: ignore[assignment]
+
+
+_harden_pytest_temp_cleanup()
+
+
 def pytest_sessionstart(session: pytest.Session) -> None:
     session._full_run_started = time.monotonic()
     session._is_full_run = _is_full_run(session.config)
