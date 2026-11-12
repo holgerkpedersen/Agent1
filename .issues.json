@@ -372,5 +372,23 @@
     "repair_ref": null,
     "created_at": "2026-11-04T20:47:32+00:00",
     "resolved_at": "2026-11-08T10:58:31+00:00"
+  },
+  {
+    "id": "iss-kanban-tree-view-edit-kanban_6ff7445d63e44c2491fc35acfb7b839a",
+    "title": "Editing a Kanban Card from /tree-view",
+    "category": "kanban-tree-view-edit",
+    "severity": "low",
+    "locations": [
+      "kanban:6ff7445d63e44c2491fc35acfb7b839a"
+    ],
+    "status": "resolved",
+    "autonomy_level": 1,
+    "evidence": "Tree view now has full board parity: search, tag/date/integrated filters, card editor (title/text/frame/parent/status), add-card, and edit/delete tools on every tree card. Verified by tests/test_tree_view_depth.py; full suite 225 passed.\n[note] Tree view board parity shipped: search, tag/date/integrated filters, card editor (title/text/frame/parent/status), add-card, edit/delete tools on tree cards. Kanban repo commits through 8b910aa; full suite 225 passed.",
+    "suggested_approach": "Ship /tree-view with the same filtering and editing capabilities as the board view.",
+    "decision_ref": null,
+    "repair_ref": null,
+    "created_at": "2026-11-12T08:57:40+00:00",
+    "resolved_at": "2026-11-12T08:58:37+00:00",
+    "parent_card_id": "6ff7445d63e44c2491fc35acfb7b839a"
   }
 ]
