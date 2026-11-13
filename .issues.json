@@ -391,5 +391,22 @@
     "created_at": "2026-11-12T08:57:40+00:00",
     "resolved_at": "2026-11-12T08:58:37+00:00",
     "parent_card_id": "6ff7445d63e44c2491fc35acfb7b839a"
+  },
+  {
+    "id": "iss-general-kanban_56eb9c524e7046999c563f5acf8564c8",
+    "title": "Color red - false positive",
+    "category": "general",
+    "severity": "low",
+    "locations": [
+      "kanban:56eb9c524e7046999c563f5acf8564c8"
+    ],
+    "status": "resolved",
+    "autonomy_level": 1,
+    "evidence": "When showing a result in the chat REPL, the error guard is letting non-errors display as red. The coloring is based on patterns instead of the issue. If a string in source code states Error, this is not an error to flag with red text-color.\n[note] Fixed REPL result coloring: red only for explicit tool-result error prefixes, not arbitrary lines containing error. Added regression tests in tests/test_colors_result.py.",
+    "suggested_approach": "",
+    "decision_ref": null,
+    "repair_ref": null,
+    "created_at": "2026-11-13T15:16:39+00:00",
+    "resolved_at": "2026-11-13T16:18:34+00:00"
   }
 ]

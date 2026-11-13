@@ -86,7 +86,8 @@ def colorize_result(result: str) -> str:
     """Heuristic color-coding of a tool result string.
 
     - Lines starting with ``Error`` / ``Search error`` / ``Write error`` etc.
-      are colored red.
+      are colored red. Only line prefixes count: a line that merely contains
+      the word ``error`` (source code, quoted text, paths) is not an error.
     - The ``[verify] py_compile ✓`` marker is green; the ✗ variant is red.
     - ``[STDERR]`` blocks and hints are yellow.
     - Success markers (``Successfully wrote``, ``Written ...``, ``Edited``)
@@ -129,7 +130,6 @@ def colorize_result(result: str) -> str:
             or low.startswith("diff error")
             or low.startswith("git error")
             or low.startswith("list error")
-            or "error:" in low
         ):
             out_lines.append(red(line))
             continue
