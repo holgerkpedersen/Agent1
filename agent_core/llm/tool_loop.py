@@ -2182,9 +2182,9 @@ def _quiet_safe_args(name: str, args: dict[str, Any]) -> dict[str, Any]:
     Command-valued keys (``command``/``cmd``, see ``_COMMAND_KEYS``) are the
     tool call itself — in QUIET they must never reach the screen.  Dropping
     them makes ``_why_base`` fall back to its generic category phrase
-    ("to execute/verify (command)"), which states the intent without the
-    payload.  Everything else (paths, queries) is a short descriptor and
-    stays.
+    ("to execute (command)" / "to verify (command)"), which states the
+    intent without the payload.  Everything else (paths, queries) is a
+    short descriptor and stays.
     """
     return {k: v for k, v in args.items() if k not in _COMMAND_KEYS}
 
@@ -2348,7 +2348,8 @@ def _run_purpose(command: str) -> str:
     INTENT mode's ``why:`` line should say *what* the agent is trying to
     accomplish, not merely re-print the raw command.  Detect common command
     families and describe them in plain language; fall back to ``''`` so the
-    generic ``to execute/verify <command>`` form is used for the rest.
+    generic ``to execute <command>`` / ``to verify <command>`` form is used
+    for the rest.
     """
     c = command.strip()
     low = c.lower()
@@ -2388,6 +2389,7 @@ def _why_base(tool_name: str, args: dict[str, Any]) -> str:
         path = str(args.get("path", ""))[:60]
         return f"to patch {path}"
     if tool_name in ("run", "git", "tests"):
+        verb = "execute" if tool_name == "run" else "verify"
         cmd = str(args.get("command", "") or args.get("cmd", "") or "")
         # The FULL command is rendered first: the reason line shows exactly
         # what will run (never truncated).  Showing the command here is
@@ -2398,10 +2400,12 @@ def _why_base(tool_name: str, args: dict[str, Any]) -> str:
             purpose = _run_purpose(cmd)
             if purpose:
                 return f"{cmd} ({purpose})"
-            return f"to execute/verify {cmd}"
-        return f"to execute/verify {arg_summary or '(command)'}"
+            return f"to {verb} {cmd}"
+        # git/tests carry subcommand/args and tests carries path/framework —
+        # they have no command key, so the argument summary is the display.
+        return f"to {verb} {arg_summary or '(command)'}"
     if tool_name == "diff":
-        file1 = str(args.get("file1", ""))[:60]
+        file1 = str(args.get("file1", ""))[:80]
         return f"to compare changes in {file1}"
     if tool_name == "analyze":
         target = arg_summary or "(code)"

@@ -444,3 +444,62 @@ def test_runner_state_resets_between_runs():
     assert runner.tools_used == {"read": 1, "search": 1}
     assert runner.termination_reason == "answer"
     assert not runner._mutated_files
+
+
+# ---------------------------------------------------------------------------
+# _why_base: CLEAN/INTENT reason line for run/git/tests (July 2026 review)
+#
+# Defect fixed here: the git/tests branch rendered ``to verify {cmd} (...)``
+# with an empty ``cmd``, producing a double space and stray parentheses
+# ("to verify  (subcommand=status, args=-A)").  git and tests have no
+# command key at all (schemas use subcommand/args, path/framework), so the
+# fallback is their ONLY rendering path.
+# ---------------------------------------------------------------------------
+
+def test_why_base_git_and_tests_fallback_no_empty_command():
+    """git/tests carry no 'command' arg: the reason line must render the
+    argument summary with verb 'verify', with no double spaces and no
+    empty parentheses."""
+    from agent_core.llm.tool_loop import _why_base
+
+    got = _why_base("git", {"subcommand": "status", "args": "-A"})
+    assert got == "to verify subcommand=status, args=-A"
+    got = _why_base("tests", {"path": "tests/test_x.py"})
+    assert got == "to verify path=tests/test_x.py"
+    for phrase in (got,):
+        assert "  " not in phrase
+        assert "()" not in phrase
+
+
+def test_why_base_run_full_command_with_purpose():
+    """A recognized command family renders the FULL command plus its
+    plain-language purpose; an unrecognized one keeps the verb."""
+    from agent_core.llm.tool_loop import _why_base
+
+    got = _why_base("run", {"command": "python -m pytest tests -x"})
+    expected = (
+        "python -m pytest tests -x "
+        "(to run the test suite and verify behavior)"
+    )
+    assert got == expected
+    got = _why_base("run", {"command": "dir /b"})
+    assert got == "to execute dir /b"
+
+
+def test_why_base_run_empty_command_generic_phrase():
+    """run with no command (QUIET strips it via _quiet_safe_args) falls back
+    to the generic phrase — not 'to execute  ()'."""
+    from agent_core.llm.tool_loop import _why_base
+
+    assert _why_base("run", {}) == "to execute (command)"
+
+
+def test_why_base_diff_long_path_not_truncated_at_60():
+    """The diff file1 cap was raised to 80 chars; a 100-char path keeps
+    its first 80."""
+    from agent_core.llm.tool_loop import _why_base
+
+    long_path = "a" * 100
+    got = _why_base("diff", {"file1": long_path})
+    assert long_path[:80] in got
+    assert long_path not in got
