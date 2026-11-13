@@ -274,6 +274,71 @@ def test_claim_card_for_work_sync_off_is_success_noop(issues_env):
     assert ok and recorder == []
 
 
+def test_claim_card_for_work_takes_over_dead_claim_on_resolved_issue(
+    issues_env, claims_file, monkeypatch
+):
+    """A finished card must not stay locked by a session that crashed before releasing.
+
+    The refusal path proves the holder live via a local session lock; the
+    resolved-issue takeover is the one exception: the work ended, so no live
+    worker is left to protect (``resolve()`` is the only automatic releaser,
+    and a crashed session never reaches it).
+    """
+    im, recorder, _ = issues_env
+    issue_id = _mk_card_issue(im, claims_file.parent)
+    # A foreign claim whose holder is provably alive (lock probe says yes).
+    monkeypatch.setattr(identity, "_holder_alive_local", lambda slug: True)
+    claims_file.write_text(
+        json.dumps(
+            {
+                "cardA": {
+                    "owner": "other",
+                    "label": "other@BOX42",
+                    "claimed_at": identity._iso(),
+                    "host": identity._host(),
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    issues = im.load_issues()
+    it = im.find_by_id(issues, issue_id)
+    it["status"] = "resolved"
+    im.save_issues(issues)
+
+    ok, msg = im.claim_card_for_work(issue_id)
+    assert ok, f"resolved issue must outlive the dead claim: {msg}"
+    claims = json.loads(claims_file.read_text(encoding="utf-8"))
+    assert claims["cardA"]["owner"] == "tester1", "takeover re-stamps ownership"
+
+
+def test_claim_card_for_work_keeps_live_claim_on_open_issue(
+    issues_env, claims_file, monkeypatch
+):
+    """The takeover exception is scoped to resolved issues: an open issue's
+    live foreign claim stays a hard block."""
+    im, recorder, _ = issues_env
+    issue_id = _mk_card_issue(im, claims_file.parent)  # status stays "open"
+    monkeypatch.setattr(identity, "_holder_alive_local", lambda slug: True)
+    claims_file.write_text(
+        json.dumps(
+            {
+                "cardA": {
+                    "owner": "other",
+                    "label": "other@BOX42",
+                    "claimed_at": identity._iso(),
+                    "host": identity._host(),
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    ok, msg = im.claim_card_for_work(issue_id)
+    assert not ok and "claimed by" in msg
+    claims = json.loads(claims_file.read_text(encoding="utf-8"))
+    assert claims["cardA"]["owner"] == "other", "open issue: foreign claim untouched"
+
+
 def test_resolve_releases_own_claim(issues_env, claims_file):
     im, recorder, _ = issues_env
     issue_id = _mk_card_issue(im, claims_file.parent)

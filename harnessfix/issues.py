@@ -15,10 +15,13 @@ the autonomous driver (outcome).
 from __future__ import annotations
 
 import json
+import logging
 import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ISSUES_PATH = REPO_ROOT / ".issues.json"
@@ -336,6 +339,27 @@ def claim_card_for_work(issue_id: str) -> tuple[bool, str]:
     if ident is None:
         return True, "identity unavailable — claim skipped"
     acquired, record = _claim_for_card(card_id, it)
+    if not acquired:
+        # ``claim_owner`` liveness rules already dropped a dead owner's claim
+        # (``claim_card`` reclaims an expired entry), so a refusal here means
+        # the holder is provably live.  An exception proving liveness: the
+        # card being claimed is this same issue, and the issue is resolved —
+        # the work ended, so its lease must not outlive it.  A crashed session
+        # never reaches ``resolve()``, which is the only automatic releaser
+        # (see ``_release_claim_for_resolved``), and a card whose issue was
+        # finished afterwards has no live worker left to protect.  Take over
+        # explicitly, exactly like ``kanban takeover``.
+        if str(it.get("status") or "") in RESOLVED_STATUSES:
+            took, record = ident.claim_card(card_id, force=True)
+            if took:
+                logger.info(
+                    "card_work: took over card %s from dead session '%s' — "
+                    "issue %s is already resolved",
+                    card_id,
+                    record.get("owner") or "?",
+                    issue_id,
+                )
+                acquired = True
     if not acquired:
         owner = record.get("owner") or record.get("label") or "unknown"
         return (
