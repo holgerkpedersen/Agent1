@@ -332,12 +332,13 @@
     ],
     "status": "resolved",
     "autonomy_level": 1,
-    "evidence": "Kanban card 'Display quiet mode behavior' (Issues frame, tag agent1). Request: in display quiet mode, before implementation, Agent1 should produce and show an overall plan plus a decomposition into a task plan, explained like to a 12-year-old (whys, not program details), with a per-intent explanation of how each task will be carried out; end with a tidy Markdown summary and a 'what next' conclusion.",
+    "evidence": "Kanban card 'Display quiet mode behavior' (Issues frame, tag agent1). Request: in display quiet mode, before implementation, Agent1 should produce and show an overall plan plus a decomposition into a task plan, explained like to a 12-year-old (whys, not program details), with a per-intent explanation of how each task will be carried out; end with a tidy Markdown summary and a 'what next' conclusion.\n[note] Board resync: work verified complete (quiet-mode suffix in agent_core/run_utils.py, wired in agent.py; 40 tests pass). Re-enqueueing resolve so the card moves to Finished.\n[note] Board resync (2): quiet-mode plan-display behaviour verified complete; 40 tests pass. Moving card to Finished.",
     "suggested_approach": "Add a quiet-mode system-prompt suffix (mirroring _INTENT_SYSTEM_SUFFIX) instructing the model to emit a 12-year-old-level upfront plan + per-step how + closing Markdown summary; ensure quiet display does not swallow that plan text; add regression tests. Track via this issue.",
     "decision_ref": null,
     "repair_ref": null,
     "created_at": "2026-11-03T16:47:59+00:00",
-    "resolved_at": "2026-11-03T18:05:00+00:00"
+    "resolved_at": "2026-11-13T09:20:07+00:00",
+    "updated_at": "2026-11-12T23:51:13+00:00"
   },
   {
     "id": "iss-general-kanban_1514d5d399a348659f6b6fe084fcd5dd",

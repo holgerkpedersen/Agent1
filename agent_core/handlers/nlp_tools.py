@@ -1167,8 +1167,9 @@ async def _nlp_run(agent: "Agent", args: dict[str, Any]) -> str:
             )
             return RUN_SANDBOX_REFUSAL.format(reason=violation)
     else:
+        # run executing OUTSIDE the sandbox (AGENT_RUN_SANDBOX=dev)
         _run_policy_logger().warning(
-            "run executing OUTSIDE the sandbox (AGENT_RUN_SANDBOX=dev): %s",
+            "RUN(dev): %s",
             cmd_to_run,
         )
     # Known-bad pytest flag combos crash pytest itself (INTERNALERROR) rather
