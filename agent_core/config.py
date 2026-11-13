@@ -65,6 +65,13 @@ class AgentDisplayMode(str, enum.Enum):
 
     VERBOSE (default) — current behaviour: every call prints ``[tool] name(args)``
     and its full (truncated) result ``[result] ...``.
+    NORMAL  — the opencode-style chat transcript: no tool names, no argument
+    dumps, no raw results.  Each round shows the model's short thinking note,
+    the actions in plain words ("reading agent_core/config.py"), and one
+    evidence line per result ("agent_core/config.py — 611 lines"), so the user
+    follows the reasoning and the proof it rests on.  A dim turn footer
+    reports duration, steps and changed files.  ``normal_mode_system_suffix``
+    asks the model to narrate each round and close with a conclusive answer.
     CLEAN   — a short human-readable reason precedes each call, results are
     summarized for display only; the model always receives the full payload.
     QUIET   — tool calls/results are hidden from stdout; only the final answer
@@ -75,6 +82,7 @@ class AgentDisplayMode(str, enum.Enum):
     """
 
     VERBOSE = "verbose"
+    NORMAL = "normal"
     CLEAN = "clean"
     QUIET = "quiet"
     #: Shows the model's intent (its narration + the planned calls) for EVERY
@@ -542,7 +550,7 @@ def load_agent_settings(env_path: Path | None = None) -> AgentSettings:
         AGENT_SEARCH_COMMAND_TIMEOUT_SEC -> search_command_timeout_sec (float)
         AGENT_COMPILATION_CHECK_TIMEOUT_SEC -> compilation_check_timeout_sec (float)
         AGENT_DISPLAY_MODE -> display_mode
-        (AgentDisplayMode: verbose|clean|quiet, default verbose)
+        (AgentDisplayMode: verbose|normal|clean|quiet|intent, default verbose)
         AGENT_STREAM_FINAL_ANSWER -> stream_final_answer (bool, default false)
     """
     env_vars = _load_env_file(env_path)

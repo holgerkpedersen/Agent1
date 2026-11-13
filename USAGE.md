@@ -93,6 +93,7 @@ much of the model's intent is shown:
 
 ```
 > display                 show the current mode
+> display normal          opencode-style chat: thoughts, actions and evidence only
 > display intent          the model's intent + planned calls, before they run
 > display clean           one reason line per call, summarized results
 > display verbose         every call + full result (default)
@@ -101,6 +102,45 @@ much of the model's intent is shown:
 
 The choice is written to `AGENT_DISPLAY_MODE` in `.env`, so it survives a REPL
 restart. You can also set that variable by hand (see `.env.example`).
+
+### `normal` — the chat transcript (thoughts + evidence, no tool noise)
+
+`normal` is the mode to leave on while you work. It reads like an opencode
+chat: a short thinking note per round, the round's actions in plain words, and
+one evidence line per result. Tool names, argument dumps and raw output never
+reach the screen:
+
+```
+> Why does display clean lose the previous proof?
+
+  I need to see how CLEAN derives its reason line and where the previous
+  result is captured. Reading the loop and the config enum.
+    · reading agent_core/llm/tool_loop.py from line 1400
+    · searching for "prev_proof"
+
+    ✓ agent_core/llm/tool_loop.py — 260 lines, more available
+    ✓ "prev_proof" — 4 match(es) in 1 file(s); first agent_core/llm/tool_loop.py:1415: prev_proof = prev_result
+
+  The captured value was overwritten after the call ran, so the reason line
+  cited the new result instead of the earlier proof. `display clean` now
+  captures it before execution.
+```
+
+What the mode shows:
+
+| Row | What it tells you |
+| --- | --------------- |
+| thinking note | the model's own short narration for this round (what it is checking and why) |
+| `· reading …` | the action in plain words — the subject (file/query/command), never a tool name or argument dump |
+| `✓ …` | the evidence that action established — line/match counts, first hit location, test summary, syntax check |
+| `✗ …` | negative evidence: a missing file, a failed command, a refused run |
+| `✓ done · 12.4s · 9 steps · 2 files changed` | the turn footer: duration, executed steps and changed files |
+
+The model still receives every full tool payload — `normal` only changes what
+the human sees. A system-prompt suffix asks the model to narrate each round
+and to close with a conclusive answer that cites its evidence. Failed/negative
+results stay visible (marked `✗`) because "the file does not exist" is proof
+too.
 
 ### `quiet` — no tool lines, so the model narrates a plan
 

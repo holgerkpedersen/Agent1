@@ -191,11 +191,24 @@ is being extended to audit its own file effects (self-improvement).
   asked to "read two files" no longer refuses with "I can only read one file
   at a time".
 - `agent_core/llm/tool_loop.py` — `ToolLoopRunner`: NLP tool-call execution loop.
-  QUIET/INTENT display detects `<think>` reasoning leaked into assistant content
-  and replaces it with ONE extra LLM summary call (`reasoning_summary_fn`,
-  wired in `turn_loop.py`); the raw reasoning is never printed. The summary is
-  cached per reasoning text, and an empty/error summary falls back to the
-  visible narration (or the tool-purpose phrase) rather than a truncated dump.
+  QUIET/INTENT/NORMAL display detects `<think>` reasoning leaked into assistant
+  content and replaces it with ONE extra LLM summary call
+  (`reasoning_summary_fn`, wired in `turn_loop.py`); the raw reasoning is never
+  printed. The summary is cached per reasoning text, and an empty/error summary
+  falls back to the visible narration (or the tool-purpose phrase) rather than
+  a truncated dump. NORMAL (`display normal`) is the opencode-style transcript:
+  per round it prints the condensed thinking note
+  (`_print_normal_round` / `_condense_thought`), plain-language action rows
+  (`_normal_action_phrase` — never tool names or argument dumps), and ONE
+  evidence row per result (`_normal_evidence`: line/match counts, first hit,
+  test summary, syntax check; failures marked with a red cross), capped at 4
+  actions / 6 evidence rows per round and flushed after the batch so concurrent
+  reads stay ordered. `_finish_turn` then prints `✓ done · <time> · <steps> ·
+  <files changed>` and the changed-file list instead of the technical
+  self-review note. `normal_mode_system_suffix` asks the model for the
+  per-round thinking note and a closing answer that cites its evidence.
+  Non-ASCII glyphs need `agent_core.bootstrap`'s UTF-8 stdout reconfigure (a bare
+  `ToolLoopRunner` in a cp1252 pipe cannot encode the check marks).
 - `agent_core/llm/lemonade_provider.py` — first-class AMD Lemonade (NPU)
   provider. Lemonade is AMD's OpenAI-compatible local server that runs LLMs on
   the Ryzen AI XDNA NPU (FastFlowLM / Ryzen AI LLM) or the iGPU; the agent talks

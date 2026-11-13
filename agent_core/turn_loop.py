@@ -298,7 +298,14 @@ async def _run_chained_tool_loop(
                     workspace=str(getattr(agent, "workspace", "") or ""),
                 )
                 if delivered is False and continuations < mod._MAX_CHAINED_RUNS:
-                    if display_mode != AgentDisplayMode.QUIET:
+                    if display_mode == AgentDisplayMode.NORMAL:
+                        print(
+                            gray(
+                                "  · the answer looked unfinished — asking for a "
+                                "clear summary"
+                            )
+                        )
+                    elif display_mode != AgentDisplayMode.QUIET:
                         print(
                             magenta("\n  [delivery-check] ")
                             + yellow(
@@ -317,7 +324,13 @@ async def _run_chained_tool_loop(
                     continue
             if needs_more and continuations < mod._MAX_CHAINED_RUNS:
                 if final_text and final_text == last_answer:
-                    if display_mode != AgentDisplayMode.QUIET:
+                    if display_mode == AgentDisplayMode.NORMAL:
+                        print(
+                            gray(
+                                "  · stopped — the model repeated the same answer"
+                            )
+                        )
+                    elif display_mode != AgentDisplayMode.QUIET:
                         print(
                             magenta("\n  [stopped] The model repeated the same answer ")
                             + yellow("twice — ending the turn. ")
@@ -329,7 +342,13 @@ async def _run_chained_tool_loop(
                 last_answer = final_text
                 continuations += 1
                 note = mod._VERIFY_NOTE if unverified else mod._CONTINUE_NOTE
-                if display_mode != AgentDisplayMode.QUIET:
+                if display_mode == AgentDisplayMode.NORMAL:
+                    print(
+                        gray(
+                            "  · not finished yet — continuing automatically"
+                        )
+                    )
+                elif display_mode != AgentDisplayMode.QUIET:
                     why = {
                         "cap": "iteration budget exhausted",
                         "answer": "answer signals unfinished work",
@@ -353,18 +372,26 @@ async def _run_chained_tool_loop(
                 reason in ("stuck", "no_progress")
                 and display_mode != AgentDisplayMode.QUIET
             ):
-                print(
-                    magenta("\n  [stopped] The model stopped making progress ")
-                    + yellow(
-                        "stuck on repeated calls"
-                        if reason == "stuck"
-                        else "too many calls without making new progress"
+                if display_mode == AgentDisplayMode.NORMAL:
+                    print(
+                        gray(
+                            "  · stopped — no new progress; the answer above is "
+                            "the best it produced"
+                        )
                     )
-                    + gray(
-                        "The answer above is the best it produced — rephrase "
-                        "or ask something more specific to continue.\n"
+                else:
+                    print(
+                        magenta("\n  [stopped] The model stopped making progress ")
+                        + yellow(
+                            "stuck on repeated calls"
+                            if reason == "stuck"
+                            else "too many calls without making new progress"
+                        )
+                        + gray(
+                            "The answer above is the best it produced — rephrase "
+                            "or ask something more specific to continue.\n"
+                        )
                     )
-                )
             break
     final_messages = [
         m
@@ -407,7 +434,8 @@ def _report_failover(agent: "Agent") -> None:
         notice = getattr(getattr(agent.llm, "_provider", None), "last_failover", None)
         if not notice:
             return
-        if _agent_mod()._resolve_display_mode() == AgentDisplayMode.QUIET:
+        mode = _agent_mod()._resolve_display_mode()
+        if mode == AgentDisplayMode.QUIET:
             return
         answered = (
             notice.get("answered_model")
@@ -415,6 +443,9 @@ def _report_failover(agent: "Agent") -> None:
             or "next provider"
         )
         attempted = notice.get("attempted") or []
+        if mode == AgentDisplayMode.NORMAL:
+            print(gray(f"  · answered by {answered}"))
+            return
         skipped = ", ".join(
             (str(a.get("model") or a.get("provider") or "?") for a in attempted)
         )
@@ -447,6 +478,7 @@ def _finish_turn(
     """
     agent._chat_history = _trim_chat_history(agent._chat_history, agent._original_goal)
     mutated_files = getattr(agent, "_mutating_files_this_turn")()
+    duration: float | None = None
     try:
         started = getattr(agent, "_turn_started_at", None)
         duration = (
@@ -513,6 +545,12 @@ def _finish_turn(
         )
         if _NARRATION_PREFIX.match(clean):
             clean = "Plan: " + clean.strip()
+    if display_mode == AgentDisplayMode.NORMAL and not getattr(
+        loop, "final_answer_streamed", False
+    ):
+        # One blank line separates the turn's thinking/evidence from the answer.
+        # A streamed answer already started on its own line live.
+        print()
     if clean.strip():
         if not getattr(loop, "final_answer_streamed", False):
             print(green(clean))
@@ -520,9 +558,63 @@ def _finish_turn(
         print(yellow(_final_answer_fallback()))
     if agent.is_plan_mode() and clean.strip():
         getattr(agent, "_persist_plan_answer")(clean)
-    if mutated_files and clean.strip():
+    if display_mode == AgentDisplayMode.NORMAL:
+        # Opencode-style turn footer: how long it took, how many steps ran and
+        # which files changed — the only metadata a normal chat needs.
+        footer = _normal_turn_footer(duration, loop, mutated_files)
+        if footer:
+            print()
+            print(gray(footer))
+            shown = ", ".join(_relative_path(agent, f) for f in mutated_files[:5])
+            more = (
+                f" (+{len(mutated_files) - 5} more)"
+                if len(mutated_files) > 5
+                else ""
+            )
+            if shown:
+                print(gray(f"    {shown}{more}"))
+    elif mutated_files and clean.strip():
         getattr(agent, "_print_self_review_note")(mutated_files)
     agent._nlp_workspace = None
+
+
+def _relative_path(agent: "Agent", path: str) -> str:
+    """Workspace-relative, forward-slash path for display (never raises)."""
+    try:
+        return os.path.relpath(path, agent.workspace).replace("\\", "/")
+    except (ValueError, AttributeError):
+        return str(path)
+
+
+def _normal_turn_footer(
+    duration: float | None, loop: Any, mutated_files: list[str] | None
+) -> str:
+    """One dim metadata line closing a NORMAL turn.
+
+    Reports only what a chat user cares about — duration, executed steps and
+    changed files.  Tool names, token counts and exit codes stay out: they are
+    implementation detail, not part of the story.
+    """
+    parts: list[str] = []
+    if duration is not None:
+        parts.append(f"{duration:.1f}s")
+    steps = int(getattr(loop, "tool_calls_made", 0) or 0)
+    if steps:
+        parts.append(f"{steps} step" + ("s" if steps != 1 else ""))
+    files = list(mutated_files or [])
+    if files:
+        parts.append(
+            f"{len(files)} file"
+            + ("s" if len(files) != 1 else "")
+            + " changed"
+        )
+    if not parts:
+        return ""
+    # A run that stopped on the cap/stuck/no-progress guard must not claim
+    # success in the footer — the "stopped" note above says otherwise.
+    reason = str(getattr(loop, "termination_reason", "answer") or "answer")
+    marker = "  ✓ done · " if reason == "answer" else "  ! ended early · "
+    return marker + " · ".join(parts)
 
 
 def _mutating_files_this_turn(agent: "Agent") -> list[str]:

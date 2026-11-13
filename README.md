@@ -96,6 +96,7 @@ Type `quit` or `exit` to leave.
 | `model <name>` | Switch model |
 | `mode plan` | Read-only research mode (no writes) |
 | `mode build` | Full access mode (default) |
+| `display normal` | Opencode-style chat: thoughts, plain actions and evidence only |
 | `display intent` | Show the model's plain-language intent before each call runs |
 | `display verbose\|clean\|quiet` | Adjust how much tool activity is printed |
 | `kg add <fact\|file\|tag\|symbol> <key> [value...]` | Add a knowledge-graph entry (persisted) |
@@ -307,7 +308,7 @@ All config lives in `.env` (see `.env.example` for the full annotated list) and 
 ```
 AGENT_LLM_PROVIDER=opencode        # Provider: opencode | lmstudio | openrouter | llama
 OPENCODE_API_KEY=sk-...            # Cloud API key (or use LM Studio locally)
-AGENT_DISPLAY_MODE=clean           # Tool output: verbose | clean | quiet | intent
+AGENT_DISPLAY_MODE=normal          # Tool output: verbose | normal | clean | quiet | intent
 LOG_LEVEL=INFO                     # Logging: DEBUG | INFO | WARNING | ERROR
 ```
 

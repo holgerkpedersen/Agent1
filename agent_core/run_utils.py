@@ -189,6 +189,23 @@ _QUIET_MODE_SYSTEM_SUFFIX = (
     "action. Keep every section short."
 )
 
+#: Appended to the system prompt when the session display mode is NORMAL.
+#: NORMAL shows the user a clean, opencode-style transcript: a short thinking
+#: note per round, plain-language action rows and one evidence line per
+#: result.  The model must supply the thinking note (otherwise the transcript
+#: falls back to derived action phrases) and a conclusive final answer that
+#: names the evidence it rests on.
+_NORMAL_MODE_SYSTEM_SUFFIX = (
+    "\n\nNORMAL DISPLAY MODE is ON. The user sees a clean, high-level chat "
+    "transcript: your short thinking notes, the actions in plain words, and "
+    "one evidence line per result. Tool names, arguments and raw output are "
+    "hidden. Before every round of tool calls, write ONE or TWO short "
+    "sentences (at most ~40 words) saying what you are checking and why. "
+    "When you finish, give a concise, conclusive answer in Markdown and cite "
+    "the concrete evidence your conclusion rests on (file:line, test result, "
+    "command output) — no tool-call narration."
+)
+
 
 def intent_mode_system_suffix() -> str:
     """Appended to the system prompt when the session display mode is INTENT.
@@ -202,6 +219,25 @@ def intent_mode_system_suffix() -> str:
 
         if resolve_display_mode() is AgentDisplayMode.INTENT:
             return _INTENT_SYSTEM_SUFFIX
+    except Exception:
+        pass
+    return ""
+
+
+def normal_mode_system_suffix() -> str:
+    """Appended to the system prompt when the session display mode is NORMAL.
+
+    Empty string in every other mode.  NORMAL hides tool names and raw results
+    from the transcript, so the model's own thinking notes are the only thing
+    that explains the actions; this suffix asks for them (one or two short
+    sentences per round) and for a closing answer that cites the evidence the
+    conclusion rests on.
+    """
+    try:
+        from agent_core.config import AgentDisplayMode
+
+        if resolve_display_mode() is AgentDisplayMode.NORMAL:
+            return _NORMAL_MODE_SYSTEM_SUFFIX
     except Exception:
         pass
     return ""
@@ -400,6 +436,7 @@ def strip_dynamic_system_blocks(text: str) -> str:
         "\n\nCRITICAL DESIGN CONSTRAINTS",
         "\n\nSESSION MODE: PLAN",
         "\n\nINTENT DISPLAY MODE",
+        "\n\nNORMAL DISPLAY MODE",
         "\n\nQUIET DISPLAY MODE",
         "\n\nORIGINAL TASK",
         "\n\nSKILLS (on-demand procedural knowledge)",

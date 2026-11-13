@@ -8,6 +8,7 @@ import json
 import os
 import re
 import sys
+import textwrap
 import time
 from typing import Any, Awaitable, Callable
 
@@ -60,6 +61,7 @@ except Exception:  # pragma: no cover - colors degrade gracefully if unavailable
 #: How much tool-call activity is printed to the end user during NLP turns.
 class DisplayMode(str, enum.Enum):
     VERBOSE = "verbose"  # every call + full (truncated) result shown
+    NORMAL = "normal"  # opencode-style: thoughts + plain actions + evidence only
     CLEAN = "clean"  # reason line per call; results summarized for display only
     QUIET = "quiet"  # one intent line per round; NO tool calls, NO results
     INTENT = "intent"  # intent block per round (narration + full planned calls)
@@ -279,6 +281,42 @@ _TOOL_CONSECUTIVE_FAILURE_NOTE = (
 #: result; this only bounds what the human observer sees in the REPL (was 200,
 #: which made read/search output look cut off).
 _RESULT_DISPLAY_LIMIT = 1500
+
+#: NORMAL display bounds (opencode-style transcript): one short thinking note
+#: per round, a handful of plain-language action rows, and at most
+#: ``_NORMAL_MAX_EVIDENCE`` evidence lines per round.  The point of the mode is
+#: SCANNABILITY — it strips tool names, argument dumps and raw output, so a
+#: long exploration stays a readable story of thoughts + proof.
+_NORMAL_THOUGHT_CHARS = 420
+_NORMAL_THOUGHT_LINES = 4
+_NORMAL_MAX_ACTIONS = 4
+_NORMAL_MAX_EVIDENCE = 6
+_NORMAL_TEXT_WIDTH = 100
+
+#: Result prefixes that mean a tool did NOT deliver evidence.  NORMAL renders
+#: them with a red ✗ and the first line only — a failed lookup is still
+#: evidence ("the file does not exist"), just negative evidence.
+_NORMAL_FAILURE_PREFIXES = (
+    "error",
+    "read error",
+    "write error",
+    "edit error",
+    "search error",
+    "list error",
+    "git error",
+    "diff error",
+    "analyze error",
+    "definitions error",
+    "skill error",
+    "not a file",
+    "not a directory",
+    "file not found",
+    "directory not found",
+    "invalid symbol",
+    "unknown git command",
+    "git guidance",
+    "command timed out",
+)
 
 #: Arg keys whose value is a shell command — rendered in FULL on the
 #: [tool]/[reason] lines.  Truncating a command makes the display useless
@@ -1306,21 +1344,36 @@ class ToolLoopRunner:
             #: human-readable reason in CLEAN mode so bare calls are explained.
             prev_text = str(last_msg.get("content") or "")
 
+            #: NORMAL mode: one evidence line per executed result, collected here
+            #: and printed AFTER the batch so the round reads thought -> actions
+            #: -> proof (the opencode transcript shape).  Keyed by tool_call id
+            #: so concurrent read-only fan-out prints in ANNOUNCED order, not
+            #: completion order.  The round announcement (thought + plain-
+            #: language actions) is printed before execution.
+            normal_evidence: dict[str, tuple[bool, str]] = {}
+
             #: INTENT mode: show what the model is about to do BEFORE any tool
             #: runs — its narration (if any) plus each planned call — so the
             #: user can follow the agent's plan round by round.  ``prev_result``
             #: is the proof from the previous step; each planned call's ``why:``
             #: line ties the next action back to that proof.
-            if self.display_mode in (DisplayMode.INTENT, DisplayMode.QUIET):
+            if self.display_mode in (
+                DisplayMode.INTENT,
+                DisplayMode.QUIET,
+                DisplayMode.NORMAL,
+            ):
                 display_text = await self._display_narration(prev_text)
                 if self.display_mode == DisplayMode.INTENT:
                     _print_intent(iteration, display_text, tool_calls, prev_result)
-                else:
+                elif self.display_mode == DisplayMode.QUIET:
                     # QUIET shows the OVERALL intent of the round - a single
                     # compact line per planned call (narration + tool names).
                     # No arguments, no [tool]/[result] echoes: the calls and
                     # their results stay invisible.
                     _print_intent_quiet(iteration, display_text, tool_calls)
+                else:
+                    # NORMAL: thinking note + human action rows, no tool names.
+                    _print_normal_round(display_text, tool_calls)
 
             # Seed this batch's duplicate detection with the FULL key set of
             # the previous batch: any key re-issued in consecutive batches is
@@ -1362,12 +1415,11 @@ class ToolLoopRunner:
                 #: so a reason printed after execution cannot cite the earlier
                 #: evidence (the CLEAN [reason] line used to lose it this way).
                 prev_proof = prev_result
-                if self.display_mode == DisplayMode.INTENT:
-                    # INTENT is human-language only: no tool name, no argument
-                    # dump.  The intent block already announced this action in
-                    # plain words; the [tool] echo is suppressed here and the
-                    # summarized result below is labelled as evidence, not as a
-                    # named tool's output.
+                if self.display_mode in (DisplayMode.INTENT, DisplayMode.NORMAL):
+                    # INTENT and NORMAL are human-language only: no tool name,
+                    # no argument dump.  The round block already announced this
+                    # action in plain words (INTENT) or as a plain action row
+                    # (NORMAL); the [tool] echo is suppressed here.
                     pass
                 elif self.display_mode == DisplayMode.CLEAN:
                     # CLEAN is human-language only too: the action is stated as
@@ -1451,7 +1503,14 @@ class ToolLoopRunner:
                     result=truncate(result_str, RESULT_CAP),
                     affected_files=affected,
                 )
-                if self.display_mode != DisplayMode.QUIET:
+                if self.display_mode == DisplayMode.NORMAL:
+                    # Collect ONE evidence line for this result; it is printed
+                    # after the batch so the round stays thought -> actions ->
+                    # proof.  Raw output never reaches the screen in this mode.
+                    normal_evidence[tc_id] = _normal_evidence(
+                        tool_name, args, result_str
+                    )
+                elif self.display_mode != DisplayMode.QUIET:
                     if self.display_mode == DisplayMode.CLEAN:
                         # The [reason] line was printed BEFORE the call ran;
                         # here only the summarized result follows as evidence.
@@ -1696,7 +1755,16 @@ class ToolLoopRunner:
                         tc_id=tc_id,
                         duplicate=True,
                     )
-                    if self.display_mode == DisplayMode.INTENT:
+                    if self.display_mode == DisplayMode.NORMAL:
+                        # The round already announced this action.  Reuse is
+                        # evidence that the earlier proof still holds — one
+                        # dim row, no tool echo and no repeated raw output.
+                        normal_evidence[tc_id] = (
+                            True,
+                            f"{_normal_subject(tool_name, args)} — already "
+                            "checked, result reused",
+                        )
+                    elif self.display_mode == DisplayMode.INTENT:
                         # INTENT: duplicate actions are announced in plain
                         # words only — no tool name, no argument dump.  The
                         # intent block already stated the action; here we say
@@ -1857,7 +1925,10 @@ class ToolLoopRunner:
                     current_messages.append(
                         {"role": "tool", "tool_call_id": _tid, "content": _skip}
                     )
-                    if self.display_mode != DisplayMode.QUIET:
+                    if self.display_mode not in (
+                        DisplayMode.QUIET,
+                        DisplayMode.NORMAL,
+                    ):
                         print(
                             f"  {yellow('[tool]')} {gray('(skipped — loop stopping)')}"
                         )
@@ -1874,6 +1945,18 @@ class ToolLoopRunner:
             for _note in deferred_notes:
                 current_messages.append({"role": "user", "content": _note})
             deferred_notes.clear()
+
+            # NORMAL: print the round's evidence now that every call in the
+            # batch has finished, in ANNOUNCED order (concurrent read-only
+            # calls complete out of order), so rows line up with the actions.
+            if normal_evidence and self.display_mode == DisplayMode.NORMAL:
+                ordered = [
+                    normal_evidence[str(tc.get("id") or "")]
+                    for tc in tool_calls
+                    if isinstance(tc, dict)
+                    and str(tc.get("id") or "") in normal_evidence
+                ]
+                _print_normal_evidence(ordered)
 
             # Self-questioning for idempotent-tool repeats: when the model keeps
             # calling an idempotent tool (git, get_current_datetime) with the SAME
@@ -2088,6 +2171,375 @@ class ToolLoopRunner:
             return False
         self._seen_progress_keys.add(key)
         return True
+
+
+# ── NORMAL display helpers (opencode-style chat transcript) ──────────────────
+#
+# NORMAL shows what the agent is THINKING and what it PROVED, not which tool it
+# called.  A round renders as:
+#
+#   <one short thinking note, wrapped>
+#       · reading agent_core/config.py
+#       · searching for "display_mode"
+#       ✓ agent_core/config.py — 611 lines
+#       ✓ "display_mode" — 60 matches in 12 files
+#
+# No tool names, no argument payloads, no raw result dumps.  Every helper here
+# is PURE (no I/O) except the two printers, which keeps them unit-testable and
+# lets the loop decide when a line is printed.
+
+
+def _normal_width() -> int:
+    """Terminal width for NORMAL text, capped so lines stay readable."""
+    try:
+        import shutil
+
+        cols = shutil.get_terminal_size((_NORMAL_TEXT_WIDTH, 24)).columns
+    except Exception:  # pragma: no cover - defensive
+        cols = _NORMAL_TEXT_WIDTH
+    return max(60, min(cols, _NORMAL_TEXT_WIDTH))
+
+
+def _condense_thought(text: Any) -> str:
+    """Flatten one round's narration into a short, single-paragraph thought.
+
+    Leaked ``<think>`` blocks and tool-call markup are removed first (the loop
+    normally summarizes reasoning before this point; this is the safety net).
+    Long narration is cut at a sentence boundary so the transcript keeps one
+    thought per paragraph instead of a wall of text.
+    """
+    raw = _narration_text(text)
+    raw = _THINK_BLOCK_RE.sub(" ", raw)
+    raw = _THINK_OPEN_RE.sub(" ", raw)
+    raw = _THINK_CLOSE_RE.sub(" ", raw)
+    raw = _TOOL_ARTIFACT_RE.sub(" ", raw)
+    clean = " ".join(raw.split())
+    if len(clean) <= _NORMAL_THOUGHT_CHARS:
+        return clean
+    cut = clean[: _NORMAL_THOUGHT_CHARS]
+    for sep in (". ", "! ", "? "):
+        pos = cut.rfind(sep)
+        if pos > _NORMAL_THOUGHT_CHARS // 2:
+            return cut[: pos + 1].strip() + " ..."
+    return cut.rstrip() + " ..."
+
+
+def _short_arg(value: Any, limit: int = 72) -> str:
+    """Compact one argument value for an action row (long paths keep the tail)."""
+    text = " ".join(str(value or "").strip().strip('"').strip("'").split())
+    if not text:
+        return "(unspecified)"
+    if len(text) <= limit:
+        return text
+    return "..." + text[-(limit - 3) :]
+
+
+def _quoted_arg(value: Any, limit: int = 48) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) > limit:
+        text = text[: limit - 3].rstrip() + "..."
+    return text
+
+
+def _normal_action_phrase(tool_name: str, args: dict[str, Any]) -> str:
+    """One plain-language action row: WHAT the round is doing, not HOW.
+
+    Tool names and payload keys never reach the screen.  Paths/queries/symbols
+    stay because they are the subject of the action — the user needs to know
+    which file or question is being examined (opencode shows the same).
+    """
+    if tool_name == "read":
+        raw_paths = args.get("paths")
+        if isinstance(raw_paths, list) and raw_paths:
+            shown = ", ".join(_short_arg(p) for p in raw_paths[:3])
+            more = (
+                f" (+{len(raw_paths) - 3} more)" if len(raw_paths) > 3 else ""
+            )
+            return f"reading {shown}{more}"
+        page = ""
+        try:
+            offset = int(args.get("offset") or 1)
+        except (TypeError, ValueError):
+            offset = 1
+        if offset > 1:
+            page = f" from line {offset}"
+        return f"reading {_short_arg(args.get('path'))}{page}"
+    if tool_name == "read_skill":
+        return f"reading the {_quoted_arg(args.get('name'), 40)} skill"
+    if tool_name == "search":
+        path = str(args.get("path") or "").strip()
+        scope = "" if path in ("", ".") else f" in {_short_arg(path, 48)}"
+        return f"searching for \"{_quoted_arg(args.get('query'))}\"{scope}"
+    if tool_name == "list_files":
+        return f"listing {_short_arg(args.get('path') or '.')}"
+    if tool_name == "write":
+        return f"writing {_short_arg(args.get('path'))}"
+    if tool_name == "edit":
+        return f"editing {_short_arg(args.get('path'))}"
+    if tool_name == "run":
+        command = " ".join(
+            str(args.get("command") or args.get("cmd") or "").split()
+        )
+        if not command:
+            return "running a command"
+        if len(command) > 90:
+            command = command[:87].rstrip() + "..."
+        return f"running {command}"
+    if tool_name == "git":
+        return f"checking git {str(args.get('subcommand') or 'status')}"
+    if tool_name == "tests":
+        raw_path = str(args.get("path") or "").strip()
+        scope = (
+            "" if raw_path in ("", ".") else f" in {_short_arg(raw_path, 48)}"
+        )
+        return f"running the tests{scope}"
+    if tool_name == "analyze":
+        return f"analyzing {_short_arg(args.get('path') or 'the workspace')}"
+    if tool_name == "definitions":
+        return f"mapping the code in {_short_arg(args.get('path'))}"
+    if tool_name == "references":
+        return f"finding references to \"{_quoted_arg(args.get('symbol'), 40)}\""
+    if tool_name == "diff":
+        return f"comparing {_short_arg(args.get('file1'))}"
+    if tool_name == "fix":
+        targets = args.get("args")
+        target = ""
+        if isinstance(targets, list) and targets:
+            target = str(targets[0])
+        target = target or args.get("path") or ""
+        return f"fixing {_short_arg(target)}" if target else "fixing a file"
+    if tool_name == "web_search":
+        return f"searching the web for \"{_quoted_arg(args.get('query'))}\""
+    if tool_name == "delegate":
+        return f"delegating: {_quoted_arg(args.get('task') or args.get('prompt'), 60)}"
+    if tool_name == "get_current_datetime":
+        return "checking the current time"
+    if tool_name == "mcp_call":
+        server = str(args.get("server") or "").strip()
+        tool = str(args.get("tool") or "").strip()
+        if server or tool:
+            return f"calling {server}/{tool}".replace("//", "/")
+    # Unknown tool: still human language, never the raw schema name.
+    return tool_name.replace("_", " ") or "taking the next step"
+
+
+def _normal_subject(tool_name: str, args: dict[str, Any]) -> str:
+    """The noun an evidence line is about (file / query / symbol / step)."""
+    if tool_name in ("read", "write", "edit", "definitions", "read_skill"):
+        return _short_arg(args.get("path") or args.get("name") or "the file", 60)
+    if tool_name == "list_files":
+        return _short_arg(args.get("path") or ".", 60)
+    if tool_name == "search":
+        return f"\"{_quoted_arg(args.get('query'), 40)}\""
+    if tool_name == "references":
+        return f"\"{_quoted_arg(args.get('symbol'), 40)}\""
+    if tool_name == "web_search":
+        return f"\"{_quoted_arg(args.get('query'), 40)}\""
+    if tool_name in ("run", "tests"):
+        return "the command"
+    return "this step"
+
+
+def _normal_result_failed(result_str: str) -> bool:
+    """True when a result reports failure (so NORMAL marks it with a red ✗)."""
+    text = result_str.strip()
+    if not text:
+        return False
+    if _is_tool_error_result(text):
+        return True
+    if re.match(r"^offset \d+ is beyond the end of", text, re.IGNORECASE):
+        return True
+    if re.search(r"\[EXIT CODE: [1-9]\d*\]", text):
+        return True
+    low = text.lower()
+    return any(low.startswith(prefix) for prefix in _NORMAL_FAILURE_PREFIXES)
+
+
+def _normal_first_line(text: str, limit: int = 110) -> str:
+    """First meaningful line of a result, compacted for an evidence row."""
+    for line in text.splitlines():
+        clean = line.strip().lstrip("#").strip()
+        if not clean:
+            continue
+        clean = re.sub(r"^\[stderr\]\s*", "", clean, flags=re.IGNORECASE)
+        if len(clean) > limit:
+            clean = clean[: limit - 3].rstrip() + "..."
+        return clean
+    return "(no output)"
+
+
+def _normal_evidence(
+    tool_name: str, args: dict[str, Any], result_str: str
+) -> tuple[bool, str]:
+    """One human-readable evidence line for a tool result.
+
+    Returns ``(ok, text)``.  The evidence states WHAT the result established in
+    the shortest useful form — line counts, match counts, exit status, the
+    first meaningful line — so the user can judge the thought above it without
+    ever reading raw tool output or a tool name.
+    """
+    text = str(result_str or "").strip()
+    if not text or text == "(no output)":
+        return True, f"{_normal_subject(tool_name, args)} — no output"
+    if _normal_result_failed(text):
+        return False, _normal_first_line(text)
+
+    if tool_name in ("read", "read_skill"):
+        if text.startswith("=== "):
+            files = re.findall(r"^=== (.+?) ===$", text, re.MULTILINE)
+            body_lines = [
+                ln for ln in text.splitlines() if not ln.startswith("=== ")
+            ]
+            label = f"{len(files)} files read" if files else "files read"
+            return True, f"{label} ({len(body_lines)} lines)"
+        subject = _short_arg(args.get("path") or args.get("name") or "the file", 60)
+        if "Definitions in " in text:
+            count = sum(
+                1
+                for ln in text.splitlines()
+                if re.match(r"^\s+(?:async )?(?:def |class )", ln)
+            )
+            return True, f"{subject} — {count} definitions"
+        line_count = len(text.splitlines())
+        suffix = ", more available" if "[truncated" in text else ""
+        return True, f"{subject} — {line_count} lines{suffix}"
+    if tool_name == "search":
+        hits: list[str] = []
+        hit_files: set[str] = set()
+        for line in text.splitlines():
+            match = re.match(r"^\s*(?P<path>.+?):(?P<line>\d+):", line)
+            if match:
+                hits.append(line)
+                hit_files.add(match.group("path"))
+        more_match = re.search(r"\.\.\. and (\d+) more matches", text)
+        extra = f", +{more_match.group(1)} more" if more_match else ""
+        query = _quoted_arg(args.get("query"), 40)
+        if hits:
+            first = hits[0].strip()
+            if len(first) > 70:
+                first = first[:67].rstrip() + "..."
+            return True, (
+                f"\"{query}\" — {len(hits)} match(es) in {len(hit_files)} "
+                f"file(s){extra}; first {first}"
+            )
+        return True, f"\"{query}\" — no matches"
+    if tool_name == "list_files":
+        entries = len([ln for ln in text.splitlines() if ln.strip()])
+        return True, f"{_short_arg(args.get('path') or '.', 60)} — {entries} entries"
+    if tool_name in ("write", "edit"):
+        verb = "written" if tool_name == "write" else "edited"
+        subject = _short_arg(args.get("path"), 60)
+        if text.startswith("Skipped "):
+            return True, f"{subject} — unchanged (nothing to write)"
+        verify = next(
+            (
+                ln.strip()
+                for ln in text.splitlines()
+                if ln.startswith("[verify] py_compile")
+            ),
+            "",
+        )
+        if "✓" in verify:
+            status = f"{verb}, syntax ok"
+        elif "✗" in verify or "could not run" in verify.lower():
+            return False, f"{subject} — {verb}, syntax ERROR"
+        else:
+            status = verb
+        return True, f"{subject} — {status}"
+    if tool_name in ("run", "tests"):
+        summary_match = re.search(
+            r"\b\d+ (?:passed|failed|error(?:s)?)\b[^\n]*", text
+        )
+        exit_match = re.search(r"\[EXIT CODE: (\d+)\]", text)
+        if summary_match:
+            summary = summary_match.group(0).strip().strip("=").strip()
+        else:
+            tail_lines = [
+                ln.strip()
+                for ln in text.splitlines()
+                if ln.strip() and not ln.strip().startswith("[EXIT CODE")
+            ]
+            summary = tail_lines[-1] if tail_lines else "command finished"
+        if len(summary) > 90:
+            summary = summary[:87].rstrip() + "..."
+        code = f" (exit {exit_match.group(1)})" if exit_match else ""
+        return True, f"{summary}{code}"
+    if tool_name == "definitions":
+        count = len(re.findall(r"\[lines \d+-\d+\]", text))
+        return True, f"{_short_arg(args.get('path'), 60)} — {count} definitions"
+    if tool_name == "references":
+        header = text.splitlines()[0] if text.splitlines() else ""
+        header = re.sub(r"^References to ", "", header)
+        if len(header) > 100:
+            header = header[:97].rstrip() + "..."
+        return True, header or "references found"
+    # Generic: the first meaningful line is the evidence (git status, analysis
+    # summary, search result title, ...).  Never dump the whole result.
+    return True, _normal_first_line(text)
+
+
+def _print_normal_round(thought: Any, tool_calls: list[Any]) -> None:
+    """Print one round's thinking note and plain-language action rows.
+
+    Called BEFORE the tools run, so the user sees what the agent is about to
+    check while it is checking it — the opencode-style "thinking, then doing"
+    rhythm.  The evidence rows follow from :func:`_print_normal_evidence`.
+    """
+    printed = False
+    text = _condense_thought(thought)
+    if text:
+        width = _normal_width() - 2
+        wrapped = textwrap.wrap(
+            text,
+            width=width,
+            initial_indent="  ",
+            subsequent_indent="  ",
+            break_long_words=False,
+            break_on_hyphens=False,
+        )
+        print()
+        for line in wrapped[:_NORMAL_THOUGHT_LINES]:
+            print(line)
+        if len(wrapped) > _NORMAL_THOUGHT_LINES:
+            print(gray("  ..."))
+        printed = True
+
+    actions: list[str] = []
+    for tc in tool_calls:
+        if not isinstance(tc, dict):
+            continue
+        func = tc.get("function", {}) or {}
+        name = str(func.get("name", "") or "")
+        try:
+            args = json.loads(func.get("arguments", "{}") or "{}")
+            if not isinstance(args, dict):
+                args = {}
+        except (json.JSONDecodeError, TypeError):
+            args = {}
+        actions.append(_normal_action_phrase(name, args))
+    if actions:
+        if not printed:
+            print()
+        for action in actions[:_NORMAL_MAX_ACTIONS]:
+            print(gray(f"    · {action}"))
+        if len(actions) > _NORMAL_MAX_ACTIONS:
+            print(gray(f"    · +{len(actions) - _NORMAL_MAX_ACTIONS} more action(s)"))
+
+
+def _print_normal_evidence(evidence: list[tuple[bool, str]]) -> None:
+    """Print one ✓/✗ evidence row per result (bounded per round)."""
+    if not evidence:
+        return
+    print()
+    shown = 0
+    for ok, text in evidence:
+        if shown >= _NORMAL_MAX_EVIDENCE:
+            break
+        mark = green("✓") if ok else red("✗")
+        print(f"    {mark} {text}")
+        shown += 1
+    if len(evidence) > _NORMAL_MAX_EVIDENCE:
+        print(gray(f"    +{len(evidence) - _NORMAL_MAX_EVIDENCE} more result(s)"))
 
 
 def _print_intent(

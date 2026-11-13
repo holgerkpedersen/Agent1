@@ -211,6 +211,7 @@ from agent_core.run_utils import (
     append_turn_log as _append_turn_log,
     strip_dynamic_system_blocks as _strip_dynamic_system_blocks,
     intent_mode_system_suffix as _intent_mode_system_suffix,
+    normal_mode_system_suffix as _normal_mode_system_suffix,
     quiet_mode_system_suffix as _quiet_mode_system_suffix,
 )
 from agent_core.types import _GOAL_RELATED_THRESHOLD
@@ -979,6 +980,7 @@ class AgentCore:
                     "content": _SYSTEM_PROMPT
                     + (plan_mode_system_suffix() if self.is_plan_mode() else "")
                     + _intent_mode_system_suffix()
+                    + _normal_mode_system_suffix()
                     + _quiet_mode_system_suffix()
                     + self._language_block(query),
                 }
@@ -999,6 +1001,7 @@ class AgentCore:
             + self._file_history_block(query)
             + (plan_mode_system_suffix() if self.is_plan_mode() else "")
             + _intent_mode_system_suffix()
+            + _normal_mode_system_suffix()
             + _quiet_mode_system_suffix()
             # Language reminder LAST: closest to the conversation, and the
             # dynamic-block stripper cuts it at LANGUAGE_MARKER so exactly

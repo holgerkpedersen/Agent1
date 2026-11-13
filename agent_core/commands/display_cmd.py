@@ -17,7 +17,10 @@ class DisplayCommand(Command):
 
     @property
     def help_text(self) -> str:
-        return "display [verbose|clean|quiet|intent] - Show/set NLP output verbosity"
+        return (
+            "display [verbose|normal|clean|quiet|intent] "
+            "- Show/set NLP output verbosity"
+        )
 
     async def execute(self, args: list[str], agent: "Agent") -> bool:
         from agent_core.config import AgentDisplayMode, load_agent_settings
@@ -41,10 +44,12 @@ class DisplayCommand(Command):
         if not args:
             print(f"Display mode is '{current.value}'.")
             print(
-                "Options: verbose (every call + result), clean (reason per call, "
-                "summarized results), quiet (no tool lines — the model narrates a "
-                "plan up front and a Markdown summary at the end), intent (model's "
-                "intent + planned calls before each LLM round's tools run)."
+                "Options: verbose (every call + result), normal (opencode-style "
+                "chat: thoughts, plain actions and evidence only), clean (reason "
+                "per call, summarized results), quiet (no tool lines — the model "
+                "narrates a plan up front and a Markdown summary at the end), "
+                "intent (model's intent + planned calls before each LLM round's "
+                "tools run)."
             )
             return True
 
@@ -71,7 +76,7 @@ class DisplayCommand(Command):
             if not found:
                 ef.write(
                     f"\n# NLP output verbosity "
-                    f"(verbose|clean|quiet)\nAGENT_DISPLAY_MODE={requested}\n"
+                    f"(verbose|normal|clean|quiet|intent)\nAGENT_DISPLAY_MODE={requested}\n"
                 )
 
         print(f"Display mode set to '{requested}' (persisted to .env).")
