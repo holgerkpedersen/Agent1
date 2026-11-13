@@ -10,10 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from agent_core.plan_execution import chunking
 from agent_core.plan_execution.parser import PlanTask
-from agent_core.plan_execution.runner import (
-    build_scheduler,
-    run_plan,
-)
+from agent_core.plan_execution.runner import run_plan
 
 
 # ---------------------------------------------------------------------------
@@ -136,29 +133,24 @@ def test_run_plan_bounds_downstream_summaries(monkeypatch, tmp_path):
         assert chunking._TRUNCATION_SUFFIX.strip() in prompt
 
 
-def test_scheduler_retains_bounded_results(monkeypatch, tmp_path):
-    """build_scheduler keeps only bounded summaries resident per task."""
+def test_run_plan_retains_bounded_results(monkeypatch):
+    """run_plan keeps only bounded summaries resident per task.
+
+    The scheduler is built inline by ``run_plan`` (the former
+    ``build_scheduler`` helper was dead code); this pins the bounding
+    guarantee on the live path: results held in the scheduler are capped
+    summaries, not raw context dumps.
+    """
     monkeypatch.setenv("AGENT_PLAN_MAX_SUMMARY_CHARS", "100")
     agent = _RecordingAgent()
     tasks = _tasks()
-    scheduler = build_scheduler(tasks, agent)
 
-    async def run():
-        for t in tasks:
-            scheduler.schedule_task(t.id)
-        await scheduler.start()
-        while (
-            scheduler.pending_count() > 0
-            or scheduler.scheduled_count() > 0
-            or scheduler._inflight
-        ):
-            await asyncio.sleep(0.01)
-        await scheduler.stop()
+    snapshot = asyncio.run(run_plan(agent, tasks))
 
-    asyncio.run(run())
+    results = snapshot["results"]
     for t in tasks:
-        result = scheduler.get_result(t.id)
-        assert result is not None and result["success"] is True
+        result = results[t.id]
+        assert result.get("success") is True
         # Bounded summary, not the raw 50k-char context dump.
         assert len(result["summary"]) <= 100 + len(chunking._TRUNCATION_SUFFIX)
 

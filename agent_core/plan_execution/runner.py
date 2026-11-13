@@ -43,45 +43,6 @@ async def _default_executor(
     return {"success": True, "result": result, "summary": summary}
 
 
-def build_scheduler(
-    tasks: List[PlanTask],
-    agent: Any,
-    *,
-    executor_factory: Optional[Callable[[PlanTask], TaskExecutor]] = None,
-) -> TaskScheduler:
-    """Build a scheduler whose results are bounded summaries.
-
-    Each completed task's result is replaced by a character-capped summary
-    (``AGENT_PLAN_MAX_SUMMARY_CHARS``): the full text stays retrievable from
-    the subagent manager, while only the bounded summary is retained in the
-    scheduler and persisted to ``dep_<id>_result.json``, so one verbose model
-    result cannot inflate every downstream prompt.  Callers are responsible
-    for scheduling waves of at most ``max_concurrent`` tasks (see
-    :func:`chunking.plan_chunks`) so only a finished wave's summaries remain
-    resident while later waves run.
-    """
-    scheduler = TaskScheduler()
-    for t in tasks:
-        scheduler.add_task(
-            TaskNode(
-                task_id=t.id,
-                name=t.id,
-                description=t.description,
-                dependencies=list(t.depends_on),
-            )
-        )
-
-        def _executor(_t: PlanTask = t) -> TaskExecutor:
-            async def run(input_data: Dict[str, Any]) -> Dict[str, Any]:
-                outcome = await _default_executor(agent, _t, input_data)
-                return chunking.summarize_result(outcome)
-
-            return run
-
-        scheduler.register_executor(t.id, _executor())
-    return scheduler
-
-
 def build_and_validate_graph(
     tasks: List[PlanTask],
 ) -> Tuple[DependencyGraph, List[str]]:
