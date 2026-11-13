@@ -1532,7 +1532,11 @@ class ToolLoopRunner:
                         print(f"  {yellow('[result]')} {colorize_result(summary)}")
                     else:
                         shown = colorize_result(result_str[:_RESULT_DISPLAY_LIMIT])
-                        if "tool error:" in shown.lower() or "error" in shown.lower():
+                        # Redden the WHOLE result only when the tool actually
+                        # failed (error prefix / non-zero exit).  The old guard
+                        # tested `"error" in shown`, so reading any source file
+                        # that mentions "error" painted the entire result red.
+                        if _result_reports_failure(result_str):
                             shown = red(shown)
                         print(f"  {yellow('[result]')} {shown}")
                 prev_call_key = call_key
@@ -2340,8 +2344,14 @@ def _normal_subject(tool_name: str, args: dict[str, Any]) -> str:
     return "this step"
 
 
-def _normal_result_failed(result_str: str) -> bool:
-    """True when a result reports failure (so NORMAL marks it with a red ✗)."""
+def _result_reports_failure(result_str: str) -> bool:
+    """True when a tool result reports a failure (not merely mentions one).
+
+    Prefixes and a non-zero exit code are evidence of failure; the word
+    "error" appearing anywhere in source code, a quoted message or a path is
+    NOT.  The old display guard reddened a whole read result because the file
+    it printed contained the word "error".
+    """
     text = result_str.strip()
     if not text:
         return False
@@ -2381,7 +2391,7 @@ def _normal_evidence(
     text = str(result_str or "").strip()
     if not text or text == "(no output)":
         return True, f"{_normal_subject(tool_name, args)} — no output"
-    if _normal_result_failed(text):
+    if _result_reports_failure(text):
         return False, _normal_first_line(text)
 
     if tool_name in ("read", "read_skill"):

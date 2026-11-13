@@ -20,6 +20,7 @@ from agent_core.llm.tool_loop import (
     _condense_thought,
     _normal_action_phrase,
     _normal_evidence,
+    _result_reports_failure,
 )
 from agent_core.llm.tool_reply import parse_tool_reply
 from agent_core.run_utils import (
@@ -389,6 +390,60 @@ class TestNormalLoopDisplay:
         out = capsys.readouterr().out
         assert "· reading" not in out
         assert "✓ a.py" not in out
+
+
+class TestFailureColoring:
+    """Verbose mode must redden a result only when the TOOL failed.
+
+    History (Kanban card ``Color red - false positive``): the guard tested
+    ``"error" in shown``, so reading a source file that merely mentioned
+    "error" painted the entire tool result red.
+    """
+
+    def test_failure_detection_requires_a_prefix_or_nonzero_exit(self):
+        assert _result_reports_failure("Read error: nope") is True
+        assert _result_reports_failure("Tool error (ValueError): boom") is True
+        assert _result_reports_failure("boom\n[EXIT CODE: 2]") is True
+        assert _result_reports_failure('raise RuntimeError("Error: text")') is False
+        assert _result_reports_failure("done\n[EXIT CODE: 0]") is False
+        assert _result_reports_failure("a note about errors") is False
+
+    def test_source_text_mentioning_error_is_not_reddened(self, capsys, monkeypatch):
+        import agent_core.llm.tool_loop as tool_loop
+
+        monkeypatch.setattr(
+            tool_loop, "red", lambda text, **kwargs: f"<RED>{text}</RED>"
+        )
+
+        async def execute_tool(name, args):
+            return 'def handle():\n    raise RuntimeError("Error: source text")\n'
+
+        _run(
+            [("read", {"path": "a.py"}), "Done."],
+            execute_tool,
+            display_mode="verbose",
+        )
+        out = capsys.readouterr().out
+        assert "Error: source text" in out
+        assert "<RED>" not in out
+
+    def test_real_tool_error_still_reddens_the_result(self, capsys, monkeypatch):
+        import agent_core.llm.tool_loop as tool_loop
+
+        monkeypatch.setattr(
+            tool_loop, "red", lambda text, **kwargs: f"<RED>{text}</RED>"
+        )
+
+        async def execute_tool(name, args):
+            return "Read error: permission denied"
+
+        _run(
+            [("read", {"path": "a.py"}), "Done."],
+            execute_tool,
+            display_mode="verbose",
+        )
+        out = capsys.readouterr().out
+        assert "<RED>Read error: permission denied</RED>" in out
 
 
 # ---------------------------------------------------------------------------
