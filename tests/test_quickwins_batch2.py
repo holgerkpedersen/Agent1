@@ -128,6 +128,11 @@ class TestSelfReviewNote:
         mem_file.write_text("{}", encoding="utf-8")
         monkeypatch.setattr(agent, "CHAT_HISTORY_JSON_PATH", str(hist_file))
         monkeypatch.setattr(agent, "AGENT_MEMORY_JSON_PATH", str(mem_file))
+        # This contract is the VERBOSE/CLEAN/INTENT self-review note.  NORMAL
+        # intentionally replaces it with the changed-file footer (see
+        # tests/test_display_normal.py), and the developer's .env may select
+        # any mode — pin the mode so this test stays deterministic.
+        monkeypatch.setenv("AGENT_DISPLAY_MODE", "verbose")
         fresh = Agent(workspace=".")
         # Point the agent's workspace at tmp so writes stay isolated.
         fresh.workspace = str(tmp_path)
