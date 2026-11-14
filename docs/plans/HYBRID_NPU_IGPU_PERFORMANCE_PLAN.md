@@ -1,6 +1,6 @@
 # Hybrid NPU+iGPU performance plan — Ryzen AI Max+ 395 (Strix Halo)
 
-**Status:** ❌ **ABANDONED 2026-11-14** — dropped by maintainer decision ("not doing
+**Status:** ✗ **ABANDONED 2026-11-14** — dropped by maintainer decision ("not doing
 any good for me"). No code was changed by this plan and none will be. Kept as an
 evidence record only; **do not schedule Phases 0–4**. See §0 below for what was
 learned and what, if anything, is worth salvaging separately.

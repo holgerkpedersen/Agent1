@@ -1,6 +1,26 @@
+## 2026-11-14 - fix(issues): quarantine a corrupt ledger instead of overwriting it
+
+**Change**: `load_issues` keeps its `[]` fallback (callers depend on it) but now logs an `ERROR` naming the parse failure instead of returning silently. `save_issues` calls new `_quarantine_unreadable_ledger()`, which renames an unreadable ledger to `<name>.corrupt-<UTC>` before the replacement is written; a healthy or absent ledger is left untouched, so no sidecar appears in the normal path.
+
+**Reason**: the committed `.issues.json` was not valid JSON — a raw newline inside a string, failing at `line 423 column 3183`. Because `load_issues` swallowed the error and returned `[]`, all 31 issues became invisible in memory, and the next `save_issues` would have replaced the whole file with a single row: permanent, silent loss of the entire work list in a tracked file at the repo root. Guessing at corruption is worse than preserving it.
+
+**Files**: `harnessfix/issues.py` (`load_issues` error log, `_quarantine_unreadable_ledger`, `save_issues` call site), `tests/test_issues_ledger.py` (+3 regression tests: corrupt ledger loads empty but is logged, corrupt bytes survive the overwrite, healthy ledger gets no sidecar).
+
+**Verification**: `python -m pytest tests/test_issues_ledger.py tests/test_kanban_bridge.py tests/test_kanban_bridge_flaws.py -q --no-cov` -> 83 passed; full suite -> 4863 passed, 23 skipped, 1 failed (pre-existing emoji-policy break from the NPU plan commit, fixed separately below).
+
+## 2026-11-14 - fix(docs): replace the emoji status marker in the abandoned NPU plan
+
+**Change**: `docs/plans/HYBRID_NPU_IGPU_PERFORMANCE_PLAN.md` L3 and its `CHANGES.md` quote now use the policy-allowed cross (U+2717) instead of the red-cross pictograph (U+274C), the latter named here rather than shown per decision #079.
+
+**Reason**: the pictograph broke `tests/test_text_policy.py::TestAuditScriptWiring::test_real_repo_is_emoji_free` and `scripts/audit_invariants.py` check 6 on the committed tree (decision #079). It arrived with commit `47ec674` — the plan commit itself — so CI was red before this session's work.
+
+**Files**: `docs/plans/HYBRID_NPU_IGPU_PERFORMANCE_PLAN.md` (L3), `CHANGES.md` (L3).
+
+**Verification**: `python -m pytest tests/test_text_policy.py -q --no-cov` -> 35 passed; `python scripts/audit_invariants.py` -> OK (warnings only).
+
 ## 2026-11-14 - docs(plans): record the NPU Hybrid plan as abandoned, keep the perf probe
 
-**Change**: `docs/plans/HYBRID_NPU_IGPU_PERFORMANCE_PLAN.md` is committed as an evidence record, not as pending work: it opens with `Status: ❌ ABANDONED 2026-11-14` and "do not schedule Phases 0–4". §0 records why (the prize was capped by §6 to better TTFT on one prompt shape, and the 1.3 A/B gate was never run, so the headline claim was never tested). `tools/perf_probe.py` (296 lines, TTFT + decode TPS against any OpenAI-compatible endpoint) is committed alongside it: the plan names it as the one salvageable artifact, and its own docstring states it is independent of the plan and remains useful for comparing any local backend.
+**Change**: `docs/plans/HYBRID_NPU_IGPU_PERFORMANCE_PLAN.md` is committed as an evidence record, not as pending work: it opens with `Status: ✗ ABANDONED 2026-11-14` and "do not schedule Phases 0–4". §0 records why (the prize was capped by §6 to better TTFT on one prompt shape, and the 1.3 A/B gate was never run, so the headline claim was never tested). `tools/perf_probe.py` (296 lines, TTFT + decode TPS against any OpenAI-compatible endpoint) is committed alongside it: the plan names it as the one salvageable artifact, and its own docstring states it is independent of the plan and remains useful for comparing any local backend.
 
 **Reason**: the plan file and its probe were untracked, so the abandonment decision and the salvage rationale existed only on one disk. Committing both keeps the decision auditable and prevents the abandoned phases from being re-proposed as open work.
 

@@ -473,14 +473,52 @@ def load_issues(path: Path | None = None) -> list[dict[str, Any]]:
         return []
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
+        # Keep the empty-list fallback (callers treat it as "no work items"),
+        # but never silently: an unparseable ledger used to look exactly like
+        # an empty one, so a read-modify-write replaced every issue with the
+        # caller's in-memory list. ``save_issues`` quarantines the bytes.
+        logger.error(
+            "issue ledger %s is unreadable (%s); treating it as empty", p, exc
+        )
         return []
     return data if isinstance(data, list) else []
+
+
+def _quarantine_unreadable_ledger(p: Path) -> Path | None:
+    """Move an unparseable ledger aside so the coming rewrite cannot destroy it.
+
+    ``save_issues`` replaces the whole file, so a corrupt ledger that loaded as
+    ``[]`` would be overwritten by a single issue and its real content lost.
+    Renaming it to ``<name>.corrupt-<UTC timestamp>`` keeps the bytes on disk
+    for recovery. Returns the sidecar path, or ``None`` when there was nothing
+    to quarantine (absent/valid file, or an unreadable one we could not move).
+    """
+    try:
+        if not p.exists():
+            return None
+        try:
+            json.loads(p.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            pass
+        else:
+            return None
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        dest = p.with_suffix(p.suffix + f".corrupt-{stamp}")
+        p.replace(dest)
+    except OSError as exc:
+        logger.error("could not quarantine unreadable ledger %s: %s", p, exc)
+        return None
+    logger.error(
+        "quarantined unreadable issue ledger to %s before rewriting %s", dest, p
+    )
+    return dest
 
 
 def save_issues(issues: list[dict[str, Any]], path: Path | None = None) -> None:
     """Atomic write: temp file + os.replace so a crash can't corrupt the ledger."""
     p = path or ISSUES_PATH
+    _quarantine_unreadable_ledger(p)
     tmp = p.with_suffix(p.suffix + ".tmp")
     tmp.write_text(
         json.dumps(issues, indent=2, ensure_ascii=False) + "\n",

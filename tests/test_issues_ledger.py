@@ -7,6 +7,7 @@ accuracy, level gating) without invoking the LLM fix path.
 from __future__ import annotations
 
 import json
+import logging
 
 import pytest
 from pathlib import Path
@@ -399,3 +400,61 @@ def test_resolve_issue_fails_closed_when_gates_fail(
     assert summary["accepted"] is False
     # The flagged pattern is gone from the file, but the ledger must stay open.
     assert il.find_log_swallow_excepts([mod]) == []
+
+
+# ---------------------------------------------------------------------------
+# Corrupt-ledger safety.
+#
+# ``.issues.json`` is committed, so a hand-edit (e.g. a multi-line description
+# pasted into a JSON string, which produces a raw newline inside it) makes the
+# whole file unparseable. ``load_issues`` reads that as ``[]``, so the very next
+# read-modify-write used to replace every issue with whatever the caller held in
+# memory -- a one-line edit became permanent loss of the entire work list.
+# ---------------------------------------------------------------------------
+
+CORRUPT_LEDGER = '[\n  {"id": "a", "title": "line one\nbroken"}\n]\n'
+
+
+def test_corrupt_ledger_loads_empty_but_is_logged(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The empty-list fallback stays (callers rely on it), but never silently."""
+    ledger = tmp_path / ".issues.json"
+    ledger.write_text(CORRUPT_LEDGER, encoding="utf-8")
+    with caplog.at_level(logging.ERROR, logger="harnessfix.issues"):
+        assert issue_store.load_issues(ledger) == []
+    assert any(
+        "unreadable" in rec.getMessage().lower() for rec in caplog.records
+    ), f"corrupt ledger was swallowed silently; log was {caplog.text!r}"
+
+
+def test_save_issues_quarantines_corrupt_ledger_before_overwrite(
+    tmp_path: Path,
+) -> None:
+    """The corrupt bytes must survive the overwrite, recoverable from disk."""
+    ledger = tmp_path / ".issues.json"
+    ledger.write_text(CORRUPT_LEDGER, encoding="utf-8")
+
+    # Simulate the read-modify-write: corrupt file loads as [], caller saves.
+    issues = issue_store.load_issues(ledger)
+    assert issues == []
+    issues.append(
+        issue_store.make_issue("cat", "x", ["a.py:1"], ledger_path=ledger)
+    )
+    issue_store.save_issues(issues, ledger)
+
+    assert len(issue_store.load_issues(ledger)) == 1
+    sidecars = list(tmp_path.glob(".issues.json.corrupt-*"))
+    assert len(sidecars) == 1, f"corrupt ledger was destroyed, found {sidecars}"
+    assert sidecars[0].read_text(encoding="utf-8") == CORRUPT_LEDGER
+
+
+def test_save_issues_leaves_healthy_ledger_alone(tmp_path: Path) -> None:
+    """No sidecar for a valid (or absent, or empty) ledger -- no file churn."""
+    ledger = tmp_path / ".issues.json"
+    issue_store.save_issues([], ledger)
+    issue_store.save_issues(
+        [issue_store.make_issue("cat", "x", ["a.py:1"], ledger_path=ledger)], ledger
+    )
+    assert list(tmp_path.glob(".issues.json.corrupt-*")) == []
+    assert len(issue_store.load_issues(ledger)) == 1
