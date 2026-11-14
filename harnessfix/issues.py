@@ -26,6 +26,72 @@ logger = logging.getLogger(__name__)
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ISSUES_PATH = REPO_ROOT / ".issues.json"
 
+
+def _ledger_key(p: "Path | None") -> Path:
+    """Normalize a ledger path for comparison (``None`` means ``ISSUES_PATH``).
+
+    ``Path("x") != Path("./x")`` and an absolute path never equals the
+    repo-relative spelling of the same file, so every comparison goes through
+    ``resolve()``.  A path that cannot be resolved (a dead drive, a NUL byte)
+    falls back to its raw form rather than raising: this helper only decides
+    whether a write is "the live ledger", and an unresolvable path is by
+    definition not it.
+    """
+    target = p if p is not None else ISSUES_PATH
+    try:
+        return Path(target).resolve()
+    except (OSError, ValueError):
+        return Path(target)
+
+
+def is_canonical_ledger(path: "Path | None") -> bool:
+    """True when *path* addresses the live, committed ``.issues.json``.
+
+    The Kanban outbox must only ever see work items that belong to the live
+    ledger.  A caller writing to any other file — a test's ``tmp_path``
+    ledger, a scratch copy, a migration target — is by definition not
+    reporting real repo work, so the sync side-effect must be suppressed.
+    ``None`` means "the default location" and is therefore canonical.
+    """
+    try:
+        return _ledger_key(path) == _ledger_key(None)
+    except Exception:  # noqa: BLE001 — a broken path must never break an op
+        return False
+
+
+def in_repo(path: "Path") -> bool:
+    """True when *path* resolves inside :data:`REPO_ROOT`.
+
+    Synthetic/scratch files handed to the detectors by tests live in the OS
+    temp dir; they are not repo findings and must not be published as cards.
+    """
+    try:
+        Path(path).resolve().relative_to(REPO_ROOT.resolve())
+        return True
+    except (ValueError, OSError):
+        return False
+
+
+def in_repo_path(location: str) -> bool:
+    """True when a ``"<file>:<line>"`` location points inside the repo.
+
+    Locations are stored repo-relative (``agent_core/x.py:12``) for real repo
+    findings and absolute (``C:/.../Temp/pytest-of-.../sample.py:6``) for a
+    detector's synthetic input, so the file part is resolved against
+    :data:`REPO_ROOT` before the containment check.  A location that cannot be
+    parsed is treated as outside: publishing nothing is always safe.
+    """
+    if not isinstance(location, str) or not location:
+        return False
+    file_part = location.rsplit(":", 1)[0] if ":" in location else location
+    if not file_part:
+        return False
+    candidate = Path(file_part)
+    if not candidate.is_absolute():
+        candidate = REPO_ROOT / candidate
+    return in_repo(candidate)
+
+
 # autonomy_level: 0 = human-only, 1 = auto-safe (tests + security gates),
 # 2 = benchmark-required (explicit human promotion). New issues default to 1.
 DEFAULT_AUTONOMY_LEVEL = 1
@@ -442,6 +508,7 @@ def make_issue(
     autonomy_level: int = DEFAULT_AUTONOMY_LEVEL,
     parent_card_id: str | None = None,
     emit_child_card: bool = False,
+    ledger_path: Path | None = None,
 ) -> dict[str, Any]:
     issue = {
         "id": _slug(category, locations),
@@ -461,11 +528,19 @@ def make_issue(
     if parent_card_id:
         issue["parent_card_id"] = parent_card_id
 
-    # Enqueue creation to Kanban if sync is enabled (best-effort side-effect)
-    payload = {k: v for k, v in issue.items() if k != "repair_ref"}
-    _enqueue_sync(
-        "issue_create", issue["id"], payload, emit_child_card=emit_child_card
-    )
+    # Enqueue creation to Kanban if sync is enabled (best-effort side-effect).
+    # ``ledger_path`` is the ledger this issue is destined for: a write aimed
+    # anywhere but the live committed ``.issues.json`` (a test's ``tmp_path``,
+    # a scratch copy) is not real repo work and must never reach the outbox.
+    # Without this gate every ``collect_issues(tmp_path)`` in the suite
+    # published real cards for throwaway fixtures — 237 junk cards on the live
+    # board, titled ``x``/``y``/``z`` and
+    # ``best-effort-except in C:/.../Temp/pytest-of-...``.
+    if is_canonical_ledger(ledger_path):
+        payload = {k: v for k, v in issue.items() if k != "repair_ref"}
+        _enqueue_sync(
+            "issue_create", issue["id"], payload, emit_child_card=emit_child_card
+        )
 
     return issue
 

@@ -6,6 +6,8 @@ accuracy, level gating) without invoking the LLM fix path.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from pathlib import Path
 
@@ -33,12 +35,117 @@ def test_issues_ledger_is_valid_json_and_schema() -> None:
         assert required <= it.keys(), f"issue {it.get('id')} missing fields"
 
 
+def test_live_ledger_is_canonically_formatted() -> None:
+    """The committed ``.issues.json`` must be what ``save_issues`` would write.
+
+    Regression for a hand-edited entry: the last object in the list was
+    re-indented to column 0 (a plain ``json.dump``/editor paste) even though
+    the rest of the file uses 2-space list indentation. Python reloads it
+    fine, so nothing caught it -- but every subsequent read-modify-write
+    through ``save_issues`` rewrites the whole file, turning the stray
+    indentation into a large spurious diff.
+    """
+    live = issue_store.ISSUES_PATH
+    if not live.is_file():
+        pytest.skip(f"no ledger at {live}")
+    expected = json.dumps(
+        issue_store.load_issues(live), indent=2, ensure_ascii=False
+    ) + "\n"
+    assert live.read_text(encoding="utf-8") == expected, (
+        f"{live.name} is not in ``save_issues`` canonical form; rewrite it via "
+        "harnessfix.issues.save_issues() instead of editing it by hand"
+    )
+
+
 def test_make_issue_id_is_stable_and_level_defaults() -> None:
     a = issue_store.make_issue("dup", "x", ["agent.py:10"])
     b = issue_store.make_issue("dup", "x", ["agent.py:10"])
     assert a["id"] == b["id"]
     assert a["autonomy_level"] == issue_store.DEFAULT_AUTONOMY_LEVEL == 1
     assert a["status"] == "open"
+
+
+class _RecordingBridge:
+    """Minimal Kanban bridge double that records every enqueued message."""
+
+    def __init__(self) -> None:
+        self.ops: list[dict] = []
+
+    def enqueue(self, msg: dict) -> int:
+        self.ops.append(msg)
+        return len(self.ops)
+
+
+def _enable_sync(monkeypatch: pytest.MonkeyPatch, bridge: _RecordingBridge) -> None:
+    """Force sync on and point the outbox at *bridge*."""
+    monkeypatch.setattr(issue_store, "_should_sync", lambda: True)
+    monkeypatch.setattr(issue_store, "_get_kanban_bridge", lambda: bridge)
+
+
+def test_is_canonical_ledger_only_accepts_the_live_ledger(tmp_path: Path) -> None:
+    """The gate must recognise the live ledger and reject any other file.
+
+    ``None`` means "the default location"; a test's ``tmp_path`` ledger, a
+    scratch copy and a differently-spelled path to the live file all land on
+    the right side of the check (comparisons go through ``resolve()``).
+    """
+    assert issue_store.is_canonical_ledger(None) is True
+    assert issue_store.is_canonical_ledger(issue_store.ISSUES_PATH) is True
+    assert issue_store.is_canonical_ledger(Path(str(issue_store.ISSUES_PATH))) is True
+    assert issue_store.is_canonical_ledger(tmp_path / ".issues.json") is False
+
+
+def test_make_issue_does_not_sync_a_scratch_ledger(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A ``make_issue`` aimed at a scratch ledger must never reach the outbox.
+
+    Regression: without this gate every test that built an issue against a
+    ``tmp_path`` ledger published a real card, filling the live board with
+    hundreds of junk cards titled ``x``/``y``/``z``.
+    """
+    bridge = _RecordingBridge()
+    _enable_sync(monkeypatch, bridge)
+
+    issue_store.make_issue(
+        "dup", "x", ["agent.py:10"], ledger_path=tmp_path / ".issues.json"
+    )
+    assert bridge.ops == [], f"scratch ledger must not sync, got {bridge.ops}"
+
+    # The live ledger is real repo work, so it still syncs (gate is not a mute).
+    issue_store.make_issue("dup", "y", ["agent.py:11"])
+    assert [op["op"] for op in bridge.ops] == ["issue_create"]
+    assert bridge.ops[0]["payload"]["title"] == "y"
+
+
+def test_collect_issues_into_scratch_ledger_emits_no_cards(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end: collecting into a scratch ledger seeds the file but no cards.
+
+    This is the actual failure mode that polluted the board — the collector is
+    what ran against throwaway ledgers — while the ledger write itself must
+    keep working.
+    """
+    sample = tmp_path / "sample.py"
+    sample.write_text(
+        "import logging, traceback\n"
+        "logger = logging.getLogger(__name__)\n"
+        "try:\n"
+        "    risky()\n"
+        "except Exception:\n"
+        "    logger.warning('boom %s', traceback.format_exc())\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(il, "_iter_py_files", lambda root: [sample])
+    bridge = _RecordingBridge()
+    _enable_sync(monkeypatch, bridge)
+
+    ledger = tmp_path / ".issues.json"
+    assert il.collect_issues(ledger) == 1
+    assert bridge.ops == [], f"collector must not publish cards, got {bridge.ops}"
+    # The finding is still recorded locally — the gate only suppresses sync.
+    assert len(issue_store.load_issues(ledger)) == 1
 
 
 def test_upsert_is_idempotent(tmp_path: Path) -> None:

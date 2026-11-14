@@ -28,7 +28,7 @@ import os
 import urllib.request
 import urllib.error
 
-from .provider import ResponseMetrics
+from .provider import ResponseMetrics, StreamClock, estimate_tokens_from_text
 from .pricing import estimate_cost
 from .retry import RetryPolicy, TRANSIENT_HTTP_STATUSES, TransientHTTPError
 from agent_core.constants import DEFAULT_LLAMA_BASE_URL, KNOWN_MODELS, resolve_model
@@ -517,6 +517,9 @@ class LlamaProvider:
         """Streaming chat completion.  Prints tokens inline; returns the full
         assembled content (or ``[llama-server stream error: ...]``)."""
         payload = self._build_payload(messages, stream=True)
+        # Final chunk carries totals so TPS uses real completion-token counts
+        # rather than an estimate (servers that ignore this fall back below).
+        payload["stream_options"] = {"include_usage": True}
 
         async def _do_stream() -> Any:
             data = json.dumps(payload).encode("utf-8")
@@ -532,6 +535,10 @@ class LlamaProvider:
             full_content = ""
             reasoning_content = ""
             finish_reason: str | None = None
+            completion_tokens = 0
+            prompt_tokens = 0
+            clock = StreamClock()
+            clock.start()
             with self._open_chat(req, timeout=_chat_timeout()) as response:
                 for line_bytes in response:
                     line = line_bytes.decode("utf-8").strip()
@@ -542,6 +549,12 @@ class LlamaProvider:
                         break
                     try:
                         chunk = json.loads(data_str)
+                        usage = chunk.get("usage")
+                        if isinstance(usage, dict):
+                            if usage.get("prompt_tokens"):
+                                prompt_tokens = int(usage["prompt_tokens"])
+                            if usage.get("completion_tokens"):
+                                completion_tokens = int(usage["completion_tokens"])
                         choice = chunk.get("choices", [{}])[0]
                         delta = choice.get("delta", {})
                         token = delta.get("content", "")
@@ -551,11 +564,23 @@ class LlamaProvider:
                         if reasoning:
                             reasoning_content += reasoning
                         if token:
+                            clock.mark_first_token()
                             print(token, end="", flush=True)
                             full_content += token
                     except json.JSONDecodeError as e:
                         logger.warning("llama-server stream JSON decode error: %s", e)
             print()
+            # Publish TTFT/TPS for this streamed call (same contract as the
+            # LM Studio provider, so benchmark.py can compare both).
+            if not completion_tokens:
+                completion_tokens = estimate_tokens_from_text(full_content)
+            self.last_response_metrics = clock.metrics(
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                cost=estimate_cost(
+                    prompt_tokens, completion_tokens, self.model_name, "llama"
+                ),
+            )
             thinking_err = self._check_thinking_error(
                 full_content, reasoning_content, finish_reason=finish_reason
             )

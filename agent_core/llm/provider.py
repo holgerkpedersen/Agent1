@@ -3,6 +3,7 @@
 from __future__ import annotations
 import logging
 import re
+import time
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -112,14 +113,116 @@ class ResponseMetrics:
     completion_tokens: int = 0
     latency_ms: float = 0.0
     cost: float = 0.0
+    #: Time to first content token (ms).  0.0 when the transport does not
+    #: stream (a non-streaming call has no first-token boundary to measure).
+    ttft_ms: float = 0.0
 
     @property
     def total_tokens(self) -> int:
         return self.prompt_tokens + self.completion_tokens
 
+    @property
+    def decode_tps(self) -> float:
+        """Decode throughput (tokens/second) over the post-TTFT window.
+
+        Standard TTFT-based TPS: completion tokens divided by the time spent
+        actually generating (total latency minus time to first token).  Using
+        the whole latency instead would fold prefill into the rate and make a
+        fast decoder on a long prompt look slow.  Returns 0.0 when the
+        transport did not stream, no completion tokens were reported, or the
+        timings are degenerate — callers treat 0.0 as "not measured".
+        """
+        if self.completion_tokens <= 0 or self.ttft_ms <= 0.0:
+            return 0.0
+        decode_ms = self.latency_ms - self.ttft_ms
+        if decode_ms <= 0.0:
+            return 0.0
+        return self.completion_tokens / (decode_ms / 1000.0)
+
+
+class StreamClock:
+    """Wall-clock helper for measuring TTFT and total time on a token stream.
+
+    Streaming providers all need the same three numbers — when the request
+    started, when the first content token arrived, and when the stream ended.
+    Keeping that in one place means every transport reports TTFT/TPS the same
+    way, instead of each one re-deriving it (and drifting).
+
+    Usage::
+
+        clock = StreamClock()
+        clock.start()
+        for chunk in stream:
+            if first_content and not clock.has_first_token:
+                clock.mark_first_token()
+        metrics = clock.metrics(prompt_tokens=..., completion_tokens=...)
+    """
+
+    __slots__ = ("_started_at", "_first_token_at")
+
+    def __init__(self) -> None:
+        self._started_at: float | None = None
+        self._first_token_at: float | None = None
+
+    def start(self) -> None:
+        """Start the clock — call immediately before the request is sent."""
+        self._started_at = time.monotonic()
+        self._first_token_at = None
+
+    def mark_first_token(self) -> None:
+        """Record the first content token.  Later calls are ignored, so a
+        provider can call this on every delta without guarding."""
+        if self._first_token_at is None and self._started_at is not None:
+            self._first_token_at = time.monotonic()
+
+    @property
+    def has_first_token(self) -> bool:
+        return self._first_token_at is not None
+
+    @property
+    def ttft_ms(self) -> float:
+        if self._started_at is None or self._first_token_at is None:
+            return 0.0
+        return (self._first_token_at - self._started_at) * 1000.0
+
+    @property
+    def elapsed_ms(self) -> float:
+        if self._started_at is None:
+            return 0.0
+        return (time.monotonic() - self._started_at) * 1000.0
+
+    def metrics(
+        self,
+        *,
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
+        cost: float = 0.0,
+    ) -> ResponseMetrics:
+        """Freeze the clock into a :class:`ResponseMetrics` snapshot."""
+        return ResponseMetrics(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            latency_ms=self.elapsed_ms,
+            cost=cost,
+            ttft_ms=self.ttft_ms,
+        )
+
 
 #: Attribute name providers set with the last call's metrics.
 LAST_METRICS_ATTR = "last_response_metrics"
+
+
+def estimate_tokens_from_text(text: str) -> int:
+    """Rough completion-token count for a server that reports no ``usage``.
+
+    Streamed responses only carry token counts when the server honours
+    ``stream_options.include_usage``; llama.cpp builds vary.  A ~4-chars-per-
+    token estimate keeps TPS reporting available rather than degrading to 0,
+    and it is explicitly an estimate — real usage always wins when present.
+    """
+    if not text:
+        return 0
+    return max(1, len(text) // 4)
 
 
 def get_last_metrics(provider: Any) -> ResponseMetrics | None:

@@ -226,7 +226,12 @@ def verify_issue(issue: dict[str, Any], files: list[Path] | None = None) -> bool
 
 
 def collect_issues(path: Path | None = None) -> int:
-    """Scan the repo and seed new issues; idempotent. Returns count added."""
+    """Scan the repo and seed new issues; idempotent. Returns count added.
+
+    ``path`` is forwarded to :func:`issue_store.make_issue` so its Kanban
+    side-effect can tell a real collection run from a scratch-ledger one: a
+    run against a test's ``tmp_path`` ledger must not publish cards.
+    """
     issues = issue_store.load_issues(path)
     files = _iter_py_files(REPO_ROOT)
     added = 0
@@ -242,6 +247,7 @@ def collect_issues(path: Path | None = None) -> int:
                 severity="low",
                 evidence=fnd["evidence"],
                 suggested_approach=fnd["suggested_approach"],
+                ledger_path=path,
             )
             if issue_store.upsert(issues, issue):
                 added += 1

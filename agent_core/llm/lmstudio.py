@@ -13,7 +13,7 @@ import urllib.error
 
 import httpx
 
-from .provider import ResponseMetrics
+from .provider import ResponseMetrics, StreamClock, estimate_tokens_from_text
 from .pricing import estimate_cost
 from .retry import RetryPolicy, TRANSIENT_HTTP_STATUSES, TransientHTTPError
 from agent_core.constants import (
@@ -1049,6 +1049,9 @@ class LMStudioProvider:
     async def chat_stream(self, messages: list[dict[str, Any]]) -> str:
         """Chat with real-time token streaming to console."""
         payload = self._build_payload(messages, stream=True)
+        # Ask for the usage block on the final chunk so TTFT-based TPS can be
+        # computed from real completion-token counts instead of a guess.
+        payload["stream_options"] = {"include_usage": True}
 
         async def _do_stream() -> Any:
             data = json.dumps(payload).encode("utf-8")
@@ -1065,6 +1068,10 @@ class LMStudioProvider:
             full_content = ""
             reasoning_content = ""
             finish_reason = None
+            completion_tokens = 0
+            prompt_tokens = 0
+            clock = StreamClock()
+            clock.start()
 
             # _open_chat (not raw urlopen): a 400 "model is not loaded" here
             # means another shell evicted our pinned model — reload + retry
@@ -1081,6 +1088,14 @@ class LMStudioProvider:
                         break
                     try:
                         chunk = json.loads(data_str)
+                        usage = chunk.get("usage")
+                        if isinstance(usage, dict):
+                            # With stream_options.include_usage the final chunk
+                            # carries totals; keep the last non-zero values.
+                            if usage.get("prompt_tokens"):
+                                prompt_tokens = int(usage["prompt_tokens"])
+                            if usage.get("completion_tokens"):
+                                completion_tokens = int(usage["completion_tokens"])
                         choice = chunk.get("choices", [{}])[0]
                         delta = choice.get("delta", {})
                         token = delta.get("content", "")
@@ -1090,12 +1105,26 @@ class LMStudioProvider:
                         if reasoning:
                             reasoning_content += reasoning
                         if token:
+                            clock.mark_first_token()
                             print(token, end="", flush=True)
                             full_content += token
                     except json.JSONDecodeError as e:
                         logger.warning("LM Studio stream JSON decode error: %s", e)
 
             print()
+
+            # Publish TTFT/TPS for this streamed call.  Servers that ignore
+            # stream_options report no usage, so fall back to a token-count
+            # estimate from the assembled content rather than reporting 0 TPS.
+            if not completion_tokens:
+                completion_tokens = estimate_tokens_from_text(full_content)
+            self.last_response_metrics = clock.metrics(
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                cost=estimate_cost(
+                    prompt_tokens, completion_tokens, self.model_name, "lmstudio"
+                ),
+            )
 
             # Check for thinking error
             thinking_err = self._check_thinking_error(

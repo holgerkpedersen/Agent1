@@ -1,3 +1,33 @@
+## 2026-11-14 - docs(plans): record the NPU Hybrid plan as abandoned, keep the perf probe
+
+**Change**: `docs/plans/HYBRID_NPU_IGPU_PERFORMANCE_PLAN.md` is committed as an evidence record, not as pending work: it opens with `Status: ❌ ABANDONED 2026-11-14` and "do not schedule Phases 0–4". §0 records why (the prize was capped by §6 to better TTFT on one prompt shape, and the 1.3 A/B gate was never run, so the headline claim was never tested). `tools/perf_probe.py` (296 lines, TTFT + decode TPS against any OpenAI-compatible endpoint) is committed alongside it: the plan names it as the one salvageable artifact, and its own docstring states it is independent of the plan and remains useful for comparing any local backend.
+
+**Reason**: the plan file and its probe were untracked, so the abandonment decision and the salvage rationale existed only on one disk. Committing both keeps the decision auditable and prevents the abandoned phases from being re-proposed as open work.
+
+**Files**: `docs/plans/HYBRID_NPU_IGPU_PERFORMANCE_PLAN.md` (new), `tools/perf_probe.py` (new).
+
+**Verification**: `python -m py_compile tools/perf_probe.py` -> clean.
+
+## 2026-11-14 - feat(llm): report TTFT and decode TPS for streamed calls
+
+**Change**: `ResponseMetrics` gains `ttft_ms` and a `decode_tps` property that divides completion tokens by the **post-TTFT** window (total latency minus time to first token), so prefill is not folded into the decode rate; it returns `0.0` — meaning "not measured" — for a non-streaming call, zero completion tokens, or degenerate timings. New `StreamClock` centralizes the three numbers every streaming transport needs (request start, first content token, stream end); `mark_first_token()` is idempotent so a provider can call it on every delta. `estimate_tokens_from_text` is the fallback for servers that ignore `stream_options.include_usage`. `LMStudioProvider.chat_stream` and `LlamaProvider.chat_stream` now request the usage block, record TTFT, and publish `last_response_metrics` on the same contract, so `benchmark.py` can compare both backends.
+
+**Reason**: the abandonment record above notes that the throughput question could not be settled because no TTFT/TPS number was ever measured. These metrics make any performance claim falsifiable: a change either moves the number or it does not.
+
+**Files**: `agent_core/llm/provider.py` (`ttft_ms`, `decode_tps`, `StreamClock`, `estimate_tokens_from_text`), `agent_core/llm/lmstudio.py` and `agent_core/llm/llama_provider.py` (streaming instrumentation), `tests/unit/test_llm_metrics.py` (+3 classes: `TestDecodeThroughput` pins the post-TTFT divisor and the zero-for-unmeasured boundaries, `TestStreamClock` pins TTFT/elapsed and the idempotent first-token mark, `TestEstimateTokensFromText` pins the fallback including short text yielding 1 rather than 0).
+
+**Verification**: `python -m pytest tests/unit/test_llm_metrics.py -q --no-cov` -> 20 passed.
+
+## 2026-11-14 - fix(issues): never publish scratch-ledger findings as Kanban cards
+
+**Change**: `harnessfix/issues.py` gains `is_canonical_ledger(path)`, `in_repo(path)` and `in_repo_path(location)`, and `make_issue` takes a `ledger_path` argument. The `issue_create` enqueue is now gated on `is_canonical_ledger(ledger_path)`: a write aimed anywhere but the live committed `.issues.json` (a test's `tmp_path`, a scratch copy) is not real repo work and must never reach the outbox. `None` still means "the default location" and stays canonical, so existing callers are unaffected; `collect_issues` forwards its `path` so the gate can see it.
+
+**Reason**: every `collect_issues(tmp_path)` in the suite published real cards for throwaway fixtures — junk titled `x`/`y`/`z` and `best-effort-except in C:/.../Temp/pytest-of-...`. An earlier attempt to fix this by filtering on the *location* was reverted: it stopped synthetic `tmp_path` fixtures from seeding and broke the documented `collect_issues` contract. The correct seam is the destination ledger, not the finding's location.
+
+**Files**: `harnessfix/issues.py` (`_ledger_key`, `is_canonical_ledger`, `in_repo`, `in_repo_path`, `make_issue(ledger_path=...)`), `harnessfix/issue_loop.py` (forward `ledger_path`, docstring), `tests/test_issues_ledger.py` (+3 regression tests: live-ledger acceptance, scratch-ledger suppression, end-to-end `collect_issues` suppression).
+
+**Verification**: `python -m pytest tests/test_issues_ledger.py -q --no-cov` -> 17 passed; related Kanban/issue suites -> 73 passed; full suite -> 4861 passed, 23 skipped.
+
 ## 2026-11-13 - fix(display): redden a tool result only when the tool actually failed
 
 **Change**: `agent_core/llm/tool_loop.py` gains `_result_reports_failure` — true only for a real failure marker (`Tool error (...)`, `Read error:`-style prefixes, a non-zero `[EXIT CODE]`, offset-past-EOF). Both the VERBOSE `[result]` whole-result reddening and NORMAL's negative-evidence row use it. The old guard tested `"error" in shown`, so any result whose text merely mentioned the word — source code, quoted messages, paths — was painted red.
