@@ -109,14 +109,18 @@ def test_make_issue_does_not_sync_a_scratch_ledger(
     _enable_sync(monkeypatch, bridge)
 
     issue_store.make_issue(
-        "dup", "x", ["agent.py:10"], ledger_path=tmp_path / ".issues.json"
+        "dup", "duplicate handler in agent.py", ["agent.py:10"],
+        ledger_path=tmp_path / ".issues.json",
     )
     assert bridge.ops == [], f"scratch ledger must not sync, got {bridge.ops}"
 
     # The live ledger is real repo work, so it still syncs (gate is not a mute).
-    issue_store.make_issue("dup", "y", ["agent.py:11"])
+    # A realistic title: one-word fixture titles are suppressed by the
+    # separate junk gate in ``_enqueue_sync`` (see
+    # ``tests/unit/test_kanban_sync_fixture_isolation.py``).
+    issue_store.make_issue("dup", "duplicate handler in report.py", ["report.py:11"])
     assert [op["op"] for op in bridge.ops] == ["issue_create"]
-    assert bridge.ops[0]["payload"]["title"] == "y"
+    assert bridge.ops[0]["payload"]["title"] == "duplicate handler in report.py"
 
 
 def test_collect_issues_into_scratch_ledger_emits_no_cards(

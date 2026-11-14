@@ -94,7 +94,9 @@ def test_work_issue_with_card_emits_child_card(
     assert child["issue_id"] == issue["id"]
     assert child["title"], "child title must carry the work summary"
     assert child["text"], "child text must carry the work body"
-    assert child["system"] == "harnessfix"
+    # The authoring system is Agent1; "harnessfix" is only the package name and
+    # cards carrying it are discarded as echo noise by the card purge.
+    assert child["system"] == "Agent1"
 
 
 def test_non_card_issue_does_not_emit_child_card(

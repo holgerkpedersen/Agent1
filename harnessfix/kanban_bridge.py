@@ -393,7 +393,13 @@ def issue_to_card_data(issue: dict[str, Any]) -> dict[str, Any]:
         "title": issue["title"],
         "text": text,
         "tags": tags,
-        "system": "harnessfix",
+        # The authoring system is Agent1, NOT "harnessfix".  "harnessfix" is the
+        # name of this Python package; stamping it here labelled every mirrored
+        # issue as a foreign system and made the cards indistinguishable from
+        # Agent1's own echo noise, which the card purge now discards outright
+        # (see harnessfix.kanban_purge.ALWAYS_DROP_SYSTEMS).  A card we want to
+        # keep must say who really made it.
+        "system": "Agent1",
         # Carried so Kanban can nest the resulting card under a parent card
         # (e.g. a "work done" child card under the card Agent1 resolved).
         "parent_id": issue.get("parent_card_id") or issue.get("parent_id", "") or "",

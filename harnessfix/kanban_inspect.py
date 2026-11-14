@@ -44,6 +44,7 @@ from typing import Any, Optional
 import logging
 
 from . import kanban_bridge as kb
+from . import kanban_junk
 from . import issues as issue_store
 
 logger = logging.getLogger(__name__)
@@ -596,6 +597,87 @@ def map_status() -> dict[str, Any]:
     }
 
 
+def junk_audit() -> dict[str, Any]:
+    """Every place fixture junk can hide, reported read-only.
+
+    A card whose title can never be human-written is only the *visible* symptom.
+    The same fixture run also leaves behind:
+
+    * **dead links** — ``.card_id_map.json`` entries whose card is on no board
+      and whose issue is in no ledger (the indices are the junk that survives
+      after the card itself is gone), and
+    * **dead-letter payloads** — queued messages that retried to exhaustion
+      while still carrying the junk title/body.
+
+    Purging the board cannot reach the last two, so they are reported here.
+    """
+    from harnessfix import kanban_purge
+
+    board = board_view()
+    junk_cards = [
+        {
+            "card_id": card["id"],
+            "title": card.get("title", ""),
+            "frame": frame.get("title", ""),
+            "reason": reason,
+        }
+        for frame in board["frames"]
+        for card in frame["cards"]
+        for reason in [kanban_purge.classify_card(card)]
+        if reason
+    ]
+
+    # Dead links: neither end of the mapping exists any more.
+    id_map = kb._load_id_map()
+    issue_ids = {i.get("id") for i in issue_store.load_issues()}
+    live_cards = {c["id"] for frame in board["frames"] for c in frame["cards"]}
+    dead_links = []
+    for key, value in id_map.items():
+        key, value = str(key), str(value)
+        if key.startswith("iss-"):
+            if key not in issue_ids:
+                dead_links.append(
+                    {"kind": "issue→card", "key": key, "value": value}
+                )
+        elif key not in live_cards:
+            dead_links.append({"kind": "card→issue", "key": key, "value": value})
+
+    # Dead-letter payloads still carrying a junk title or out-of-repo location.
+    dead_junk = []
+    for direction, queue_dir in (
+        ("kanban→agent1", kb.QUEUE_KANBAN_TO_AGENT1),
+        ("agent1→kanban", kb.QUEUE_AGENT1_TO_KANBAN),
+    ):
+        for msg in dead_letters(queue_dir):
+            payload = msg.get("payload") or {}
+            reason = kanban_purge.classify_card(payload)
+            if reason is None:
+                reason = kanban_junk.classify_issue(payload)
+            if reason:
+                dead_junk.append(
+                    {
+                        "direction": direction,
+                        "seq": msg.get("seq"),
+                        "op": msg.get("op"),
+                        "title": payload.get("title", ""),
+                        "source_id": msg.get("source_id", ""),
+                        "reason": reason,
+                    }
+                )
+
+    return {
+        "board_cards_checked": board["card_count"],
+        "junk_cards": junk_cards,
+        "dead_links": dead_links,
+        "dead_letter_junk": dead_junk,
+        "totals": {
+            "junk_cards": len(junk_cards),
+            "dead_links": len(dead_links),
+            "dead_letter_junk": len(dead_junk),
+        },
+    }
+
+
 # --- description sync ---------------------------------------------------------
 
 
@@ -736,6 +818,11 @@ def main(argv: list[str] | None = None) -> int:
         "keys", help="explain every key that flows between the repos"
     )
 
+    sub.add_parser(
+        "junk",
+        help="read-only audit: junk cards, dead links, junk dead letters",
+    )
+
     p_sync = sub.add_parser(
         "sync-descriptions", help="copy card descriptions into issues that have none"
     )
@@ -747,6 +834,8 @@ def main(argv: list[str] | None = None) -> int:
         _print(status_summary())
     elif args.cmd == "keys":
         _print(key_anatomy())
+    elif args.cmd == "junk":
+        _print(junk_audit())
     elif args.cmd == "card":
         view = issue_view(args.key)
         if not args.full and view.get("issue"):

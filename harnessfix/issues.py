@@ -21,6 +21,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from . import kanban_junk
+
 logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -206,6 +208,22 @@ def _enqueue_sync(
     try:
         if not _should_sync():
             return
+        # Fixture gate: a throwaway test fixture is not repo work.  The outbox
+        # used to publish every fixture ``make_issue(..., ledger_path=None)``
+        # produced — ``ledger_path=None`` means "default ledger", so the
+        # canonical-ledger check in ``make_issue`` never fired for them, and
+        # ``resolve``/``update_issue``/``promote`` take no ledger path at all.
+        # That put 313 junk cards on the live board (purgeable only after the
+        # fact).  ``kanban_junk`` is the single shared rule set, so this gate
+        # and ``harnessfix.kanban_purge`` can never disagree.
+        if not kanban_junk.is_publishable(payload):
+            logger.info(
+                "Kanban sync suppressed for %s (%s): %s",
+                op,
+                source_id,
+                kanban_junk.classify_issue(payload),
+            )
+            return
         kb = _get_kanban_bridge()
         if kb is not None:
             kb.enqueue(
@@ -295,7 +313,10 @@ def _emit_child_card_for(payload: dict[str, Any], op: str = "") -> None:
                     "op": op_val,
                     "status": issue_status,
                     "created_at": payload.get("created_at") or _now(),
-                    "system": "harnessfix",
+                    # "harnessfix" is this package's name, not the authoring
+                    # system.  Cards stamped with it are treated as Agent1 echo
+                    # noise and discarded (kanban_purge.ALWAYS_DROP_SYSTEMS).
+                    "system": "Agent1",
                     # Session identity for the board (cross-repo contract).
                     "agent1_session": sess,
                     "agent1_label": label,
@@ -368,7 +389,8 @@ def _claim_for_card(card_id: str, payload: dict[str, Any]) -> tuple[bool, dict]:
                             "claimed_at": record.get("claimed_at"),
                             "attempted_by": ident.session_id(),
                             "issue_id": payload.get("id"),
-                            "system": "harnessfix",
+                            # Authoring system, not this package's name.
+                            "system": "Agent1",
                         },
                     }
                 )
@@ -446,7 +468,8 @@ def claim_card_for_work(issue_id: str) -> tuple[bool, str]:
                         "label": ident.agent_label(),
                         "claimed_at": record.get("claimed_at"),
                         "issue_id": issue_id,
-                        "system": "harnessfix",
+                        # Authoring system, not this package's name.
+                        "system": "Agent1",
                     },
                 }
             )

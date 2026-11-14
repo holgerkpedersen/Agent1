@@ -51,13 +51,14 @@ import logging
 
 from . import kanban_bridge as kb
 from . import kanban_inspect as ki
+from . import kanban_junk
 
 logger = logging.getLogger(__name__)
 
 #: Titles that can never be a human-written card.  Exact match, case-folded.
-PLACEHOLDER_TITLES: frozenset[str] = frozenset(
-    {"x", "y", "z", "low", "high", "bench", "ælø", "æølæøl", "ælæl"}
-)
+#: Re-exported from :mod:`harnessfix.kanban_junk` so the outbox gate and this
+#: purge can never disagree about what counts as junk.
+PLACEHOLDER_TITLES: frozenset[str] = kanban_junk.PLACEHOLDER_TITLES
 
 #: Prefix of a card titled after a pytest temp findings path.
 TEMP_TITLE_PREFIX = "best-effort-except in C:/Users/"
@@ -65,14 +66,36 @@ TEMP_TITLE_PREFIX = "best-effort-except in C:/Users/"
 #: Marker that makes a temp path unmistakably pytest-generated.
 TEMP_TITLE_MARKER = "pytest-of-"
 
+#: ``system`` values that are ALWAYS discarded, with no flag required.
+#:
+#: ``harnessfix`` is the name of Agent1's own Python package, not a real
+#: external system.  The Kanban sync used to stamp it on every card it built
+#: (``C:/Dev/Kanban/src/agent1/kanban_sync.py``), so ``System=harnessfix`` on a
+#: card means "created by Agent1's sync layer", never "authored by a human".
+#: Such cards are Agent1's own echo noise and must not survive on a board.
+#: Real authoring systems are ``Agent1``, ``Kanban``, ``git-server`` and the
+#: human teams — none of which appear here.
+ALWAYS_DROP_SYSTEMS: frozenset[str] = frozenset({"harnessfix"})
 
-def classify_card(card: dict[str, Any]) -> Optional[str]:
-    """Why this card is meaningless, or ``None`` if it must be kept."""
+
+def classify_card(
+    card: dict[str, Any], *, drop_systems: frozenset[str] = frozenset()
+) -> Optional[str]:
+    """Why this card is meaningless, or ``None`` if it must be kept.
+
+    ``drop_systems`` adds ``system`` values (case-folded) to remove wholesale,
+    on top of :data:`ALWAYS_DROP_SYSTEMS`.  Every other system tag is kept, so
+    the purge never deletes a real author's card: a card stamped ``Agent1`` or a
+    human team survives even when its title looks odd.
+    """
     title = (card.get("title") or "").strip()
-    if title.casefold() in PLACEHOLDER_TITLES:
+    if kanban_junk.is_placeholder_title(title):
         return "placeholder-title"
     if title.startswith(TEMP_TITLE_PREFIX) and TEMP_TITLE_MARKER in title:
         return "pytest-temp-title"
+    system = str(card.get("system") or "").strip().casefold()
+    if system and system in (set(drop_systems) | set(ALWAYS_DROP_SYSTEMS)):
+        return f"system:{system}"
     return None
 
 
@@ -84,7 +107,9 @@ def _frame_titles(board: dict[str, Any]) -> dict[str, str]:
     }
 
 
-def plan_purge(board: dict[str, Any]) -> dict[str, Any]:
+def plan_purge(
+    board: dict[str, Any], *, drop_systems: frozenset[str] = frozenset()
+) -> dict[str, Any]:
     """Decide, without mutating anything, which cards go and which stay."""
     frames = _frame_titles(board)
     cards = [c for c in board.get("cards") or [] if isinstance(c, dict)]
@@ -92,7 +117,7 @@ def plan_purge(board: dict[str, Any]) -> dict[str, Any]:
     junk: list[dict[str, str]] = []
     keep: list[dict[str, Any]] = []
     for card in cards:
-        reason = classify_card(card)
+        reason = classify_card(card, drop_systems=drop_systems)
         if reason is None:
             keep.append(card)
         else:
@@ -165,9 +190,11 @@ def backup_board(path: Path, *, label: str = "purge") -> Path:
     return target
 
 
-def purge_board(board: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+def purge_board(
+    board: dict[str, Any], *, drop_systems: frozenset[str] = frozenset()
+) -> tuple[dict[str, Any], dict[str, Any]]:
     """Drop junk cards and their frame memberships; return (new board, plan)."""
-    plan = plan_purge(board)
+    plan = plan_purge(board, drop_systems=drop_systems)
     doomed = set(plan["remove_ids"])
 
     if plan["kept_with_deleted_parent"]:
@@ -196,7 +223,11 @@ def purge_board(board: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
 
 
 def verify_purge(
-    new_board: dict[str, Any], plan: dict[str, Any], board: dict[str, Any]
+    new_board: dict[str, Any],
+    plan: dict[str, Any],
+    board: dict[str, Any],
+    *,
+    drop_systems: frozenset[str] = frozenset(),
 ) -> list[str]:
     """Return the list of problems found; empty means the purge is sound."""
     problems: list[str] = []
@@ -205,15 +236,37 @@ def verify_purge(
 
     if len(cards) != plan["kept"]:
         problems.append(f"card count {len(cards)} != expected {plan['kept']}")
-    leftover = [c.get("id", "") for c in cards if classify_card(c) is not None]
+    leftover = [
+        c.get("id", "")
+        for c in cards
+        if classify_card(c, drop_systems=drop_systems) is not None
+    ]
     if leftover:
         problems.append(f"junk survived: {leftover[:5]}")
 
     frame_members = {
         cid for f in new_board.get("frames") or [] for cid in (f.get("card_ids") or [])
     }
-    if frame_members - ids:
-        problems.append(f"frame refers to deleted cards: {sorted(frame_members - ids)}")
+    # Frames can already point at cards the board no longer has (drift the app
+    # never cleans up).  Only *newly* dangling members are this purge's fault.
+    members_before = {
+        cid for f in board.get("frames") or [] for cid in (f.get("card_ids") or [])
+    }
+    ids_before = {
+        c.get("id", "") for c in board.get("cards") or [] if isinstance(c, dict)
+    }
+    dangling_before = members_before - ids_before
+    newly_dangling = (frame_members - ids) - dangling_before
+    if newly_dangling:
+        problems.append(
+            f"frame refers to deleted cards: {sorted(newly_dangling)}"
+        )
+    # A stale reference the purge did not create must survive untouched.
+    if dangling_before - frame_members:
+        problems.append(
+            "pre-existing dangling members were rewritten: "
+            f"{sorted(dangling_before - frame_members)}"
+        )
     if ids - frame_members:
         problems.append(f"cards in no frame: {sorted(ids - frame_members)}")
 
@@ -221,7 +274,8 @@ def verify_purge(
     kept_before = {
         c.get("id")
         for c in board.get("cards") or []
-        if isinstance(c, dict) and classify_card(c) is None
+        if isinstance(c, dict)
+        and classify_card(c, drop_systems=drop_systems) is None
     }
     if kept_before - ids:
         problems.append(f"kept cards were deleted: {sorted(kept_before - ids)}")
@@ -257,15 +311,18 @@ def _port_is_live(host: str = "127.0.0.1", port: int = 3000) -> bool:
 
 
 def apply_purge(
-    board_id: str = "agent1", *, force: bool = False
+    board_id: str = "agent1",
+    *,
+    force: bool = False,
+    drop_systems: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """Purge junk cards from one board file, with backup and verification."""
     path = board_path(board_id)
     raw = path.read_bytes()
     board = json.loads(raw.decode("utf-8"))
 
-    new_board, plan = purge_board(board)
-    problems = verify_purge(new_board, plan, board)
+    new_board, plan = purge_board(board, drop_systems=drop_systems)
+    problems = verify_purge(new_board, plan, board, drop_systems=drop_systems)
     if problems:
         raise ValueError(f"refusing to write: {problems}")
 
@@ -282,11 +339,12 @@ def apply_purge(
             "(format drift would make the diff unreviewable)"
         )
 
-    backup = backup_board(path)
+    label = "purge" + ("-" + "-".join(sorted(drop_systems)) if drop_systems else "")
+    backup = backup_board(path, label=label)
     path.write_bytes(serialize_board(new_board))
 
     reread = json.loads(path.read_bytes().decode("utf-8"))
-    after = verify_purge(reread, plan, board)
+    after = verify_purge(reread, plan, board, drop_systems=drop_systems)
     if after:
         raise ValueError(f"post-write verification failed: {after}")
 
@@ -300,6 +358,10 @@ def apply_purge(
         "removed": plan["removed"],
         "reasons": plan["reasons"],
         "per_frame_kept": plan["per_frame_kept"],
+        "removed_cards": [
+            {k: j[k] for k in ("id", "title", "frame", "reason")}
+            for j in plan["junk"]
+        ],
         "links": stranded_links(new_board, plan),
     }
 
@@ -391,6 +453,14 @@ def main(argv: list[str] | None = None) -> int:
     ):
         p = sub.add_parser(name, help=help_text)
         p.add_argument("--board", default="agent1")
+        p.add_argument(
+            "--system",
+            action="append",
+            default=[],
+            metavar="TAG",
+            help="also drop every card whose system tag is TAG "
+            "(repeatable; not part of the automatic junk rules)",
+        )
         if name in ("apply", "restore"):
             p.add_argument(
                 "--force", action="store_true", help="ignore a live board app"
@@ -404,13 +474,14 @@ def main(argv: list[str] | None = None) -> int:
             )
 
     args = parser.parse_args(argv)
+    drop_systems = frozenset(s.strip().casefold() for s in args.system if s.strip())
 
     if args.cmd == "scan":
         board = ki.load_board(args.board)
         if not board:
             _print({"error": f"no such board: {args.board}"})
             return 1
-        plan = plan_purge(board)
+        plan = plan_purge(board, drop_systems=drop_systems)
         plan.pop("junk", None)
         _print(plan)
         return 0
@@ -432,7 +503,9 @@ def main(argv: list[str] | None = None) -> int:
         _print(result)
         return 0
 
-    result = apply_purge(args.board, force=getattr(args, "force", False))
+    result = apply_purge(
+        args.board, force=getattr(args, "force", False), drop_systems=drop_systems
+    )
     _print(result)
     return 0
 
