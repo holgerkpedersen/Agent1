@@ -32,6 +32,7 @@ from typing import Any
 import pytest
 
 from harnessfix import issues as issue_store
+from harnessfix import kanban_junk
 
 
 class _RecordingBridge:
@@ -165,3 +166,30 @@ def test_child_card_is_still_emitted_for_real_work_on_a_card(
     )
 
     assert outbox.op_names() == ["issue_create", "child_card_create"], outbox.op_names()
+
+
+# --------------------------------------------------------------------------
+# 5. Containment must not depend on the host filesystem flavour.
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "location",
+    [
+        "C:/Program Files/Other/sample.py:7",
+        "C:\\Program Files\\Other\\sample.py:7",
+        "\\\\server\\share\\sample.py:7",
+    ],
+)
+def test_drive_rooted_location_is_outside_on_every_host(location: str) -> None:
+    """A Windows-absolute path is never repo-relative, even on a POSIX host.
+
+    Regression: ``Path("C:/x/y.py")`` is *relative* on Linux, so joining it
+    onto the repo root made it look like repo work.  The gate then published
+    the fixture, and CI's Ubuntu job failed while Windows passed.
+    """
+    assert kanban_junk.in_repo(location) is False
+
+
+def test_repo_relative_location_is_inside_on_every_host() -> None:
+    """The fix must not invert the rule for genuine repo-relative findings."""
+    assert kanban_junk.in_repo("agent_core/llm/provider.py:42") is True

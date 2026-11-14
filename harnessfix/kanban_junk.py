@@ -30,8 +30,17 @@ Three junk shapes, all of them impossible for a human to have authored:
 
 from __future__ import annotations
 
+import os
+import re
 from pathlib import Path
 from typing import Any, Optional
+
+#: ``C:/x``, ``C:\x`` - a drive-rooted path, absolute on Windows only.
+_DRIVE_PREFIX = re.compile(r"^[A-Za-z]:[\\/]")
+
+#: ``Path`` resolves paths with the *host* flavour, so "is this absolute?" must
+#: be answered per flavour rather than trusting ``Path.is_absolute()``.
+_HOST_IS_POSIX = os.name == "posix"
 
 #: Titles that can never be a human-written card.  Exact match, case-folded.
 PLACEHOLDER_TITLES: frozenset[str] = frozenset(
@@ -86,9 +95,17 @@ def in_repo(location: str, repo_root: Path | None = None) -> bool:
     # A temp-root marker is decisive regardless of where root happens to be.
     if has_temp_path_marker(file_part):
         return False
-    candidate = Path(file_part)
-    if not candidate.is_absolute():
-        candidate = root / candidate
+    # A drive-rooted (or UNC) path is absolute on Windows.  On a POSIX host
+    # ``Path("C:/x/y.py")`` is *relative*, so joining it onto the root would
+    # make it look like repo work and leak the fixture to the board.
+    if _DRIVE_PREFIX.match(file_part) or file_part.startswith("\\\\"):
+        if _HOST_IS_POSIX:
+            return False
+        candidate = Path(file_part)
+    else:
+        candidate = Path(file_part)
+        if not candidate.is_absolute():
+            candidate = root / candidate
     try:
         candidate.resolve().relative_to(root.resolve())
     except (ValueError, OSError):
