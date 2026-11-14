@@ -1,3 +1,26 @@
+## 2026-11-14 - feat(kanban): `kanban purge` REPL command + undo for purges
+
+**Change**: the purge is now reachable from the REPL and reversible.
+- `harnessfix/kanban_purge.py` — new `restore_board()` / `list_backups()`; `restore` CLI subcommand (`python harnessfix/kanban_purge.py restore [--backup PATH|--list]`). An undo backs the *current* file aside as `.bak-undopre-*` first, so the undo is itself undoable and no state is lost. `restore_board` refuses a backup that would not round-trip through `serialize_board`, and refuses while the Kanban app is listening. New `available_boards()` ignores `.bak-*` files.
+- Fixed a real bug: two purges inside the same second raised `FileExistsError` from the backup name. `backup_board` now appends `-2`, `-3`, … instead of throwing, so a rerun never loses the earlier backup.
+- `agent_core/commands/kanban_cmd.py` — new `kanban purge [apply | undo | backups] [--board ID]`. Preview is the default and changes nothing; only `apply`/`undo` write, and both are blocked in plan mode. Refusals are reported as `Error: …` rather than raised into the REPL.
+
+**Reason**: a destructive sweep whose only interface was a raw module call was not "easy to delete" — a wrong deletion had no supported way back, and the same-second collision could abort a rerun mid-flow.
+
+**Files**: `harnessfix/kanban_purge.py`, `agent_core/commands/kanban_cmd.py`, `tests/test_kanban_purge_undo.py` (new, 17 tests), `docs/INTEGRATION_KANBAN_AGENT1.md`, `skills/kanban-card-work/SKILL.md`.
+
+**Verification**: `python -m pytest tests/test_kanban_purge.py tests/test_kanban_purge_undo.py -q --no-cov` -> 47 passed; wider Kanban set (9 files, incl. bridge/roundtrip/gate) -> 145 passed; `tests/test_vendored_skills.py` -> 36 passed. Live board re-scan after the change: 43 cards, 43 kept, 0 removed (idempotent), pre-purge backup still listed by `restore --list`.
+
+## 2026-11-14 - chore(kanban): remove 300 test-fixture cards from the live board
+
+**Change**: new `harnessfix/kanban_purge.py` (`scan` reports, `apply` writes) removes cards whose title can never be human-written: exact placeholders (`x`, `y`, `z`, `low`, `high`, `bench`, `ælø`, `æølæøl`) and pytest temp-path titles (`best-effort-except in C:/Users/.../pytest-of-*/...`). `data/board-agent1.json` went from 343 cards to 43 — `Issues` 224→6, `Finished` 76→17; `New` (14) and `Quality & Assurance` (6) were untouched. Frame `card_ids` lists were pruned in the same pass.
+
+**Reason**: Agent1's own test suite was injecting throwaway cards into the board a human reads, so almost 9 of every 10 cards were noise (`Issues` was 97% junk). Real work was unfindable.
+
+**Files**: `harnessfix/kanban_purge.py` (new), `tests/test_kanban_purge.py` (new, 30 tests).
+
+**Verification**: `python -m pytest tests/test_kanban_purge.py tests/test_kanban_bridge.py tests/test_kanban_roundtrip.py -q --no-cov` -> 88 passed. Dry run then apply: 300 removed, 43 kept, 0 orphans; re-scan reports 0 junk (idempotent). Deleted cards cross-checked against every ledger `locations["kanban:<id>"]` and against the pre-purge backup: **0** of the 300 was referenced by a live issue — the 8 already-orphaned issues were orphaned before the purge. Pre-purge original preserved as `board-agent1.json.bak-purge-20261114-191548` (343 cards, sha256 f3acaeec…).
+
 ## 2026-11-14 - fix(issues): quarantine a corrupt ledger instead of overwriting it
 
 **Change**: `load_issues` keeps its `[]` fallback (callers depend on it) but now logs an `ERROR` naming the parse failure instead of returning silently. `save_issues` calls new `_quarantine_unreadable_ledger()`, which renames an unreadable ledger to `<name>.corrupt-<UTC>` before the replacement is written; a healthy or absent ledger is left untouched, so no sidecar appears in the normal path.

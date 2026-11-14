@@ -261,7 +261,8 @@ Manual one-shot processing: `python -m harnessfix.kanban_bridge --process-in` (a
 
 The bridge writes state; the read side answers "what does card X say, and where is
 the link?" without hand-reading four files. Both live in Agent1 and are read-only
-except one repair subcommand:
+except the repair subcommands (`sync-descriptions`, `purge`), which preview first
+and only write when explicitly told to:
 
 | Command | Owner | What it gives you |
 | --- | --- | --- |
@@ -270,7 +271,8 @@ except one repair subcommand:
 | `kanban queue [--limit N]` | same → `queue_status` | unprocessed messages in **both** directions, each resolved to an issue id |
 | `kanban board [board-id]` | same → `board_view` | frames with titles, the issue status each column maps to, and the cards |
 | `kanban keys` | same → `key_anatomy` | every key that travels between the repos and what it means |
-| `kanban sync-descriptions [--dry-run]` | same → `sync_descriptions` | the **only mutating** subcommand: fills EMPTY issue fields from the card body (backfill for issues created before the bridge carried the body); never overwrites text; blocked in plan mode |
+| `kanban sync-descriptions [--dry-run]` | same → `sync_descriptions` | fills EMPTY issue fields from the card body (backfill for issues created before the bridge carried the body); never overwrites text; blocked in plan mode |
+| `kanban purge [apply\|undo\|backups] [--board ID]` | same → `harnessfix/kanban_purge.py:plan_purge` / `apply_purge` / `restore_board` | deletes meaningless cards — exact placeholders (`x`, `bench`, `high`…) and pytest temp-path titles. **Read-only preview by default**; writes only on `apply`; `undo` restores the last backup and is itself undoable; `backups` lists them; blocked in plan mode |
 
 The module runs standalone too (`python harnessfix/kanban_inspect.py card <id>`),
 but **not** as `python -m harnessfix.kanban_inspect` — that form is refused by the

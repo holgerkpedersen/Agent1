@@ -12,6 +12,7 @@ Subcommands:
     kanban board [board-id]
     kanban keys
     kanban sync-descriptions [--dry-run]   (the only mutating subcommand)
+    kanban purge [apply | undo | backups] [--board ID]
 
 Mutating subcommands are blocked in plan mode, matching ``issue add/resolve``.
 """
@@ -24,6 +25,7 @@ from typing import TYPE_CHECKING
 from .base import Command
 from agent_core.modes import is_plan_mode
 from harnessfix import kanban_inspect as ki
+from harnessfix import kanban_purge as kp
 
 if TYPE_CHECKING:
     from agent import Agent
@@ -54,7 +56,16 @@ _KANBAN_HELP = """kanban - Inspect the Kanban ↔ Agent1 bridge (one card, both 
   kanban sync-descriptions [--dry-run]
       Copy Kanban card descriptions into issues whose fields are empty
       (kanban→agent1 used to drop the body). Dry-run by default is NOT the
-      case: pass --dry-run to preview."""
+      case: pass --dry-run to preview.
+
+  kanban purge [apply | undo | backups] [--board ID]
+      Delete meaningless cards — placeholder titles ("x", "bench", "high"…) and
+      cards titled after pytest temp paths. Read-only preview by default; it
+      only writes when you say `apply`, and always backs the board up first.
+        kanban purge              show what would go (safe, changes nothing)
+        kanban purge apply        delete them
+        kanban purge undo         put the last purge's backup back
+        kanban purge backups      list available backups"""
 
 
 def _show(obj: object) -> None:
@@ -112,6 +123,8 @@ class KanbanCommand(Command):
                     "results": results,
                 }
             )
+        elif sub == "purge":
+            self._cmd_purge(rest, agent)
         elif sub == "claim":
             self._cmd_claim(rest, agent)
         elif sub == "takeover":
@@ -207,6 +220,51 @@ class KanbanCommand(Command):
 
         if full:
             _show(view)
+
+    # ── purge ────────────────────────────────────────────────────────────
+
+    def _cmd_purge(self, args: list[str], agent: "Agent") -> None:
+        """Delete meaningless cards: preview by default, `apply` to write."""
+        action = "scan"
+        board = "agent1"
+        for i, arg in enumerate(args):
+            low = arg.lower()
+            if low in ("apply", "undo", "backups", "scan"):
+                action = low
+            elif low == "--board" and i + 1 < len(args):
+                board = args[i + 1]
+
+        if action == "backups":
+            _show({"board": board,
+                   "backups": [p.name for p in kp.list_backups(board)]})
+            return
+
+        if action == "scan":
+            plan = kp.plan_purge(ki.load_board(board) or {})
+            plan.pop("junk", None)
+            if not plan["removed"]:
+                print(f"  kanban purge: {board} is already clean "
+                      f"({plan['kept']} real cards kept).")
+                return
+            print(f"  kanban purge: {plan['removed']} meaningless card(s) in "
+                  f"{board} — run 'kanban purge apply' to delete them.")
+            _show(plan)
+            return
+
+        # Mutating from here on.
+        if is_plan_mode(agent.mode):
+            self.error(f"kanban purge {action} is blocked in plan mode "
+                       "(read-only session).")
+            return
+
+        if action == "undo":
+            _show(kp.restore_board(board))
+            return
+
+        try:
+            _show(kp.apply_purge(board))
+        except (ValueError, RuntimeError, FileNotFoundError) as exc:
+            self.error(f"kanban purge apply refused: {exc}")
 
     # ── claim / takeover / release ───────────────────────────────────────
 

@@ -77,6 +77,23 @@ kanban queue           # unprocessed messages both ways, each resolved to an iss
 - Dead letters mean repeated failures; read the quarantined payload before
   re-applying anything by hand.
 
+## Step 3b — when the board itself is full of noise
+
+Cards whose title can never be human-written (exact placeholders like `x`,
+`bench`, `high`, or pytest temp-path titles) are junk, usually injected by a
+test run. Do not delete them by hand or by editing the board JSON:
+
+```
+kanban purge              # read-only preview: what would go, and why
+kanban purge apply        # delete them (backs the board up first)
+kanban purge undo         # put the last purge's backup back
+kanban purge backups      # list available backups
+```
+
+`purge` writes only on `apply`, refuses while the Kanban app is listening,
+refuses a file whose format would not round-trip, and refuses if a kept card
+would lose its parent. It is blocked in plan mode.
+
 ## Verified facts (issue `iss-general-kanban_8e3dcc6f84384dce9e0dae34db13a324`)
 
 - A ledger status of `resolved` does **not** imply the board card is `resolved`.
