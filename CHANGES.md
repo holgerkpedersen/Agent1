@@ -1,3 +1,13 @@
+## 2026-11-14 - fix(kanban): make junk containment host-independent so Ubuntu CI passes
+
+**Change**: `harnessfix/kanban_junk.py` no longer trusts `Path.is_absolute()` when it decides whether a finding location is inside the repo. A drive-rooted path (`C:/x`, `C:\x`) or a UNC path (`\\server\share`) is now rejected outright on a POSIX host, and only joined onto the repo root on Windows, where it really is absolute. Repo-relative locations keep the old join-then-contain rule.
+
+**Reason**: the containment gate from the entry below was correct on Windows but inverted on Linux, so the fix that stopped the fixture leak also broke CI. On a POSIX host `Path("C:/Program Files/Other/sample.py")` is *relative*, so it was joined onto the repo root and resolved to a path that looked like repo work — the gate published a fixture that Windows correctly suppressed. Symptom: the Ubuntu job failed while Windows passed on the same commit.
+
+**Files**: `harnessfix/kanban_junk.py` (`_DRIVE_PREFIX`, `_HOST_IS_POSIX`, `in_repo`), `tests/unit/test_kanban_sync_fixture_isolation.py` (+4 regression tests: three drive-rooted/UNC shapes outside on every host, plus a repo-relative location that must stay inside).
+
+**Verification**: the 48 tests in the three affected files pass on both platforms — Windows `48 passed in 11.29s`, and real Ubuntu 24.04 via WSL `48 passed in 55.35s` (the platform that was failing). Ruff clean.
+
 ## 2026-11-14 - fix(issues): stop the outbox publishing test fixtures to the board
 
 **Change**: the Kanban outbox now refuses fixture noise at the source. New `harnessfix/kanban_junk.py` holds the single definition of "this is fixture noise, not a card" — placeholder titles (`x`, `y`, `z`, `low`, `high`, `bench`), pytest temp-path titles, and out-of-repo finding locations. `_enqueue_sync` in `harnessfix/issues.py` gates every outbound op through `kanban_junk.is_publishable(payload)` before the bridge is touched, so the suppression covers `issue_create`, `issue_update`, `issue_resolve` **and** the `child_card_create` emission. `harnessfix/kanban_purge.py` now imports the same `PLACEHOLDER_TITLES` set and `is_placeholder_title` from it instead of keeping a private copy.
