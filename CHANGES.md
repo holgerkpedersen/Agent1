@@ -1,3 +1,23 @@
+## 2026-11-15 - fix(decisions): keep the `void` tombstone and stop recording out-of-workspace paths
+
+**Change**: two defects in the Phase-1 autonomous-decision capture fixed while auditing it. `STATUS_VOID` is now a member of the `_STATUSES` set in `agent_core/decisions.py`, so `load_decisions` round-trips a `void` record instead of rewriting it to `active`. `decisions.workspace_paths()` now drops any value that resolves outside the workspace, via the new `_outside_workspace` helper. `decide set-status` builds its error message from `_STATUSES` (`agent_core/commands/decide_cmd.py`), so the listed statuses cannot drift from the accepted set again.
+
+**Reason**: both defects corrupt the ledger rather than failing loudly. (1) `void` was accepted by `set-status` and written to disk, but was absent from the set `load_decisions` validates against, so the next load classified the record as "unknown" and persisted `active` on the following save — silently resurrecting a tombstone into an authoritative decision, which is data loss in an audit trail. Record #043 is a deliberate reserved tombstone and was flipped back by this. (2) a write into a pytest `%TEMP%` directory was recorded as an `affected_file`, entering the ledger as a path no checkout can ever satisfy and permanently tripping the stale-reference audit (#054). The two junk records (#140/#141) created this way were removed; the ledger holds 139 records.
+
+**Files**: `agent_core/decisions.py` (`_STATUSES`, `_outside_workspace`, `workspace_paths`), `agent_core/commands/decide_cmd.py` (`set-status`), `tests/test_autonomous_decisions.py` (new, 5 tests: `void` round-trip, legacy-status fallback, absolute path, `../` escape, in-workspace kept), `tests/test_decisions_list_filtering.py`.
+
+**Verification**: full suite green — `4984 passed, 23 skipped in 1061s`. The 3 skips in `tests/test_linux_ci_regressions.py` are POSIX-only and the first real CI signal on push. Ruff clean (pre-commit).
+
+## 2026-11-15 - feat(decisions): detect discrepancies between stated decisions and actions
+
+**Change**: Phase 2 of `.decisions_plan.md`. Adds `agent_core/discrepancy.py` with the `Discrepancy` dataclass and `check_decision_compliance()`, a JSONL ledger at `.discrepancies.jsonl` (gitignored runtime state) and the hook in `AgentCore._execute_tool_call()`.
+
+**Reason**: guards are matched by workspace-relative path prefix, so a shell command naming a forbidden target is caught rather than only a literal path, and read-only tools are exempt. A plan-mode rejection is logged once against the synthetic plan decision instead of once per guarded file it touched. The active-decision cache is keyed on the ledger's mtime/size to keep the hook off the tool hot path.
+
+**Files**: `agent_core/discrepancy.py`, `agent_core/decisions.py`, `agent_core/agent.py`, `.decisions_plan.md`, `tests/test_decision_discrepancy.py` (new, 313 lines).
+
+**Verification**: `tests/test_decision_discrepancy.py` passes; ruff clean.
+
 ## 2026-11-14 - fix(kanban): make junk containment host-independent so Ubuntu CI passes
 
 **Change**: `harnessfix/kanban_junk.py` no longer trusts `Path.is_absolute()` when it decides whether a finding location is inside the repo. A drive-rooted path (`C:/x`, `C:\x`) or a UNC path (`\\server\share`) is now rejected outright on a POSIX host, and only joined onto the repo root on Windows, where it really is absolute. Repo-relative locations keep the old join-then-contain rule.
