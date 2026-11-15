@@ -1,3 +1,18 @@
+## 2026-11-15 - feat(decisions): collect decisions per turn and propose updates from drift
+
+**Change**: Phases 3 and 4.1 of `.decisions_plan.md`.
+
+- **3.2 (committed `4fb07fe`)** — `AgentCore` collects autonomous decisions at the end of every turn via `_finish_turn` in `agent_core/turn_loop.py`. The turn's messages are captured before `_trim_chat_history` can drop them, so a path the user named is not reported as the agent's own choice. Collection runs in its own guard, and `_collect_autonomous_decisions_from_turn` clears `_last_turn_decisions` first, so a raising collector yields an empty summary instead of the previous turn's list.
+- **4.1** — new `agent_core/decision_improvement.py`: `detect_drift()` returns a `DriftAnalysis` (violation count, rate, common patterns, recommendation) and `propose_decision_updates()` turns drifting decisions into `DecisionUpdateProposal`s carrying evidence.
+
+**Reason**: the pipeline must not guess. Two quantities the spec named but did not define were pinned to something a reader can verify from the records: `total_actions` is the decision's real surface (its `affected_files` that still exist) raised to at least the violations recorded against it, and `confidence` is that same violation rate. Recommendations distinguish `update` (one recurring violation kind — the wording is stale) from `investigate` (several kinds — rewording would guess) and `resolve` (the decision is already closed, so the closure did not stick). Nothing in the module writes: a proposal can never silently rewrite an audit trail, and a wrong suggestion costs nothing until 4.2 applies it.
+
+**Files**: `agent_core/decision_improvement.py` (new), `tests/test_decision_improvement.py` (new, 25 tests), `agent_core/decision_collector.py`, `agent_core/turn_loop.py`, `agent_core/agent.py`, `tests/test_decision_collector.py` (new, 14), `tests/test_decision_collection_turn.py` (new, 9), `.decisions_plan.md` (Phase 3 marked done, 4.1 marked done, file table split into done/open).
+
+**Verification**: `tests/test_decision_improvement.py` written first and watched fail for the right reason (`ModuleNotFoundError: No module named 'agent_core.decision_improvement'`), then green at 25 passed. The whole decision set (10 files, incl. Phases 1–3) -> `195 passed in 20.82s`. Ruff clean.
+
+**Next**: 4.2 (`review_proposals` / `apply_decision_updates` in `agent_core/decisions.py`), 4.3 (`_improve_decisions()` on `AgentCore`), then Phase 5 CLI commands.
+
 ## 2026-11-15 - fix(decisions): keep the `void` tombstone and stop recording out-of-workspace paths
 
 **Change**: two defects in the Phase-1 autonomous-decision capture fixed while auditing it. `STATUS_VOID` is now a member of the `_STATUSES` set in `agent_core/decisions.py`, so `load_decisions` round-trips a `void` record instead of rewriting it to `active`. `decisions.workspace_paths()` now drops any value that resolves outside the workspace, via the new `_outside_workspace` helper. `decide set-status` builds its error message from `_STATUSES` (`agent_core/commands/decide_cmd.py`), so the listed statuses cannot drift from the accepted set again.
