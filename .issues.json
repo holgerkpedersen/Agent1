@@ -417,14 +417,14 @@
     "locations": [
       "kanban:849cb1fe261d46bcb9f9e15e850418da"
     ],
-    "status": "open",
+    "status": "resolved",
     "autonomy_level": 1,
-    "evidence": "",
+    "evidence": "[note] Verified complete: agent_core/plan_execution/runner.py wires DependencyGraph and TaskScheduler (build_and_validate_graph, scheduler.add_task, run_plan). 53 tests pass: test_plan_chunking, unit/test_orchestration, integration/test_completion_drain, test_plan_mode. Card 849cb1fe is no longer on the active board, so no board-side resolution is possible from Agent1. Prerequisite card b687bd0a (Wire the dormant planner->executor) is still unbridged on the board; its proposed build_scheduler cleanup is obsolete - only a comment remains at tests/test_plan_chunking.py:140.",
     "suggested_approach": "## Summary\n\n* **Work Completed:** All tasks described in card `b687bd0a6ca3437eb631998912a80db3` are already implemented and verified by unit and integration tests.\n* **The Blocker:** The card is unbridged (`linked_issue: null`), so it cannot be resolved through the standard ledger loop without creating a new ledger record.\n* **Proposed Action:** Bridge and close the card properly via the ledger, or repurpose it to clean up the remaining dead function (`runner.build_scheduler`).",
     "decision_ref": null,
     "repair_ref": null,
     "created_at": "2026-11-13T19:16:08+00:00",
-    "resolved_at": null,
+    "resolved_at": "2026-11-15T17:24:06+00:00",
     "parent_card_id": "849cb1fe261d46bcb9f9e15e850418da"
   }
 ]
