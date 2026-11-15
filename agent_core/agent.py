@@ -477,6 +477,20 @@ class AgentCore:
         self._chat_history: list[dict[str, Any]] = self._load_chat_history()
         self._turn_start_index: int = len(self._chat_history)
         self._turn_run_id: str | None = None
+        #: Tool calls executed in the CURRENT turn as ``(name, args, result)``
+        #: (Phase 3 of the autonomous-decision plan).  Phase 1 and Phase 2
+        #: already persist their findings per call; this buffer only feeds the
+        #: end-of-turn summary, so it is cleared at every turn start and never
+        #: written to disk on its own.
+        self._turn_tool_calls: list[tuple[str, dict[str, Any], str]] = []
+        #: Discrepancies Phase 2 detected in the CURRENT turn.  The collector
+        #: de-duplicates them against ``.discrepancies.jsonl`` (where Phase 2
+        #: already appended them), so handing them over cannot double-count.
+        self._turn_discrepancy_records: list[Any] = []
+        #: Lazily built ``DecisionCollector`` for this workspace.
+        self._decision_collector: Any = None
+        #: Decisions found by the last completed turn (newest-last).
+        self._last_turn_decisions: list[dict[str, Any]] = []
         self._active_trace_writer: Any = None
         self._read_streak: int = 0
         self._delegating: bool = False
@@ -682,6 +696,7 @@ class AgentCore:
             self._read_streak = 0
         rejection = check_tool_allowed(name, self.mode)
         if rejection:
+            self._note_turn_tool_call(name, args, rejection)
             self._check_and_log_discrepancy(name, args, rejection)
             return rejection
         from agent_core.modes import PLAN_MODE_TOOLS
@@ -698,9 +713,24 @@ class AgentCore:
         except Exception as e:
             logger.exception("NLP tool %r failed", name)
             return f"{name} error: {e}"
+        self._note_turn_tool_call(name, args, result)
         self._check_and_log_discrepancy(name, args, result)
         self._record_autonomous_decisions_if_needed(name, args, result)
         return result
+
+    def _note_turn_tool_call(
+        self, tool_name: str, args: dict[str, Any], result: str
+    ) -> None:
+        """Buffer this call for the end-of-turn decision summary.
+
+        Phase 3 of the autonomous-decision plan.  The buffer carries the
+        *result* as well as the name/args, because the Phase 1 detector treats
+        a refused or failed call as deciding nothing.
+        """
+        try:
+            self._turn_tool_calls.append((tool_name, dict(args), str(result)))
+        except Exception:  # noqa: BLE001 — buffering never breaks a tool call
+            logger.debug("turn tool-call buffer failed", exc_info=True)
 
     def _check_and_log_discrepancy(
         self, tool_name: str, args: dict[str, Any], result: str
@@ -728,6 +758,8 @@ class AgentCore:
             )
             for disc in found:
                 record_discrepancy(self.workspace, disc)
+            if found:
+                self._turn_discrepancy_records.extend(found)
         except Exception:  # noqa: BLE001 — never break a tool call
             logger.debug(
                 "discrepancy check failed for tool %r", tool_name, exc_info=True
@@ -769,6 +801,58 @@ class AgentCore:
                 tool_name,
                 exc_info=True,
             )
+
+    def _decision_collector_for_workspace(self) -> Any:
+        """The :class:`DecisionCollector` for this workspace (built once)."""
+        if self._decision_collector is None:
+            from agent_core.decision_collector import DecisionCollector
+
+            self._decision_collector = DecisionCollector(self.workspace)
+        return self._decision_collector
+
+    def _collect_autonomous_decisions_from_turn(
+        self, messages: list[dict[str, Any]] | None = None
+    ) -> list[dict[str, Any]]:
+        """Summarise what THIS turn decided on its own (plan Phase 3.2).
+
+        Reads the tool calls buffered by :meth:`_note_turn_tool_call` and the
+        discrepancies buffered by :meth:`_check_and_log_discrepancy`, then asks
+        the collector for the turn's decision list.
+
+        Promotion is NOT repeated here: Phase 1 already promoted each decision
+        at the moment it happened, and the collector is a pure reader, so a
+        turn can be summarised without ever duplicating a ledger entry.
+
+        Never raises — a collection failure must not fail a finished turn.
+        The result is kept on ``self._last_turn_decisions`` for review.
+        """
+        turn_messages = list(messages or [])
+        if not turn_messages:
+            turn_messages = self._chat_messages_since_turn_start()
+        found: list[dict[str, Any]] = []
+        # Cleared BEFORE the attempt: if collection fails, the summary must be
+        # empty rather than the previous turn's list masquerading as this one's.
+        self._last_turn_decisions = []
+        try:
+            collector = self._decision_collector_for_workspace()
+            found = collector.collect_turn_decisions(
+                turn_messages,
+                list(getattr(self, "_turn_tool_calls", []) or []),
+                list(getattr(self, "_turn_discrepancy_records", []) or []),
+            )
+        except Exception:  # noqa: BLE001 — collection is bookkeeping only
+            logger.debug(
+                "turn decision collection failed (no-op)", exc_info=True
+            )
+            return []
+        self._last_turn_decisions = list(found)
+        return found
+
+    def _chat_messages_since_turn_start(self) -> list[dict[str, Any]]:
+        """This turn's messages, per the ``_turn_start_index`` boundary."""
+        history = list(self._chat_history or [])
+        start = max(0, min(self._turn_start_index, len(history)))
+        return history[start:]
 
     async def _nlp_delegate(self, args: dict[str, Any]) -> str:
         return await _nlp_delegate(self, args)
@@ -1113,6 +1197,11 @@ class AgentCore:
         if hint:
             user_input = f"{hint}\n\n{user_input}"
         self._turn_start_index = len(self._chat_history)
+        # A new turn starts with an empty collection buffer: a turn must only
+        # ever report the calls IT made, never carry the previous turn's over.
+        self._turn_tool_calls = []
+        self._turn_discrepancy_records = []
+        self._last_turn_decisions = []
         if images:
             content: Any = [
                 {"type": "text", "text": user_input or "(see the attached image)"}

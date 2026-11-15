@@ -476,6 +476,14 @@ def _finish_turn(
     QUIET (which only hides intermediate tool output, per the display-mode
     contract: "only the final answer is printed").
     """
+    # Phase 3 of the autonomous-decision plan: the turn's own messages must be
+    # read BEFORE ``_trim_chat_history`` can drop them — the collector needs the
+    # user's text as its "was this asked for?" reference.
+    try:
+        _turn_messages = list(agent._chat_messages_since_turn_start())
+    except Exception:
+        logger.debug("turn message capture failed (no-op)", exc_info=True)
+        _turn_messages = []
     agent._chat_history = _trim_chat_history(agent._chat_history, agent._original_goal)
     mutated_files = getattr(agent, "_mutating_files_this_turn")()
     duration: float | None = None
@@ -520,6 +528,17 @@ def _finish_turn(
             append_event("turn", "quality", float(_quality))
     except Exception:
         logger.debug("Turn-outcome hooks failed (no-op)", exc_info=True)
+    # Phase 3 of the autonomous-decision plan: summarise what this turn decided
+    # on its own, from the calls and discrepancies buffered at the tool hook.
+    # Its own guard: collection is review bookkeeping and must never fail a
+    # finished turn.  Promotion already happened per call (Phase 1), so this
+    # cannot duplicate a ledger entry.
+    try:
+        _collect = getattr(agent, "_collect_autonomous_decisions_from_turn", None)
+        if callable(_collect):
+            _collect(_turn_messages)
+    except Exception:
+        logger.debug("turn decision collection failed (no-op)", exc_info=True)
     getattr(agent, "_snapshot_session_meta", lambda **_: None)(turn=True)
     getattr(agent, "_save_chat_history")()
     getattr(agent, "_save_memory")()
