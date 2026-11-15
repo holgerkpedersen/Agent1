@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -30,8 +31,11 @@ from agent_core.decisions import (
     STATUS_ACTIVE,
     STATUS_SUPERSEDED,
     STATUS_VOID,
+    _next_id,
     load_decisions,
     load_discrepancies,
+    normalize_affected_files,
+    save_decisions,
 )
 
 logger = logging.getLogger(__name__)
@@ -45,6 +49,16 @@ RECOMMEND_INVESTIGATE = "investigate"
 #: A decision in one of these states is already closed; drift against it means
 #: the closure did not stick, not that the wording needs a new revision.
 _CLOSED_STATUSES = {STATUS_SUPERSEDED, STATUS_ARCHIVED, STATUS_VOID}
+
+#: Review outcomes for a proposal (Phase 4.2).  A label is recorded on the
+#: proposal so the accept/reject decision is auditable next to its evidence.
+LABEL_APPLIED = "applied"
+LABEL_REJECTED = "rejected"
+
+#: ``source`` of a ledger record created by :func:`apply_decision_updates`.
+#: Distinguishes an improvement revision from a hand-written decision and from
+#: one the agent took autonomously (``source="agent"``).
+SOURCE_IMPROVEMENT = "improvement"
 
 #: Most disagreement a single proposal carries into its evidence list.
 _MAX_EVIDENCE = 20
@@ -69,6 +83,10 @@ class DecisionUpdateProposal:
     ``confidence`` is the violation rate the proposal rests on, so it always
     equals the ``DriftAnalysis.violation_rate`` that produced it — it is a
     measured proportion, not a judgement.
+
+    ``review_label`` is ``None`` until the proposal has been through
+    :func:`review_proposals`: applying sets :data:`LABEL_APPLIED`, declining
+    sets :data:`LABEL_REJECTED`.
     """
 
     decision_id: str
@@ -77,6 +95,7 @@ class DecisionUpdateProposal:
     suggested_rationale: str | None = None
     evidence: list[dict[str, Any]] = field(default_factory=list)
     confidence: float = 0.0
+    review_label: str | None = None
 
 
 # ── Reading the ledgers ─────────────────────────────────────────────────────
@@ -284,3 +303,176 @@ def propose_decision_updates(
 
     proposals.sort(key=lambda p: p.confidence, reverse=True)
     return proposals
+
+
+# ── Review and application (Phase 4.2) ──────────────────────────────────────
+
+#: Title of a record written for a proposal that suggests no new title.
+_REWRITE_TITLE = "Decision restated after repeated divergence"
+
+
+def review_proposals(
+    proposals: list[DecisionUpdateProposal],
+    threshold: float = 0.5,
+) -> tuple[list[DecisionUpdateProposal], list[DecisionUpdateProposal]]:
+    """Split *proposals* into accepted and rejected by their confidence.
+
+    Returns ``(accepted, rejected)`` and labels each side —
+    :data:`LABEL_APPLIED` is set later, only once a record has really been
+    written (see :func:`apply_decision_updates`), so a label never claims more
+    than happened.  The split is by the measured violation rate alone; nothing
+    is read from or written to the ledger here.
+    """
+    accepted: list[DecisionUpdateProposal] = []
+    rejected: list[DecisionUpdateProposal] = []
+    for proposal in proposals:
+        if proposal.confidence >= threshold:
+            proposal.review_label = LABEL_APPLIED
+            accepted.append(proposal)
+        else:
+            proposal.review_label = LABEL_REJECTED
+            rejected.append(proposal)
+    return accepted, rejected
+
+
+def _supersede(
+    workspace: Path, old: dict[str, Any], proposal: DecisionUpdateProposal
+) -> dict[str, Any]:
+    """Append a revision of *old* and close *old* as superseded by it.
+
+    Written by hand rather than with :func:`agent_core.decisions.add_decision`
+    because the two writes are one operation: ``resolved_by`` on the old record
+    must point at the new id, and that id is only known while building it.  A
+    single :func:`agent_core.decisions.save_decisions` call commits both, so the
+    ledger never holds a superseded decision pointing nowhere.
+
+    Fields the proposal does not suggest are inherited from *old*, so a
+    revision narrows a decision without losing its context.
+    """
+    decisions = load_decisions(workspace)
+    new_id = _next_id(decisions)
+    title = proposal.suggested_title or str(old.get("title") or "")
+
+    record: dict[str, Any] = {
+        "id": new_id,
+        "date": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "title": title,
+        "context": str(old.get("context") or ""),
+        "decision": (
+            proposal.suggested_decision
+            if proposal.suggested_decision is not None
+            else str(old.get("decision") or "")
+        ),
+        "rationale": (
+            proposal.suggested_rationale
+            if proposal.suggested_rationale is not None
+            else str(old.get("rationale") or "")
+        ),
+        "affected_files": normalize_affected_files(
+            workspace, list(old.get("affected_files") or [])
+        ),
+        "tags": list(old.get("tags") or []),
+        "contradictions": [],
+        "resolved_by": None,
+        "status": STATUS_ACTIVE,
+        "category": str(old.get("category") or ""),
+        "source": SOURCE_IMPROVEMENT,
+    }
+    # The evidence is kept on the new record: it is why this revision exists.
+    record["evidence"] = list(proposal.evidence)
+    record["review_label"] = LABEL_APPLIED
+
+    updated = [
+        {**d, "status": STATUS_SUPERSEDED, "resolved_by": new_id}
+        if str(d.get("id")) == str(old.get("id"))
+        else d
+        for d in decisions
+    ]
+    updated.append(record)
+    save_decisions(workspace, updated)
+    return record
+
+
+def _suggestion_of(proposal: DecisionUpdateProposal) -> tuple[str, str]:
+    """The (decision, rationale) text a proposal would write, before inheritance.
+
+    Used as the dedup key by :func:`apply_decision_updates`.  Text is compared
+    because it is what a reviewer sees as "the same suggestion": two proposals
+    that would write the same wording are one suggestion, applied once.
+    """
+    return (
+        str(proposal.suggested_decision or ""),
+        str(proposal.suggested_rationale or ""),
+    )
+
+
+def apply_decision_updates(
+    workspace: str | Path,
+    proposals: list[DecisionUpdateProposal],
+    threshold: float = 0.5,
+) -> dict[str, Any]:
+    """Apply accepted proposals to the ledger; leave rejected ones untouched.
+
+    Each accepted proposal appends a new active record and marks the decision it
+    revises ``superseded`` with ``resolved_by`` pointing at it, so the original
+    wording survives in the audit trail.  A proposal is declined — writing
+    nothing — when its confidence is below *threshold*, when it names a decision
+    that is not in the ledger, when the decision is already closed, or when its
+    exact wording is already recorded as an improvement, so applying the same
+    proposal twice cannot duplicate a revision.
+
+    Returns ``{"applied": [decision_id, ...], "rejected": [...]}``.  A proposal
+    that fails the existence check is reported in ``rejected``: it was not
+    declined on its merits, and the caller needs to tell those cases apart.
+    """
+    base = Path(workspace).resolve()
+    result: dict[str, Any] = {"applied": [], "rejected": []}
+    if not proposals:
+        return result
+
+    index = _decision_index(base)
+    accepted, low_confidence = review_proposals(proposals, threshold=threshold)
+    result["rejected"].extend(low_confidence)
+
+    for proposal in accepted:
+        old = index.get(str(proposal.decision_id).strip())
+        if old is None:
+            # Not a judgement about the suggestion — it names nothing.  Unlabel
+            # it so the caller can tell "no such decision" from "declined".
+            proposal.review_label = None
+            result["rejected"].append(proposal)
+            logger.warning(
+                "improvement proposal for unknown decision %s ignored",
+                proposal.decision_id,
+            )
+            continue
+        suggestion = _suggestion_of(proposal)
+        if any(
+            str(r.get("source") or "") == SOURCE_IMPROVEMENT
+            and (str(r.get("decision") or ""), str(r.get("rationale") or ""))
+            == suggestion
+            for r in index.values()
+        ):
+            # The same wording is already recorded as an improvement — applying
+            # it again would add a second record of one suggestion.  Checked
+            # before the status check: re-applying to a decision this very call
+            # superseded lands on a closed record, and dedup catches it first.
+            proposal.review_label = LABEL_REJECTED
+            result["rejected"].append(proposal)
+            continue
+
+        status = str(old.get("status") or STATUS_ACTIVE)
+        if status in _CLOSED_STATUSES:
+            # Drift on a closed decision is a closure problem (RECOMMEND_RESOLVE),
+            # not a wording problem, so rewording it is out of scope here.  A
+            # proposal naming a superseded record lands in the same branch, which
+            # is what makes applying one proposal twice a no-op.
+            proposal.review_label = LABEL_REJECTED
+            result["rejected"].append(proposal)
+            continue
+
+        _supersede(base, old, proposal)
+        index = _decision_index(base)  # the new id must be visible to the next proposal
+        result["applied"].append(str(proposal.decision_id))
+
+    return result
