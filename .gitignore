@@ -140,6 +140,10 @@ chat_history.json
 chat_history_prior.json
 .metrics_events.jsonl
 
+# Discrepancy ledger written by agent_core.discrepancy (runtime state, one
+# JSON line per divergence between an action and an active decision).
+.discrepancies.jsonl
+
 # REPL command recall history (the user's own typed commands)
 .agent_history
 

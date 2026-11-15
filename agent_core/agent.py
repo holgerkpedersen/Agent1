@@ -682,6 +682,7 @@ class AgentCore:
             self._read_streak = 0
         rejection = check_tool_allowed(name, self.mode)
         if rejection:
+            self._check_and_log_discrepancy(name, args, rejection)
             return rejection
         from agent_core.modes import PLAN_MODE_TOOLS
 
@@ -693,10 +694,43 @@ class AgentCore:
                 f"Unknown tool: {name}. Available: {', '.join(sorted(NLP_TOOL_NAMES))}"
             )
         try:
-            return await handler(args)
+            result = await handler(args)
         except Exception as e:
             logger.exception("NLP tool %r failed", name)
             return f"{name} error: {e}"
+        self._check_and_log_discrepancy(name, args, result)
+        return result
+
+    def _check_and_log_discrepancy(
+        self, tool_name: str, args: dict[str, Any], result: str
+    ) -> None:
+        """Record where this tool call diverged from an active decision.
+
+        Phase 2 of the autonomous-decision plan: every executed tool call is
+        compared against ``.decisions.json`` (see
+        :func:`agent_core.discrepancy.check_decision_compliance`) and each
+        divergence is appended to ``.discrepancies.jsonl``.
+
+        Bookkeeping only — the tool result is never altered, and a failure
+        here is swallowed so it can never break the call that triggered it.
+        """
+        from agent_core.decisions import record_discrepancy
+        from agent_core.discrepancy import check_decision_compliance
+
+        try:
+            found = check_decision_compliance(
+                self.workspace,
+                tool_name,
+                args,
+                result,
+                self._mutating_files_this_turn(),
+            )
+            for disc in found:
+                record_discrepancy(self.workspace, disc)
+        except Exception:  # noqa: BLE001 — never break a tool call
+            logger.debug(
+                "discrepancy check failed for tool %r", tool_name, exc_info=True
+            )
 
     async def _nlp_delegate(self, args: dict[str, Any]) -> str:
         return await _nlp_delegate(self, args)

@@ -25,6 +25,11 @@ logger = logging.getLogger(__name__)
 
 _DECISIONS_FILE = ".decisions.json"
 
+#: Append-only JSONL ledger of autonomous-decision discrepancies (Phase 2 of
+#: the autonomous-decision plan).  Kept beside ``.decisions.json`` so a review
+#: can pair every flagged action with the decision it diverged from.
+DISCREPANCIES_FILE = ".discrepancies.jsonl"
+
 # ── Status constants ────────────────────────────────────────────────────────
 
 STATUS_ACTIVE = "active"
@@ -166,6 +171,79 @@ def save_decisions(workspace: str | Path, decisions: list[dict[str, Any]]) -> No
     _decision_path(workspace).write_text(
         json.dumps(decisions, indent=2, ensure_ascii=False), encoding="utf-8"
     )
+
+
+# ── Discrepancy ledger (autonomous-decision plan, Phase 2) ─────────────────
+
+
+def _discrepancies_path(workspace: str | Path) -> Path:
+    return Path(workspace) / DISCREPANCIES_FILE
+
+
+def record_discrepancy(
+    workspace: str | Path, discrepancy: dict[str, Any] | Any
+) -> None:
+    """Append one discrepancy to :data:`DISCREPANCIES_FILE`.
+
+    *discrepancy* is a :class:`agent_core.discrepancy.Discrepancy` (any object
+    with ``__dict__``) or an already-built dict.  ``detected_at`` is stamped
+    here when the record does not carry one, so ordering survives a review.
+
+    A record is one line, so a partial write can never invalidate earlier
+    entries.  I/O failures are logged and swallowed: bookkeeping must never
+    break the tool call that triggered it.
+    """
+    record = (
+        dict(discrepancy)
+        if isinstance(discrepancy, dict)
+        else dict(vars(discrepancy))
+    )
+    record.setdefault(
+        "detected_at", datetime.now(timezone.utc).isoformat(timespec="seconds")
+    )
+    try:
+        with _discrepancies_path(workspace).open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+    except OSError as exc:  # pragma: no cover — disk/permission failure
+        logger.warning("could not record discrepancy: %s", exc)
+
+
+def load_discrepancies(
+    workspace: str | Path,
+    decision_id: str | None = None,
+    severity: str | None = None,
+) -> list[dict[str, Any]]:
+    """Load discrepancy records, newest last.
+
+    Unparsable lines (a truncated append, a hand edit) are skipped instead of
+    failing the whole read.  *decision_id* / *severity* are exact-match
+    filters; ``None`` means "no filter".
+    """
+    fp = _discrepancies_path(workspace)
+    if not fp.exists():
+        return []
+    out: list[dict[str, Any]] = []
+    try:
+        lines = fp.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:  # pragma: no cover — disk/permission failure
+        logger.warning("could not read discrepancies: %s", exc)
+        return []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            parsed = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(parsed, dict):
+            continue
+        if decision_id is not None and parsed.get("decision_id") != decision_id:
+            continue
+        if severity is not None and parsed.get("severity") != severity:
+            continue
+        out.append(parsed)
+    return out
 
 
 #: Top-level trees that are generated or machine-local (gitignored, see
