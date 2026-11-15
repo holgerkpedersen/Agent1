@@ -26,6 +26,25 @@ is being extended to audit its own file effects (self-improvement).
 - When adding a new file-I/O call, grep for `open(`, `read_text(`, `write_text(`
   and check each one has an explicit encoding or is binary.
 
+## Local machine / installed tooling (paths)
+
+- **Strata is installed at `C:\Dev\Strata`** (source checkout + `.venv`). It is
+  NOT on `PATH` (`where strata` -> not found), so always call it by full path
+  from this workspace: `C:\Dev\Strata\bin\strata.cmd <command>` (or
+  `C:\Dev\Strata\bin\strata.ps1`). The launcher resolves a Python in order
+  `STRATA_PYTHON` -> `<root>\python\python.exe` -> `<root>\.venv\Scripts\python.exe`
+  -> `py -3`/`python`, and runs `<root>\strata.py`.
+- Verified 2026-11-03: `bin\strata.cmd --version` -> `strata 0.2.6 (build
+  0.1.51; python 3.14.4 at C:\Dev\Strata\.venv\Scripts\python.exe)`.
+  The `--version` flag is a top-level option — `strata version` is an invalid
+  subcommand. Subcommands: `serve, profile, repair-access, doctor, components,
+  update, models, drafting, engine, install, runtime, ops, bench, timeskip,
+  tune, presets, launch, connect, status, monitor, logs, connection, config,
+  code`.
+- Machine: Ryzen AI Max+ 395 / Radeon 8060S iGPU (`gfx1151`), 128 GiB unified
+  memory (no NVIDIA GPU, no CUDA). AMD LLM paths are the NPU via Lemonade and
+  the iGPU via LM Studio (see the provider sections below).
+
 ## Architecture map
 
 - `agent.py` — entry point; REPL `run_interactive`; the `Agent` class: `chat_nlp`
