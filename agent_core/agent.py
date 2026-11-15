@@ -699,6 +699,7 @@ class AgentCore:
             logger.exception("NLP tool %r failed", name)
             return f"{name} error: {e}"
         self._check_and_log_discrepancy(name, args, result)
+        self._record_autonomous_decisions_if_needed(name, args, result)
         return result
 
     def _check_and_log_discrepancy(
@@ -730,6 +731,43 @@ class AgentCore:
         except Exception:  # noqa: BLE001 — never break a tool call
             logger.debug(
                 "discrepancy check failed for tool %r", tool_name, exc_info=True
+            )
+
+    def _record_autonomous_decisions_if_needed(
+        self, tool_name: str, args: dict[str, Any], result: str
+    ) -> None:
+        """Record the decisions this tool call took without being asked.
+
+        Phase 1 of the autonomous-decision plan: after a call succeeds,
+        :func:`agent_core.decisions.detect_autonomous_decisions` names the
+        choices it made (which paths to touch, a git commit, a delegation,
+        a plan transition) and
+        :func:`agent_core.decisions.record_autonomous_decisions` stores them.
+        The user's own message is the reference for
+        "was this asked for?".
+
+        Bookkeeping only — the tool result is never altered, and every
+        failure is swallowed so recording can never break a working call.
+        """
+        from agent_core.decisions import (
+            detect_autonomous_decisions,
+            record_autonomous_decisions,
+        )
+
+        try:
+            candidates = detect_autonomous_decisions(
+                self.workspace,
+                tool_name,
+                args,
+                result,
+                user_input=str(getattr(self, "_last_user_input", "") or ""),
+            )
+            record_autonomous_decisions(self.workspace, candidates)
+        except Exception:  # noqa: BLE001 — never break a tool call
+            logger.debug(
+                "autonomous-decision capture failed for tool %r",
+                tool_name,
+                exc_info=True,
             )
 
     async def _nlp_delegate(self, args: dict[str, Any]) -> str:

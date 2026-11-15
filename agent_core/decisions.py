@@ -30,18 +30,71 @@ _DECISIONS_FILE = ".decisions.json"
 #: can pair every flagged action with the decision it diverged from.
 DISCREPANCIES_FILE = ".discrepancies.jsonl"
 
+#: Category for decisions the agent took on its own during execution (Phase 1).
+AUTONOMOUS_CATEGORY = "autonomous"
+
+#: Tag applied to every recorded autonomous decision.
+AUTONOMOUS_TAG = "autonomous"
+
+#: Marker that a ledger decision came from execution rather than a human.
+SOURCE_AUTONOMOUS = "agent"
+
+#: Append-only JSONL log of *observed* autonomous tool calls (Phase 1).
+#: One line per detected call; :func:`record_autonomous_decisions` turns the
+#: findings into ledger entries and records which ones it stored.  The log is
+#: the source of truth for "was this already reviewed?", so promotion is
+#: idempotent even if the ledger is rebuilt from scratch.
+AUTONOMOUS_LOG_FILE = ".autonomous_decisions.jsonl"
+
+#: Sequence rating: tool params that carry a work-target path.  Shared with
+#: :mod:`agent_core.discrepancy` (which imports it) so "where does this call
+#: point" has one definition.
+_PATH_ARG_KEYS = (
+    "path",
+    "file",
+    "filepath",
+    "filename",
+    "target",
+    "files",
+    "filenames",
+    "source",
+    "destination",
+)
+
+#: A path-like token in free prose (``agent_core/security/``).
+_PATH_TOKEN_RE = re.compile(r"(?<![\w/`])((?:[\w.-]+/)+[\w.-]*)")
+
+#: How many recent autonomous decisions are re-stated in a prompt block.
+_RECENT_AUTONOMOUS_LIMIT = 5
+
+#: ``Deleted <path>`` / ``Removed <path>`` in a tool result — the only evidence
+#: a shell action leaves about WHICH file it destroyed.
+_DELETED_PATH_RE = re.compile(r"(?i)\b(?:deleted|removed)\s+(\S+)")
+
+#: ``git commit`` / ``git merge`` (possibly preceded by ``-C <path>`` or
+#: global options) — repository state changes worth remembering.
+_GIT_DECISION_RE = re.compile(
+    r"(?<![\w-])git(?:\s+-\S+(?:\s+\S+)?)*\s+(commit|merge)\b"
+)
+
 # ── Status constants ────────────────────────────────────────────────────────
 
 STATUS_ACTIVE = "active"
 STATUS_SUPERSEDED = "superseded"
 STATUS_ARCHIVED = "archived"
-_STATUSES = {STATUS_ACTIVE, STATUS_SUPERSEDED, STATUS_ARCHIVED}
+#: A reserved-but-never-written ID (a tombstone, see decision #043).  It is a
+#: legitimate status: omitting it here made :func:`load_decisions` treat the
+#: record as "unknown" and silently rewrite a tombstone into an ``active``
+#: decision on the next save.
+STATUS_VOID = "void"
+_STATUSES = {STATUS_ACTIVE, STATUS_SUPERSEDED, STATUS_ARCHIVED, STATUS_VOID}
 
 # ── Category set (curated from tag inventory) ──────────────────────────────
 
 CATEGORIES = {
     "security",
     "architecture",
+    "autonomous",
     "testing",
     "tracing",
     "workflow",
@@ -246,6 +299,414 @@ def load_discrepancies(
     return out
 
 
+# ── Autonomous decisions (autonomous-decision plan, Phase 1) ──────────────
+
+#: Tools whose calls decide *how* the work proceeds.  Read-only inspection is
+#: excluded on purpose: every ``read``/``search`` call is a judgement of fact,
+#: not a policy choice, and logging them would drown the real decisions.
+_DECISION_TOOLS = frozenset(
+    {
+        "write",
+        "edit",
+        "run",
+        "git",
+        "tests",
+        "fix",
+        "analyze",
+        "merge",
+        "delegate",
+        "delegate_batch",
+        "create_subagent",
+        "run_subagent_task",
+        "plan_start",
+        "plan_finish",
+    }
+)
+
+#: Tools that spend another model — choosing to delegate is a decision.
+_DELEGATION_TOOLS = frozenset(
+    {
+        "delegate",
+        "delegate_batch",
+        "create_subagent",
+        "run_subagent_task",
+    }
+)
+
+#: Plan lifecycle transitions: moving the plan forward is a decision.
+_PLAN_TRANSITION_TOOLS = frozenset({"plan_start", "plan_finish"})
+
+#: Result text that means "nothing happened" — the guard refused, the tool
+#: found nothing, or it silently did nothing.  Such a call decided nothing, so
+#: it is never recorded as a decision.
+_NO_DECISION_RE = re.compile(
+    r"(?i)\b(?:refus\w*|blocked|rejected|denied|not\s+allowed|forbidden"
+    r"|unknown\s+tool|no\s+changes?|nothing\s+to)\b"
+)
+
+#: Plan-mode executor rejection prefix (a refused call, not a decision).
+_PLAN_REJECTION_PREFIX = "[plan mode]"
+
+
+def _outside_workspace(workspace: str | Path, value: str) -> bool:
+    """True when *value* names a path that cannot live inside *workspace*.
+
+    Used to keep foreign targets out of the decision ledger: a tool call that
+    touches ``%TEMP%/...`` or another checkout is not a decision about THIS
+    repository, and recording it leaves an affected_file that no checkout can
+    ever contain (a permanently stale entry).
+    """
+    raw = str(value).strip().replace("\\", "/")
+    if not raw:
+        return False
+    if not Path(raw).is_absolute():
+        # A relative path is workspace-relative unless it climbs out.
+        return raw.startswith("../") or "/../" in raw
+    try:
+        Path(raw).resolve().relative_to(Path(workspace).resolve())
+    except (ValueError, OSError):
+        return True
+    return False
+
+
+def workspace_paths(workspace: str | Path, values: Any) -> list[str]:
+    """Workspace-relative form of every path-like *values* entry, in order.
+
+    *values* may be a single string, a list of strings, or arbitrary argument
+    values (non-strings are skipped).  Paths that do not exist on disk are
+    kept: an action's target describes intent, and a delete target is absent
+    by definition.  Paths outside *workspace* are dropped — they are not
+    repository evidence (see :func:`_outside_workspace`).
+    """
+    items = values if isinstance(values, (list, tuple)) else [values]
+    out: list[str] = []
+    for item in items:
+        if not isinstance(item, str):
+            continue
+        if _outside_workspace(workspace, item):
+            continue
+        rel = _canonical_rel(workspace, item)
+        if rel is None:
+            rel = str(item).strip().replace("\\", "/").lstrip("./") or None
+        if rel and rel not in out:
+            out.append(rel)
+    return out
+
+
+def _is_scratch_ref(path: str) -> bool:
+    """True for throwaway probe/scratch paths (``_tmp_*``, ``tmp_*`` ...).
+
+    A scratch file is not repository state.  Recording a decision about one
+    leaves a stale ledger entry the moment the probe is deleted, which then
+    fails the stale-reference audit (decision #054) for a file no checkout was
+    ever meant to keep.  Scratch targets are therefore neither recorded (see
+    :func:`detect_autonomous_decisions`) nor reported stale (see
+    :func:`find_stale_decisions`).
+
+    The predicate is imported from the pytest gate so "scratch" has exactly one
+    definition in the codebase.
+    """
+    from agent_core.pytest_gate import is_scratch_path
+
+    return is_scratch_path(path)
+
+
+def _first_sentence(text: str, limit: int = 160) -> str:
+    """Leading sentence of *text*, collapsed to one line and capped."""
+    flat = " ".join(str(text or "").split())
+    match = re.match(r"(.+?[.!?])(?:\s|$)", flat)
+    out = match.group(1) if match else flat
+    return out[:limit].rstrip()
+
+
+def _git_decision_verb(name: str, args: dict[str, Any]) -> str:
+    """``"commit"``/``"merge"`` when the call changes repo state, else ``""``.
+
+    Two shapes must both count: a shell command (the ``run`` tool, where the
+    verb sits inside the command text) and the ``git`` tool itself, which
+    passes the verb in ``subcommand`` and the flags in ``args``.
+    """
+    text = " ".join(
+        str(args.get(k) or "") for k in ("command", "subcommand", "args", "argv")
+    )
+    match = _GIT_DECISION_RE.search(text)
+    if match:
+        return match.group(1).lower()
+    if name == "git":
+        head = str(args.get("subcommand") or "").strip().strip("\"'")
+        direct = re.match(r"(?i)(commit|merge)\b", head)
+        if direct:
+            return direct.group(1).lower()
+    return ""
+
+
+def detect_autonomous_decisions(
+    workspace: str | Path,
+    tool_name: str,
+    args: dict[str, Any],
+    result: str,
+    *,
+    user_input: str = "",
+) -> list[dict[str, Any]]:
+    """Detect the decisions an agent made autonomously in ONE tool call.
+
+    A call counts as a decision when the agent picked an action the user never
+    named:
+
+    - **file targets** — the call writes/patches specific paths.  A path the
+      user mentioned is theirs; every other path is the agent's choice.
+    - **git commit / merge** — repository state changes.
+    - **delegation and plan transitions** — the agent decided to spend a
+      subagent or to move the plan forward.
+
+    Only a call that succeeded is considered: refusals, ``unknown tool`` and
+    error results decided nothing.  Read-only tools are never decisions.
+
+    Returns candidate dicts (``title``, ``context``, ``decision``,
+    ``rationale``, ``affected_files``, ``tags``, ``severity``), one per
+    distinct target plus at most one repo-state candidate.  ``[]`` is the
+    common case and means "nothing here to remember".
+    """
+    result_text = str(result or "")
+    if result_text.lstrip().startswith(_PLAN_REJECTION_PREFIX):
+        return []
+    if _NO_DECISION_RE.search(result_text):
+        return []
+    name = str(tool_name or "").lower()
+    if name not in _DECISION_TOOLS:
+        return []
+
+    removed = bool(re.search(r"(?i)\bdeleted\b", result_text))
+    files = workspace_paths(
+        workspace, [args.get(k) for k in _PATH_ARG_KEYS]
+    )
+    if not files:
+        # A shell delete leaves no path argument, only the result text.  This
+        # must come after the path args so a `del x.txt` on a path we already
+        # know never produces a second candidate for the same target.
+        files = workspace_paths(
+            workspace, _DELETED_PATH_RE.findall(result_text)
+        )
+    # A path the user named is their instruction, not the agent's choice; the
+    # decision prose recorded for the call is not evidence either way.
+    user_text = str(user_input or "").replace("\\", "/")
+
+    out: list[dict[str, Any]] = []
+    for path in files:
+        if user_text and path in user_text:
+            continue
+        # A scratch probe (`_tmp_*`, `tmp_*`) is not repository state: it is
+        # deleted by design, so remembering it only creates a ledger entry that
+        # goes stale.  See :func:`_is_scratch_ref`.
+        if _is_scratch_ref(path):
+            continue
+        out.append(
+            {
+                "title": f"{'Delete' if removed else 'Change'} {path}",
+                "context": _first_sentence(result_text, 200),
+                "decision": (
+                    f"{name} {'removed' if removed else 'modified'} {path} "
+                    f"without that path being named in the request."
+                ),
+                "rationale": "Chosen during execution to advance the task.",
+                "affected_files": [path],
+                "tags": [AUTONOMOUS_TAG, name],
+                "severity": "info",
+            }
+        )
+
+    git_verb = _git_decision_verb(name, args)
+    if git_verb:
+        out.append(
+            {
+                "title": f"Ran git {git_verb} autonomously",
+                "context": _first_sentence(result_text, 200),
+                "decision": (
+                    f"Committed repository state with git {git_verb} as part of "
+                    f"the task, without a separate request to do so."
+                ),
+                "rationale": "Repository state change chosen during execution.",
+                "affected_files": [],
+                "tags": [AUTONOMOUS_TAG, "git"],
+                "severity": "warning",
+            }
+        )
+
+    if name in _DELEGATION_TOOLS:
+        role = str(args.get("role") or "").strip()
+        target = str(args.get("name") or "").strip()
+        label = " ".join(part for part in (role, target) if part)
+        out.append(
+            {
+                "title": f"Delegated work{' to ' + label if label else ''}",
+                "context": _first_sentence(result_text, 200),
+                "decision": (
+                    f"Handed part of the task to a {role or 'sub'}agent"
+                    f"{' (' + target + ')' if target else ''} instead of doing "
+                    f"it inline."
+                ),
+                "rationale": "Delegation chosen during execution.",
+                "affected_files": [],
+                "tags": [AUTONOMOUS_TAG, name],
+                "severity": "info",
+            }
+        )
+
+    if name in _PLAN_TRANSITION_TOOLS:
+        if name == "plan_start":
+            title, why = "Started a plan autonomously", (
+                "Started plan execution without being asked to begin."
+            )
+        else:
+            title, why = "Finished a plan autonomously", (
+                "Marked the plan executed once the remaining tasks passed."
+            )
+        out.append(
+            {
+                "title": title,
+                "context": _first_sentence(result_text, 200),
+                "decision": why,
+                "rationale": "Plan transition chosen during execution.",
+                "affected_files": [],
+                "tags": [AUTONOMOUS_TAG, name],
+                "severity": "warning",
+            }
+        )
+    return out
+
+
+def _autonomous_log_path(workspace: str | Path) -> Path:
+    return Path(workspace) / AUTONOMOUS_LOG_FILE
+
+
+def load_autonomous_log(workspace: str | Path) -> list[dict[str, Any]]:
+    """Read the autonomous-decision observation log, newest last.
+
+    Unparsable lines are skipped (a truncated append must not fail the read).
+    """
+    fp = _autonomous_log_path(workspace)
+    if not fp.exists():
+        return []
+    out: list[dict[str, Any]] = []
+    try:
+        lines = fp.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:  # pragma: no cover — disk/permission failure
+        logger.warning("could not read autonomous log: %s", exc)
+        return []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            parsed = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            out.append(parsed)
+    return out
+
+
+def record_autonomous_decisions(
+    workspace: str | Path, candidates: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Persist detected *candidates*: log them, return the newly stored ones.
+
+    Each candidate is first appended to :data:`AUTONOMOUS_LOG_FILE` with a
+    ``decision_id`` (``None`` when not promoted).  A candidate is promoted to
+    the ledger only when its ``title`` is not already recorded there, so a
+    repeated detection is logged but never duplicated.  A ledger write
+    collapses repeated paths — a 139-entry ledger must not gain a new entry
+    because a file was touched three times in one turn.
+
+    Returns the promoted decision records (possibly empty).
+    """
+    if not candidates:
+        return []
+    existing = {str(d.get("title") or "") for d in load_decisions(workspace)}
+    stored: list[dict[str, Any]] = []
+    stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    log_lines: list[str] = []
+    for candidate in candidates:
+        title = str(candidate.get("title") or "")
+        promoted: dict[str, Any] | None = None
+        if title and title not in existing:
+            try:
+                promoted = add_decision(
+                    workspace,
+                    title=title,
+                    context=str(candidate.get("context") or ""),
+                    decision=str(candidate.get("decision") or ""),
+                    rationale=str(candidate.get("rationale") or ""),
+                    affected_files=list(candidate.get("affected_files") or []),
+                    tags=list(candidate.get("tags") or []),
+                    category=AUTONOMOUS_CATEGORY,
+                    source=SOURCE_AUTONOMOUS,
+                )
+            except OSError as exc:  # pragma: no cover — disk/permission failure
+                logger.warning("could not record autonomous decision: %s", exc)
+            else:
+                existing.add(title)
+                stored.append(promoted)
+        log_lines.append(
+            json.dumps(
+                {
+                    **candidate,
+                    "detected_at": stamp,
+                    "decision_id": promoted.get("id") if promoted else None,
+                },
+                ensure_ascii=False,
+                default=str,
+            )
+        )
+    try:
+        with _autonomous_log_path(workspace).open("a", encoding="utf-8") as fh:
+            fh.write("\n".join(log_lines) + "\n")
+    except OSError as exc:  # pragma: no cover — disk/permission failure
+        logger.warning("could not append autonomous log: %s", exc)
+    return stored
+
+
+def record_autonomous_decision(
+    workspace: str | Path,
+    title: str,
+    context: str = "",
+    decision: str = "",
+    rationale: str = "",
+    affected_files: list[str] | None = None,
+    tags: list[str] | None = None,
+    category: str = AUTONOMOUS_CATEGORY,
+) -> dict[str, Any]:
+    """Record a decision the agent made autonomously during execution.
+
+    Unlike a manual decision (CLI, analysis, user request), this one was never
+    asked for: the agent chose it while executing.  The record therefore
+    carries the ``autonomous`` category *and* the ``autonomous`` tag — the
+    category is a single slot, the tag survives re-categorisation — plus
+    ``source="agent"`` so a review can tell the two origins apart.
+
+    Raises ``ValueError`` when *title* is empty: an unnamed decision cannot be
+    reviewed, contradicted or searched later.
+    """
+    if not str(title or "").strip():
+        raise ValueError("an autonomous decision needs a title")
+    wanted_tags: list[str] = []
+    for tag in [AUTONOMOUS_TAG, *(tags or [])]:
+        norm = str(tag).strip().lower()
+        if norm and norm not in wanted_tags:
+            wanted_tags.append(norm)
+    return add_decision(
+        workspace,
+        title=str(title).strip(),
+        context=context,
+        decision=decision,
+        rationale=rationale,
+        affected_files=affected_files,
+        tags=wanted_tags,
+        category=category or AUTONOMOUS_CATEGORY,
+        source=SOURCE_AUTONOMOUS,
+    )
+
+
 #: Top-level trees that are generated or machine-local (gitignored, see
 #: .gitignore).  A decision referencing one of these — e.g. a test scratch
 #: file under ``.pytest_tmp/`` — cannot be verified against the repository, so
@@ -293,7 +754,9 @@ def find_stale_decisions(
         missing = [
             f
             for f in d.get("affected_files", [])
-            if not _is_transient_ref(f) and not (Path(str(workspace)) / f).exists()
+            if not _is_transient_ref(f)
+            and not _is_scratch_ref(f)
+            and not (Path(str(workspace)) / f).exists()
         ]
         if missing:
             d = dict(d)
@@ -391,7 +854,15 @@ def add_decision(
     tags: list[str] | None = None,
     warnings: list[str] | None = None,
     category: str | None = None,
+    source: str = "",
 ) -> dict[str, Any]:
+    """Append one decision to the ledger and return the stored record.
+
+    *source* records where the decision came from (``"agent"`` for one the
+    agent took autonomously, see :func:`record_autonomous_decision`).  It is
+    stored only when non-empty so hand-written and legacy records keep their
+    existing shape.
+    """
     decisions = load_decisions(workspace)
     record = {
         "id": _next_id(decisions),
@@ -409,6 +880,8 @@ def add_decision(
     }
     if warnings:
         record["meta_warnings"] = warnings
+    if source:
+        record["source"] = source
     decisions.append(record)
     save_decisions(workspace, decisions)
     return record
@@ -950,8 +1423,58 @@ async def extract_from_changes(
     return _filter_candidates(result, ws)
 
 
-def decisions_as_system_prompt(workspace: str | Path, files: list[str]) -> str:
+def is_autonomous_decision(record: dict[str, Any]) -> bool:
+    """True when *record* was taken by the agent without being asked.
+
+    Detected by provenance (``source``) or by the tag, so a record survives
+    re-categorisation; both are checked because the category slot can hold
+    only one value while the tag is additive.
+    """
+    if str(record.get("source") or "") == SOURCE_AUTONOMOUS:
+        return True
+    return AUTONOMOUS_TAG in [str(t) for t in record.get("tags") or []]
+
+
+def _recent_autonomous_block(workspace: str | Path) -> str:
+    """Prompt lines listing the most recent autonomous decisions, if any.
+
+    Phase 1 of the autonomous-decision plan: these decisions were taken
+    without a request, so re-stating the newest ones keeps the agent
+    consistent instead of silently reversing its own choices.  Only the last
+    :data:`_RECENT_AUTONOMOUS_LIMIT` are shown — older ones are already
+    superseded context, and a long list would bury the real constraints.
+    """
+    records = [
+        d for d in load_decisions(workspace) if is_autonomous_decision(d)
+    ]
+    if not records:
+        return ""
+    lines = [
+        "",
+        "RECENT AUTONOMOUS DECISIONS — choices you made while executing, "
+        "without being asked:",
+        "Keep behaviour consistent with them; do not silently reverse one.",
+        "",
+    ]
+    for d in records[-_RECENT_AUTONOMOUS_LIMIT:]:
+        files = ", ".join(d.get("affected_files") or [])
+        lines.append(
+            f"  #{d['id']} ({d['title']}): {d.get('decision', '')}"
+            + (f" [files: {files}]" if files else "")
+        )
+    return "\n".join(lines) + "\n"
+
+
+def decisions_as_system_prompt(
+    workspace: str | Path,
+    files: list[str] | None = None,
+    include_autonomous: bool = True,
+) -> str:
     """Build a constraints block for LLM prompts from past decisions.
+
+    *files* scopes the constraints to the paths in play; ``None``/empty means
+    "every active decision".  *include_autonomous* adds the most recent
+    autonomously-taken decisions (see :func:`_recent_autonomous_block`).
 
     Returns empty string if no relevant decisions exist.
     """
@@ -962,8 +1485,13 @@ def decisions_as_system_prompt(workspace: str | Path, files: list[str]) -> str:
         if files
         else [d for d in load_decisions(workspace) if d.get("status") == STATUS_ACTIVE]
     )
+    # Autonomous records are re-stated in their own (milder) block below: they
+    # were never agreed with the user, so listing them as CRITICAL constraints
+    # the implementation "MUST respect" would overstate their authority.
+    decisions = [d for d in decisions if not is_autonomous_decision(d)]
+    autonomous = _recent_autonomous_block(workspace) if include_autonomous else ""
     if not decisions:
-        return ""
+        return autonomous
     lines = [
         "\n\nCRITICAL DESIGN CONSTRAINTS — past decisions that MUST be respected:",
         "These are design choices already documented for this codebase.",
@@ -985,7 +1513,7 @@ def decisions_as_system_prompt(workspace: str | Path, files: list[str]) -> str:
                 f"    Chose: {d.get('decision', '')}\n"
                 f"    Why: {d.get('rationale', '')}\n"
             )
-    return "\n".join(lines)
+    return "\n".join(lines) + autonomous
 
 
 def _filter_candidates(

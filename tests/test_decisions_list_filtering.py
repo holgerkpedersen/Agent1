@@ -10,6 +10,7 @@ from agent_core.decisions import (
     STATUS_ACTIVE,
     STATUS_ARCHIVED,
     STATUS_SUPERSEDED,
+    STATUS_VOID,
     _STATUSES,
     add_decision,
     count_by_category,
@@ -462,7 +463,10 @@ class TestConstants:
         assert STATUS_ACTIVE == "active"
         assert STATUS_SUPERSEDED == "superseded"
         assert STATUS_ARCHIVED == "archived"
-        assert _STATUSES == {"active", "superseded", "archived"}
+        assert STATUS_VOID == "void"
+        # ``void`` is a real status (tombstone, decision #043): it must be in
+        # the set or load_decisions rewrites it to ``active`` on the next save.
+        assert _STATUSES == {"active", "superseded", "archived", "void"}
 
     def test_categories_nonempty(self):
         assert len(CATEGORIES) >= 10

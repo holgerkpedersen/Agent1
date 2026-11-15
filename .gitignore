@@ -144,6 +144,10 @@ chat_history_prior.json
 # JSON line per divergence between an action and an active decision).
 .discrepancies.jsonl
 
+# Observation log of tool calls the agent decided on its own (Phase 1 of the
+# autonomous-decision work, see agent_core.decisions).
+.autonomous_decisions.jsonl
+
 # REPL command recall history (the user's own typed commands)
 .agent_history
 

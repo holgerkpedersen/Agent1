@@ -507,9 +507,10 @@ class DecideCommand(Command):
             return True
         decision_id, new_status = args[0], args[1]
         if new_status not in _STATUSES:
-            self.error(
-                f"Invalid status '{new_status}'. Use: active, superseded, archived"
-            )
+            # Derive the list from the canonical set so a newly valid status
+            # (e.g. ``void``) can never drift out of the help text again.
+            allowed = ", ".join(sorted(_STATUSES))
+            self.error(f"Invalid status '{new_status}'. Use: {allowed}")
             return True
         ws = str(Path(agent.workspace).resolve())
         decisions = load_decisions(ws)
