@@ -1,3 +1,15 @@
+## 2026-11-15 - feat(decisions): apply accepted improvement proposals to the ledger (Phase 4.2)
+
+**Change**: `agent_core/decision_improvement.py` gains the write half of the improvement pipeline: `review_proposals(proposals, threshold)` splits proposals into accepted/rejected on confidence and labels each, and `apply_decision_updates(workspace, proposals, threshold)` writes an accepted proposal to the decision ledger as a new revision — appending a record with `source="improvement"` and marking the old one `superseded` with `resolved_by`.
+
+**Reason**: 4.1 deliberately wrote nothing, so 4.2 is where a suggestion can start damaging an audit trail. Four guards answer that: a proposal below threshold writes nothing; a proposal naming a decision absent from the ledger is refused and reported separately (it names nothing, it was not declined on its merits); a proposal whose exact wording is already recorded as an improvement is declined, so applying one proposal twice is a no-op; and drift on a closed record is declined, because that is a closure problem (`RECOMMEND_RESOLVE`), not a wording one. Suggestions are applied verbatim — the module never rephrases a reviewer's text — and fields a proposal does not suggest (title, context, tags, affected files) inherit from the original, so a revision reads as the same decision restated. The `applied` label is recorded only once a write actually happened, so no label claims more than the ledger shows.
+
+**Files**: `agent_core/decision_improvement.py` (`review_proposals`, `apply_decision_updates`, `_supersede`, `_suggestion_of`, `LABEL_APPLIED` / `LABEL_REJECTED` / `SOURCE_IMPROVEMENT`), `tests/test_decision_apply.py` (new, 16 tests), `.decisions_plan.md` (4.2 marked done).
+
+**Verification**: `tests/test_decision_apply.py` written first and watched fail for the right reason (`ImportError: cannot import name 'apply_decision_updates'`), then green at 16 passed. Decision set -> `79 passed in 22.15s`. Full suite -> `5048 passed, 23 skipped in 1783.79s (0:29:43)`. Ruff clean (pre-commit).
+
+**Next**: 4.3 (`_improve_decisions()` on `AgentCore`), then Phase 5 CLI commands.
+
 ## 2026-11-15 - feat(decisions): collect decisions per turn and propose updates from drift
 
 **Change**: Phases 3 and 4.1 of `.decisions_plan.md`.
