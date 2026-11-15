@@ -1,5 +1,10 @@
 [
   {
+    "text": "Strata CLI path: C:\\Dev\\Strata (not on PATH) -> run C:\\Dev\\Strata\\bin\\strata.cmd",
+    "count": 1,
+    "category": "pinned"
+  },
+  {
     "text": "\"suggest refactoring of files greater than 100KB\"",
     "count": 1,
     "category": "pinned"

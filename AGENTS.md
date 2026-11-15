@@ -34,7 +34,7 @@ is being extended to audit its own file effects (self-improvement).
   `C:\Dev\Strata\bin\strata.ps1`). The launcher resolves a Python in order
   `STRATA_PYTHON` -> `<root>\python\python.exe` -> `<root>\.venv\Scripts\python.exe`
   -> `py -3`/`python`, and runs `<root>\strata.py`.
-- Verified 2026-11-03: `bin\strata.cmd --version` -> `strata 0.2.6 (build
+- Verified 2026-11-15: `bin\strata.cmd --version` -> `strata 0.2.6 (build
   0.1.51; python 3.14.4 at C:\Dev\Strata\.venv\Scripts\python.exe)`.
   The `--version` flag is a top-level option — `strata version` is an invalid
   subcommand. Subcommands: `serve, profile, repair-access, doctor, components,
