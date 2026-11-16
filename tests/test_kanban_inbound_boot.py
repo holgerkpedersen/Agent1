@@ -234,7 +234,7 @@ class TestManualCli:
         monkeypatch.setattr(
             kb,
             "process_inbound",
-            lambda qdir: processed.append(qdir) or 0,
+            lambda qdir, **kwargs: processed.append(qdir) or 0,
         )
 
         assert self._run_main(monkeypatch, ["--process-in"]) == 0
@@ -248,7 +248,7 @@ class TestManualCli:
         monkeypatch.setattr(
             kb,
             "process_inbound",
-            lambda qdir: processed.append(qdir) or 0,
+            lambda qdir, **kwargs: processed.append(qdir) or 0,
         )
 
         assert self._run_main(monkeypatch, ["--process"]) == 0
@@ -261,7 +261,7 @@ class TestManualCli:
         monkeypatch.setattr(
             kb,
             "process_inbound",
-            lambda qdir: seen.append(qdir) or 0,
+            lambda qdir, **kwargs: seen.append(qdir) or 0,
         )
 
         target = tmp_path / "custom-queue"
@@ -271,6 +271,41 @@ class TestManualCli:
         )
         assert rc == 0
         assert seen == [target]
+
+    def test_timeout_flag_is_forwarded_to_process_inbound(self, monkeypatch):
+        """A scheduled one-shot drain must be able to WAIT for the lock.
+
+        The interactive agent's boot poller and a timer-fired CLI run the same
+        drain.  With the old hard-coded ``timeout=0`` the scheduled run bailed
+        out the moment the poller held the lock and reported "Processed 0
+        messages" — the queue then silently stopped draining for that tick.
+        ``--timeout`` has to reach ``process_inbound`` or the flag is cosmetic.
+        """
+        import harnessfix.kanban_bridge as kb
+
+        seen: list = []
+        monkeypatch.setattr(
+            kb,
+            "process_inbound",
+            lambda qdir, timeout=0.0: seen.append(timeout) or 0,
+        )
+
+        assert self._run_main(monkeypatch, ["--process-in", "--timeout", "2.5"]) == 0
+        assert seen == [2.5]
+
+    def test_timeout_defaults_to_zero(self, monkeypatch):
+        """Without the flag the manual CLI must NOT block behind a poller."""
+        import harnessfix.kanban_bridge as kb
+
+        seen: list = []
+        monkeypatch.setattr(
+            kb,
+            "process_inbound",
+            lambda qdir, timeout=0.0: seen.append(timeout) or 0,
+        )
+
+        assert self._run_main(monkeypatch, ["--process-in"]) == 0
+        assert seen == [0.0]
 
     def test_no_flag_prints_help_and_fails(self, monkeypatch, capsys):
         assert self._run_main(monkeypatch, []) == 1

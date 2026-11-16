@@ -3478,5 +3478,125 @@
     "status": "active",
     "category": "autonomous",
     "source": "agent"
+  },
+  {
+    "id": "156",
+    "date": "2026-11-16T10:41:50+00:00",
+    "title": "Change harnessfix/kanban_bridge.py",
+    "context": "Edited C:\\Dev\\Agent1\\harnessfix\\kanban_bridge.py [verify] py_compile ✓ [verify] ruff ✗ 2: kanban_bridge.py:292: F821 Undefined name `contextmanager`; kanban_bridge.py:293: F821 Undefined name `Iterato",
+    "decision": "edit modified harnessfix/kanban_bridge.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "harnessfix/kanban_bridge.py"
+    ],
+    "tags": [
+      "autonomous",
+      "edit"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "157",
+    "date": "2026-11-16T10:47:05+00:00",
+    "title": "Change harnessfix/kanban_queue_repair.py",
+    "context": "Written C:\\Dev\\Agent1\\harnessfix\\kanban_queue_repair.py (16035 bytes) [verify] py_compile ✓ [verify] ruff ✗ 2: kanban_queue_repair.py:405: E501 Line too long (90 > 88); kanban_queue_repair.py:407: E50",
+    "decision": "write modified harnessfix/kanban_queue_repair.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "harnessfix/kanban_queue_repair.py"
+    ],
+    "tags": [
+      "autonomous",
+      "write"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "158",
+    "date": "2026-11-16T10:50:10+00:00",
+    "title": "Change tests/test_kanban_queue_repair.py",
+    "context": "Written C:\\Dev\\Agent1\\tests\\test_kanban_queue_repair.py (15186 bytes) [verify] py_compile ✓ [verify] ruff ✗ 1: test_kanban_queue_repair.py:213: E501 Line too long (93 > 88)",
+    "decision": "write modified tests/test_kanban_queue_repair.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "tests/test_kanban_queue_repair.py"
+    ],
+    "tags": [
+      "autonomous",
+      "write"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "159",
+    "date": "2026-11-16T11:08:06+00:00",
+    "title": "Change tests/test_kanban_inbound_boot.py",
+    "context": "Edited C:\\Dev\\Agent1\\tests\\test_kanban_inbound_boot.py [verify] py_compile ✓ [verify] ruff ✓",
+    "decision": "edit modified tests/test_kanban_inbound_boot.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "tests/test_kanban_inbound_boot.py"
+    ],
+    "tags": [
+      "autonomous",
+      "edit"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "160",
+    "date": "2026-11-16T11:10:24+00:00",
+    "title": "Change scripts/run_kanban_queue_drain.cmd",
+    "context": "Written C:\\Dev\\Agent1\\scripts\\run_kanban_queue_drain.cmd (3678 bytes)",
+    "decision": "write modified scripts/run_kanban_queue_drain.cmd without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "scripts/run_kanban_queue_drain.cmd"
+    ],
+    "tags": [
+      "autonomous",
+      "write"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "161",
+    "date": "2026-11-16T11:12:41+00:00",
+    "title": "Change tests/test_kanban_drain_launcher.py",
+    "context": "Written C:\\Dev\\Agent1\\tests\\test_kanban_drain_launcher.py (5042 bytes) [verify] py_compile ✓ [verify] ruff ✗ 2: test_kanban_drain_launcher.py:28: F401 [*] `pytest` imported but unused; test_kanban_dra",
+    "decision": "write modified tests/test_kanban_drain_launcher.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "tests/test_kanban_drain_launcher.py"
+    ],
+    "tags": [
+      "autonomous",
+      "write"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
   }
 ]

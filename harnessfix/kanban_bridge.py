@@ -43,6 +43,7 @@ from __future__ import annotations
 import atexit
 import errno
 import json
+from contextlib import contextmanager
 import logging
 import os
 import shutil
@@ -52,7 +53,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterator, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -230,6 +231,162 @@ DEAD_LETTER_DIR: Path | None = None
 # its write (enqueue) and its read (read_queue/advance_offset).
 _QUEUE_LOCKS: Dict[str, threading.Lock] = {}
 _locks_lock = threading.Lock()
+
+
+HANDLER_LOCK_FILENAME = "handler.lock"
+
+#: Queue directories whose handler lock THIS process already owns, mapped to a
+#: nesting depth.  ``msvcrt``/``flock`` locks are per file HANDLE, so a second
+#: open+lock of the same file from the same process conflicts with the first —
+#: a nested ``handling_lock()`` call would therefore report "busy" against
+#: itself.  Tracking the depth makes the guard re-entrant inside one process
+#: while staying exclusive across processes, which is the whole point.
+_HELD_HANDLER_LOCKS: Dict[str, int] = {}
+_HELD_HANDLER_GUARD = threading.Lock()
+
+#: Sidecar next to the lock that names the owning PID/start time.  The lock
+#: file itself must stay byte-stable (locking a region of it), so the metadata
+#: lives in its own file — same split as ``agent_core/session/lock.py``.
+HANDLER_OWNER_FILENAME = "handler.lock.owner.json"
+
+
+class QueueBusy(RuntimeError):
+    """Raised when a caller demands the queue but another handler owns it."""
+
+
+def _lock_fd(fd: int) -> None:
+    """Take a non-blocking exclusive OS lock on *fd* (raises OSError if held)."""
+    if os.name == "nt":
+        import msvcrt
+
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+    else:
+        import fcntl
+
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)  # type: ignore[attr-defined]
+
+
+def _unlock_fd(fd: int) -> None:
+    """Release the OS lock held on *fd*."""
+    if os.name == "nt":
+        import msvcrt
+
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+
+        fcntl.flock(fd, fcntl.LOCK_UN)  # type: ignore[attr-defined]
+
+
+def handler_lock_owner(queue_dir: Path | str) -> Optional[Dict[str, Any]]:
+    """Owner metadata of the process that holds the queue's handler lock."""
+    try:
+        path = Path(queue_dir).resolve() / HANDLER_OWNER_FILENAME
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+@contextmanager
+def handling_lock(queue_dir: Path | str, timeout: float = 0.0) -> Iterator[bool]:
+    """Serialise queue handling ACROSS processes; yields whether it was taken.
+
+    Why this exists: ``threading.Lock`` in ``_lock_for`` only serialises threads
+    of ONE interpreter, yet the queue is a shared directory that several
+    processes handle — the agent's boot poller, a second REPL, the manual
+    ``--process-in`` CLI, and any scheduled task.  Nothing stopped two of them
+    from entering :func:`process_inbound` together: both read the same cursor,
+    both applied the same lines, and the slower one then wrote its stale cursor
+    back over the faster one's.  The visible result was the one in the live
+    data — every message applied two to four times and ``retry_count`` climbing
+    together, because each handler re-queued the same failing message too.
+
+    So: the queue directory itself carries the mutex (``handler.lock``).  This
+    is OS-held, so a crashed handler releases it instead of wedging the queue.
+    Callers must treat a ``False`` yield as "somebody else is draining this
+    queue right now, leave it alone" — NOT as an error to retry in a loop.
+
+    Re-entrant within one process (see ``_HELD_HANDLER_LOCKS``): a nested call
+    yields ``True`` without touching the OS lock.
+    """
+    qdir = Path(queue_dir).resolve()
+    key = str(qdir)
+    with _HELD_HANDLER_GUARD:
+        depth = _HELD_HANDLER_LOCKS.get(key, 0)
+        if depth:
+            _HELD_HANDLER_LOCKS[key] = depth + 1
+    if depth:
+        try:
+            yield True
+        finally:
+            with _HELD_HANDLER_GUARD:
+                _HELD_HANDLER_LOCKS[key] -= 1
+        return
+
+    # ``is_dir`` rather than ``mkdir``: creating a queue directory that the
+    # caller never asked for would turn every poll of a mistyped path into a
+    # silent new empty queue.
+    if not qdir.is_dir():
+        yield False
+        return
+
+    lock_path = qdir / HANDLER_LOCK_FILENAME
+    fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o600)
+    acquired = False
+    try:
+        if os.fstat(fd).st_size == 0:
+            os.write(fd, b"\0")
+        deadline = time.monotonic() + max(0.0, timeout)
+        while True:
+            try:
+                _lock_fd(fd)
+                acquired = True
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(0.05)
+        if acquired:
+            with _HELD_HANDLER_GUARD:
+                _HELD_HANDLER_LOCKS[key] = 1
+            _write_handler_owner(qdir)
+        yield acquired
+    finally:
+        if acquired:
+            _clear_handler_owner(qdir)
+            try:
+                _unlock_fd(fd)
+            except OSError as exc:  # noqa: BLE001 - unlock is best effort
+                logger.debug("Releasing handler lock failed: %s", exc)
+            with _HELD_HANDLER_GUARD:
+                _HELD_HANDLER_LOCKS.pop(key, None)
+        os.close(fd)
+
+
+def _write_handler_owner(queue_dir: Path) -> None:
+    """Best-effort sidecar naming the lock owner (for operator diagnosis)."""
+    payload = {
+        "pid": os.getpid(),
+        "since": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "host": os.environ.get("COMPUTERNAME") or os.environ.get("HOSTNAME") or "",
+    }
+    try:
+        (queue_dir / HANDLER_OWNER_FILENAME).write_text(
+            json.dumps(payload, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+    except OSError:
+        pass
+
+
+def _clear_handler_owner(queue_dir: Path) -> None:
+    """Remove the owner sidecar; a stale one is harmless but misleading."""
+    try:
+        (queue_dir / HANDLER_OWNER_FILENAME).unlink()
+    except OSError:
+        pass
 
 
 def _read_int(path: Path) -> int:
@@ -1019,8 +1176,15 @@ def _record_failure(queue_dir: Path, msg: dict[str, Any]) -> None:
         (queue_dir / "seq.txt").write_text(str(seq), encoding="utf-8")
 
 
-def process_inbound(queue_dir: Path | None = None) -> int:
+def process_inbound(queue_dir: Path | None = None, timeout: float = 0.0) -> int:
     """Read and apply all pending inbound messages. Returns count applied.
+
+    This is the ONLY function that handles the queue, and it holds
+    :func:`handling_lock` for the whole drain, so two processes can never apply
+    the same lines.  When another process already owns the queue this returns
+    ``0`` without reading anything: the work is not lost, it is simply that
+    handler's to do.  ``timeout`` > 0 waits that long for the lock instead of
+    giving up immediately (the manual ``--process-in`` CLI uses it).
 
     Every message consumed advances the offset — including failures, which are
     re-queued at the tail with a higher ``retry_count``. Without that, a single
@@ -1029,7 +1193,21 @@ def process_inbound(queue_dir: Path | None = None) -> int:
     if queue_dir is None:
         queue_dir = QUEUE_KANBAN_TO_AGENT1
 
-    queue_dir = queue_dir.resolve()
+    queue_dir = Path(queue_dir).resolve()
+    with handling_lock(queue_dir, timeout=timeout) as owned:
+        if not owned:
+            owner = handler_lock_owner(queue_dir) or {}
+            logger.info(
+                "Queue %s is handled by another process (pid=%s) — leaving it alone",
+                queue_dir,
+                owner.get("pid", "?"),
+            )
+            return 0
+        return _drain_inbound(queue_dir)
+
+
+def _drain_inbound(queue_dir: Path) -> int:
+    """Apply every pending message in *queue_dir*; caller must hold the lock."""
     current_offset = _read_int(queue_dir / "offset.txt")
     new_messages, next_offset = read_queue(queue_dir)
     applied = 0
@@ -1184,13 +1362,27 @@ def main() -> int:
         "--process", dest="process_in", action="store_true", help=argparse.SUPPRESS
     )
     parser.add_argument("--queue-dir", type=str, help="Queue directory to process")
+    # A one-shot drain is usually run BY A SCHEDULER, and the interactive
+    # agent's boot poller may be draining the same directory at that very
+    # moment.  With the old hard-coded ``timeout=0`` the scheduled run then
+    # reported "Processed 0 messages" and did nothing at all: correct (the
+    # other handler owns the queue) but useless as a timer, because a busy
+    # queue silently fails to drain.  Waiting a bounded time turns "somebody
+    # else has it" into "wait my turn", while still never running two
+    # handlers at once.
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=0.0,
+        help="Seconds to wait for the queue handler lock (default: 0 = do not wait)",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO)
 
     if args.process_in:
         qdir = Path(args.queue_dir) if args.queue_dir else QUEUE_KANBAN_TO_AGENT1
-        count = process_inbound(qdir)
+        count = process_inbound(qdir, timeout=args.timeout)
         print(f"Processed {count} messages from {qdir}")
         return 0
     else:

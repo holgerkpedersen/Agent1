@@ -257,7 +257,69 @@ flowchart TD
 
 Manual one-shot processing: `python -m harnessfix.kanban_bridge --process-in` (alias `--process`).
 
-## 10b. Read-side tooling — the `kanban` REPL command and `kanban_inspect`
+### 10a. Only ONE handler at a time — `handler.lock`
+
+Inbound has a **single** entry point, `process_inbound()`, and it holds
+`handling_lock()` for the whole drain. The lock is an OS file lock on
+`<queue>\handler.lock` (the owner's pid/start time goes to
+`handler.lock.owner.json`), so it is exclusive **across processes**, not just
+across threads, and a crashed handler releases it instead of wedging the queue.
+
+This matters because several processes legitimately want the same directory: the
+agent's boot poller, a second REPL, the manual CLI, and the scheduled task below.
+Before the lock, two of them read the same cursor, both applied the same lines,
+and the slower one wrote its stale cursor back — the visible result being every
+message applied 2–4 times with `retry_count` climbing, i.e. duplicated ids in
+`messages.jsonl`.
+
+A caller that cannot take the lock must treat it as *"somebody else is draining
+this, leave it alone"* — never as an error to retry in a loop. `harnessfix.kanban_queue_repair`
+refuses to rewrite the file under a live handler for the same reason.
+
+### 10b. Scheduled drain — the queue empties with no agent session open
+
+```mermaid
+flowchart TD
+    A["Task Scheduler<br/>\\Agent1\\Kanban Queue Drain (every 5 min)"] --> B["scripts/run_kanban_queue_drain.cmd"]
+    B --> C["python -m harnessfix.kanban_bridge<br/>--process-in --timeout 120"]
+    C --> D{"handler.lock free?"}
+    D -- yes --> E["drain; advance offset.txt"]
+    D -- "no (agent session polling)" --> F["wait up to 120 s, then exit 0<br/>the session owns the work"]
+```
+
+The poller in §10 only exists **inside** an interactive agent process. With no
+session open the inbound queue is nobody's job, so messages accumulate and the
+offset stops moving. The task fills exactly that gap:
+
+| Piece | Value |
+| --- | --- |
+| Task name | `\Agent1\Kanban Queue Drain` |
+| Action | `C:\Dev\Agent1\scripts\run_kanban_queue_drain.cmd` |
+| Schedule | every 5 minutes, repeats indefinitely |
+| Log | `reports\harnessfix\kanban_queue_drain.log` |
+| Interpreter / cwd | absolute (`PYTHON_EXE`, `cd /d %REPO_ROOT%`) — a task gets a different PATH and no guaranteed "Start in", and trusting either fails with `0x80070002` |
+
+It is a **one-shot drain, not a daemon**: an empty queue is a no-op that exits
+immediately, so a frequent schedule costs nothing. It never starts a second
+poller — it *is* the handler for its tick, and `--timeout` makes it wait for the
+lock instead of reporting "Processed 0 messages" while a live session holds the
+queue. Because of the lock in §10a it can run at any moment, including during an
+active session, without applying a line twice.
+
+Manage it with:
+
+```bat
+schtasks /query  /tn "\Agent1\Kanban Queue Drain" /fo LIST /v
+schtasks /run    /tn "\Agent1\Kanban Queue Drain"
+schtasks /change /tn "\Agent1\Kanban Queue Drain" /disable
+schtasks /delete /tn "\Agent1\Kanban Queue Drain" /f
+```
+
+`tests/test_kanban_drain_launcher.py` pins the launcher to the real CLI (every
+flag it passes is accepted by `main()`) and asserts the paths stay absolute, so a
+renamed option cannot rot silently until a 03:00 failure.
+
+## 10c. Read-side tooling — the `kanban` REPL command and `kanban_inspect`
 
 The bridge writes state; the read side answers "what does card X say, and where is
 the link?" without hand-reading four files. Both live in Agent1 and are read-only
