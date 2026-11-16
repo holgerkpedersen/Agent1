@@ -3360,5 +3360,23 @@
     "status": "active",
     "category": "autonomous",
     "source": "agent"
+  },
+  {
+    "id": "150",
+    "date": "2026-11-16T08:55:03+00:00",
+    "title": "Ran git commit autonomously",
+    "context": "[master 686762f] feat(decisions): expose the decision ledgers as decide subcommands (Phase 5) 7 files changed, 860 insertions(+), 8 deletions(-) create mode 100644 tests/test_decide_cmd_improvement.py",
+    "decision": "Committed repository state with git commit as part of the task, without a separate request to do so.",
+    "rationale": "Repository state change chosen during execution.",
+    "affected_files": [],
+    "tags": [
+      "autonomous",
+      "git"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
   }
 ]
