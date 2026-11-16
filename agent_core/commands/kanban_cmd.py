@@ -11,7 +11,8 @@ Subcommands:
     kanban queue [--limit N]
     kanban board [board-id]
     kanban keys
-    kanban sync-descriptions [--dry-run]   (the only mutating subcommand)
+    kanban sync-descriptions [--dry-run]   (mutating)
+    kanban backfill-links [--dry-run] [--apply-closed] [--board ID]  (mutating)
     kanban purge [apply | undo | backups] [--board ID]
 
 Mutating subcommands are blocked in plan mode, matching ``issue add/resolve``.
@@ -57,6 +58,14 @@ _KANBAN_HELP = """kanban - Inspect the Kanban ↔ Agent1 bridge (one card, both 
       Copy Kanban card descriptions into issues whose fields are empty
       (kanban→agent1 used to drop the body). Dry-run by default is NOT the
       case: pass --dry-run to preview.
+
+  kanban backfill-links [--dry-run] [--apply-closed] [--board ID]
+      Create the missing Agent1 issue for cards the bridge never linked — the
+      repair for "Work does nothing". A card that never emitted card_create
+      (typed into the board, restored from backup, older than the sync) has no
+      issue behind it, so update/move/delete/work are all consumed as no-ops.
+      Skips cards that are already linked, fixture junk, and cards in a closed
+      column (pass --apply-closed to bridge those with the closed status).
 
   kanban purge [apply | undo | backups] [--board ID]
       Delete meaningless cards — placeholder titles ("x", "bench", "high"…) and
@@ -123,6 +132,30 @@ class KanbanCommand(Command):
                     "results": results,
                 }
             )
+        elif sub == "backfill-links":
+            if is_plan_mode(agent.mode):
+                self.error(
+                    "kanban backfill-links is blocked in plan mode "
+                    "(read-only session)."
+                )
+                return True
+            board_id = None
+            if "--board" in rest:
+                i = rest.index("--board")
+                if i + 1 < len(rest):
+                    board_id = rest[i + 1]
+            summary = ki.backfill_card_links(
+                dry_run="--dry-run" in rest,
+                board_id=board_id,
+                apply_closed="--apply-closed" in rest,
+            )
+            for entry in summary["results"]:
+                if entry["action"] == "skipped":
+                    print(
+                        f"  skipped {entry['card_id']} ({entry['title']!r}): "
+                        f"{entry['reason']}"
+                    )
+            _show({k: v for k, v in summary.items() if k != "results"})
         elif sub == "purge":
             self._cmd_purge(rest, agent)
         elif sub == "claim":

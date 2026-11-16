@@ -94,6 +94,30 @@ kanban purge backups      # list available backups
 refuses a file whose format would not round-trip, and refuses if a kept card
 would lose its parent. It is blocked in plan mode.
 
+## Step 3c — when "Work" does nothing at all
+
+A card only reaches Agent1 through a `card_create` message, which the board
+emits when the card is created **through the API**. A card typed into the board
+JSON, restored from a backup, or made before the sync was switched on has no
+issue behind it: no `kanban:<card_id>` location and no `.card_id_map.json`
+entry. Every later message for it — update, move, delete, **work** — resolves to
+nothing and is consumed as a quiet no-op. The button reports success; nothing
+happens.
+
+`kanban card <id>` says so: the link resolves to no issue. Do not create the
+issue by hand and do not force a retry — repair the link instead:
+
+```
+kanban backfill-links --dry-run    # which cards have no issue, and why skipped
+kanban backfill-links              # create them, linked both ways
+```
+
+It replays the bridge's own CREATE path per card, so the link lands in both
+places the bridge reads, and it is re-runnable (a linked card is skipped). It
+also skips junk cards and cards sitting in a closed column — pass
+`--apply-closed` to bridge those with the closed status instead of reopening
+finished work. Blocked in plan mode.
+
 ## Verified facts (issue `iss-general-kanban_8e3dcc6f84384dce9e0dae34db13a324`)
 
 - A ledger status of `resolved` does **not** imply the board card is `resolved`.

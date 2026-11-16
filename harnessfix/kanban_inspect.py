@@ -21,8 +21,8 @@ ledger fields plus the card's raw description and column — and
 ``sync_descriptions()`` writes that text into issues whose ledger fields are
 empty, so ``kanban → agent1`` carries the description instead of dropping it.
 
-Nothing here writes to a queue.  The only mutation is the explicit, opt-in
-:func:`sync_descriptions`.
+Nothing here writes to a queue.  The mutations are explicit and opt-in:
+:func:`sync_descriptions` and :func:`backfill_card_links`.
 
 CLI::
 
@@ -31,6 +31,7 @@ CLI::
     python -m harnessfix.kanban_inspect queue [--limit N]
     python -m harnessfix.kanban_inspect board [board-id]
     python -m harnessfix.kanban_inspect sync-descriptions [--dry-run]
+    python -m harnessfix.kanban_inspect backfill-links [--dry-run] [--apply-closed]
 """
 
 from __future__ import annotations
@@ -767,6 +768,164 @@ def sync_descriptions(*, dry_run: bool = False) -> list[dict[str, Any]]:
     return results
 
 
+# --- link backfill ------------------------------------------------------------
+
+
+def backfill_card_links(
+    *,
+    dry_run: bool = False,
+    board_id: Optional[str] = None,
+    apply_closed: bool = False,
+) -> dict[str, Any]:
+    """Create the missing issue for every card the bridge never linked.
+
+    A card only reaches Agent1 through a ``card_create`` message, which the
+    board emits when the card is created *through the API*.  A card typed into
+    the board JSON, restored from a backup, or predating the sync sits on the
+    board with no issue behind it: ``_apply_card_create`` never ran, so no
+    ``kanban:<card_id>`` location and no id-map entry exist.  Every later
+    message for such a card — update, move, delete and *work* — resolves to
+    nothing and is consumed as a quiet no-op.  That is why the board's "Work"
+    button reports success while nothing happens.
+
+    This replays the bridge's own CREATE path for each unbridged card, so the
+    issue is written by the same code that a real ``card_create`` would use and
+    the link is recorded in both places the bridge reads.
+
+    Rules, in order:
+
+    * a card is skipped when the id map **or** the ledger's locations already
+      link it — so a re-run is a no-op;
+    * fixture junk is skipped (``kanban_purge.classify_card``) so a repair never
+      turns a placeholder card into a real issue;
+    * a card whose column means "closed" (``resolved``/``wontfix``) is skipped
+      unless ``apply_closed``.  Importing a Finished card as a fresh *open*
+      issue is worse than leaving it unlinked: the move that would have
+      resolved it already happened, so it would sit open forever;
+    * the issue status follows the card's column, so the backfill does not
+      reopen work the board has already finished;
+    * nothing is written when ``dry_run`` is set.
+
+    Returns a summary plus one entry per unlinked card.
+    """
+    from harnessfix import kanban_purge  # lazy: avoids an import cycle
+
+    bid = board_id or active_board_id()
+    board = load_board(bid) if bid else {}
+    raw_cards = board.get("cards")
+    card_map: dict[str, dict[str, Any]] = {}
+    if isinstance(raw_cards, dict):
+        card_map = {k: v for k, v in raw_cards.items() if isinstance(v, dict)}
+    elif isinstance(raw_cards, list):
+        card_map = {
+            c["id"]: c
+            for c in raw_cards
+            if isinstance(c, dict) and isinstance(c.get("id"), str)
+        }
+    frame_titles = {
+        str(f.get("id", "")): str(f.get("title", ""))
+        for f in board.get("frames", [])
+        if isinstance(f, dict)
+    }
+
+    issues = issue_store.load_issues()
+    results: list[dict[str, Any]] = []
+    created = 0
+
+    for card_id, card in card_map.items():
+        frame_title = frame_titles.get(str(card.get("frame_id", "")), "")
+        recovered = kb._find_issue_by_card_location(issues, card_id)
+        if _map_issue_id(card_id) or (recovered or {}).get("id"):
+            continue
+
+        entry: dict[str, Any] = {
+            "card_id": card_id,
+            "title": str(card.get("title") or ""),
+            "frame": frame_title,
+        }
+
+        junk = kanban_purge.classify_card(card)
+        if junk:
+            results.append({**entry, "action": "skipped", "reason": f"junk:{junk}"})
+            continue
+        if not entry["title"].strip():
+            results.append({**entry, "action": "skipped", "reason": "no title"})
+            continue
+
+        column_status = COLUMN_TO_ISSUE.get(frame_title)
+        if column_status in ("resolved", "wontfix") and not apply_closed:
+            results.append(
+                {
+                    **entry,
+                    "action": "skipped",
+                    "reason": (
+                        f"closed column ({frame_title}) — "
+                        "pass --apply-closed to bridge it anyway"
+                    ),
+                }
+            )
+            continue
+
+        if dry_run:
+            results.append(
+                {
+                    **entry,
+                    "action": "dry-run",
+                    "status": column_status or "open",
+                }
+            )
+            continue
+
+        payload = {**card, "frame_title": frame_title}
+        # A ``[status:...]`` tag would win over the column inside
+        # ``card_to_issue_data`` and could reopen finished work.  For a NEW
+        # record the column is the truth, so drop the tag.
+        payload["tags"] = [
+            t
+            for t in (card.get("tags") or [])
+            if not (isinstance(t, str) and t.startswith("[status:"))
+        ]
+        if not kb._apply_card_create(payload):
+            results.append(
+                {**entry, "action": "failed", "reason": "create returned False"}
+            )
+            continue
+
+        created += 1
+        issue_id = kb.resolve_id(card_id)
+        if issue_id and column_status:
+            issues = issue_store.load_issues()
+            record = issue_store.find_by_id(issues, issue_id)
+            if record is not None and record.get("status") != column_status:
+                record["status"] = column_status
+                if column_status in ("resolved", "wontfix"):
+                    record["resolved_at"] = record.get("resolved_at") or (
+                        issue_store._now()
+                    )
+                issue_store.save_issues(issues)
+        results.append(
+            {
+                **entry,
+                "action": "created",
+                "issue_id": issue_id,
+                "status": column_status or "open",
+            }
+        )
+
+    return {
+        "dry_run": dry_run,
+        "board_id": bid,
+        "apply_closed": apply_closed,
+        "cards_on_board": len(card_map),
+        "unlinked": len(results),
+        "created": created,
+        "would_create": sum(1 for r in results if r["action"] == "dry-run"),
+        "skipped": sum(1 for r in results if r["action"] == "skipped"),
+        "failed": sum(1 for r in results if r["action"] == "failed"),
+        "results": results,
+    }
+
+
 # --- human summary ------------------------------------------------------------
 
 
@@ -828,6 +987,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_sync.add_argument("--dry-run", action="store_true")
 
+    p_backfill = sub.add_parser(
+        "backfill-links",
+        help="create the missing issue for cards the bridge never linked",
+    )
+    p_backfill.add_argument("--dry-run", action="store_true")
+    p_backfill.add_argument("--board", dest="board_id", default=None)
+    p_backfill.add_argument(
+        "--apply-closed",
+        action="store_true",
+        help="also bridge cards sitting in a closed column (Finished)",
+    )
+
     args, rest = parser.parse_known_args(argv)
 
     if args.cmd == "status":
@@ -860,6 +1031,14 @@ def main(argv: list[str] | None = None) -> int:
                 "updated": sum(1 for r in results if r["action"] not in ("skipped",)),
                 "results": results,
             }
+        )
+    elif args.cmd == "backfill-links":
+        _print(
+            backfill_card_links(
+                dry_run=args.dry_run,
+                board_id=args.board_id,
+                apply_closed=args.apply_closed,
+            )
         )
     return 0
 

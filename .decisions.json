@@ -3378,5 +3378,105 @@
     "status": "active",
     "category": "autonomous",
     "source": "agent"
+  },
+  {
+    "id": "151",
+    "date": "2026-11-16T09:35:52+00:00",
+    "title": "Change harnessfix/kanban_inspect.py",
+    "context": "Edited C:\\Dev\\Agent1\\harnessfix\\kanban_inspect.py [verify] py_compile ✓ [verify] ruff ✓",
+    "decision": "edit modified harnessfix/kanban_inspect.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "harnessfix/kanban_inspect.py"
+    ],
+    "tags": [
+      "autonomous",
+      "edit"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "152",
+    "date": "2026-11-16T09:37:56+00:00",
+    "title": "Change tests/test_kanban_backfill_links.py",
+    "context": "Written C:\\Dev\\Agent1\\tests\\test_kanban_backfill_links.py (8972 bytes) [verify] py_compile ✓ [verify] ruff ✗ 2: test_kanban_backfill_links.py:133: E501 Line too long (94 > 88); test_kanban_backfill_li",
+    "decision": "write modified tests/test_kanban_backfill_links.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "tests/test_kanban_backfill_links.py"
+    ],
+    "tags": [
+      "autonomous",
+      "write"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "153",
+    "date": "2026-11-16T09:42:44+00:00",
+    "title": "Change agent_core/commands/kanban_cmd.py",
+    "context": "Edited C:\\Dev\\Agent1\\agent_core\\commands\\kanban_cmd.py [verify] py_compile ✓ [verify] ruff ✓",
+    "decision": "edit modified agent_core/commands/kanban_cmd.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "agent_core/commands/kanban_cmd.py"
+    ],
+    "tags": [
+      "autonomous",
+      "edit"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "154",
+    "date": "2026-11-16T09:43:31+00:00",
+    "title": "Change docs/INTEGRATION_KANBAN_AGENT1.md",
+    "context": "Edited C:\\Dev\\Agent1\\docs\\INTEGRATION_KANBAN_AGENT1.md",
+    "decision": "edit modified docs/INTEGRATION_KANBAN_AGENT1.md without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "docs/INTEGRATION_KANBAN_AGENT1.md"
+    ],
+    "tags": [
+      "autonomous",
+      "edit"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "155",
+    "date": "2026-11-16T10:09:09+00:00",
+    "title": "Change skills/kanban-card-work/SKILL.md",
+    "context": "Edited C:\\Dev\\Agent1\\skills\\kanban-card-work\\SKILL.md",
+    "decision": "edit modified skills/kanban-card-work/SKILL.md without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "skills/kanban-card-work/SKILL.md"
+    ],
+    "tags": [
+      "autonomous",
+      "edit"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
   }
 ]

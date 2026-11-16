@@ -261,8 +261,8 @@ Manual one-shot processing: `python -m harnessfix.kanban_bridge --process-in` (a
 
 The bridge writes state; the read side answers "what does card X say, and where is
 the link?" without hand-reading four files. Both live in Agent1 and are read-only
-except the repair subcommands (`sync-descriptions`, `purge`), which preview first
-and only write when explicitly told to:
+except the repair subcommands (`sync-descriptions`, `backfill-links`, `purge`),
+which preview first and only write when explicitly told to:
 
 | Command | Owner | What it gives you |
 | --- | --- | --- |
@@ -273,6 +273,7 @@ and only write when explicitly told to:
 | `kanban keys` | same → `key_anatomy` | every key that travels between the repos and what it means |
 | `kanban sync-descriptions [--dry-run]` | same → `sync_descriptions` | fills EMPTY issue fields from the card body (backfill for issues created before the bridge carried the body); never overwrites text; blocked in plan mode |
 | `kanban purge [apply\|undo\|backups] [--board ID]` | same → `harnessfix/kanban_purge.py:plan_purge` / `apply_purge` / `restore_board` | deletes meaningless cards — exact placeholders (`x`, `bench`, `high`…) and pytest temp-path titles. **Read-only preview by default**; writes only on `apply`; `undo` restores the last backup and is itself undoable; `backups` lists them; blocked in plan mode |
+| `kanban backfill-links [--dry-run] [--apply-closed] [--board ID]` | same → `backfill_card_links` | creates the missing issue for cards the bridge **never linked** (typed into the board JSON, restored from a backup, older than the sync). Those cards have no `kanban:<card>` location and no id-map entry, so every later message for them — update, move, delete, **work** — resolves to nothing and is consumed as a quiet no-op. Replays the bridge's own CREATE path per card, so the link lands in both places the bridge reads. Skips linked cards (re-runnable), fixture junk, and cards in a closed column unless `--apply-closed` (then they inherit the closed status instead of reopening). Blocked in plan mode |
 
 The module runs standalone too (`python harnessfix/kanban_inspect.py card <id>`),
 but **not** as `python -m harnessfix.kanban_inspect` — that form is refused by the
