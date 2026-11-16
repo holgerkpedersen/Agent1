@@ -327,6 +327,23 @@ into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`
    `agent_memory.json`. Mtimes are session-scoped (never persisted).
 8. **Chat history projection** keeps system prompt + bounded multi-exchange window
    (60 msgs) — the old last-exchange-only projection was removed deliberately.
+9. **Never claim completion without evidence.** `turn_loop._run_chained_tool_loop`
+   has a deterministic claim-vs-evidence guard: when EVERY tool call in the run
+   failed/was refused (or none was made on an imperative turn) and the answer
+   claims success, the turn continues ONCE with an honesty note
+   (`_EVIDENCE_NOTE` / `_NO_WORK_NOTE`) instead of ending. History
+   (2026-11-16): `run(pytest)` was refused by the full-suite gate and the next
+   answer was "Task complete ... Git commit verified" — reporting a REAL commit
+   from an earlier session (14:44) as this turn's result; `_looks_incomplete`
+   saw an answer and the Jev delivery check voted DELIVERED (p(no)=0.33).
+   Never replace this with a probabilistic check alone.
+10. **Write/edit verification is two-tier.** `[verify] py_compile …` (does it
+   parse) then `[verify] ruff …`. ONLY `E9xx` (syntax) and `F821` (undefined
+   name) — the codes CI actually gates on — render as `✗`. Style findings
+   (E501/W293/W292/F401, ...) render as `ruff style N (advisory …)` and must
+   NOT be turned back into a `✗`: on 2026-11-16 a 119B model read a style `✗`
+   as "the write failed" and spent six edits chasing E501 in a scratch script
+   instead of running it.
 
 ## Verification commands
 

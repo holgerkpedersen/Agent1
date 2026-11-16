@@ -93,6 +93,39 @@ class TestVerifyRunsRuff:
         out = _verify(workdir, target)
         assert out.splitlines()[0].startswith("[verify] py_compile ✗")
 
+    def test_style_only_finding_is_advisory_not_a_failure(
+        self, workdir: Path
+    ) -> None:
+        """E501 must not read as a failed write (2026-11-16 edit loop).
+
+        A 119B model wrote a Playwright script, saw ``ruff ✗`` for E501/W293,
+        and spent six edits chasing formatting instead of running it.  Style
+        is advisory; only E9xx/F821 are blocking (what CI gates on).
+        """
+        target = workdir / "long_line.py"
+        target.write_text(f'X = "{"a" * 120}"\n', encoding="utf-8")
+        out = _verify(workdir, target)
+        assert "[verify] py_compile ✓" in out
+        assert "E501" in out
+        assert "advisory" in out
+        # The load-bearing part: no failure marker for formatting.
+        assert "ruff ✗" not in out
+
+    def test_blocking_defect_keeps_the_failure_marker(
+        self, workdir: Path
+    ) -> None:
+        """An undefined name is a real defect even next to style noise."""
+        target = workdir / "mixed_mod.py"
+        target.write_text(
+            f'X = "{"a" * 120}"\nprint(undefined_name_xyz)\n', encoding="utf-8"
+        )
+        out = _verify(workdir, target)
+        assert "[verify] ruff ✗" in out
+        assert "F821" in out
+        # The style finding is still named, just not as the reason to re-edit.
+        assert "E501" in out
+        assert "advisory" in out
+
     def test_no_ruff_line_for_non_python_file(self, workdir: Path) -> None:
         target = workdir / "notes.txt"
         target.write_text("hello\n", encoding="utf-8")

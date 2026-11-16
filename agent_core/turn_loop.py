@@ -71,6 +71,111 @@ _JEV_DELIVERY_NOTE = (
     "steps — do not promise follow-up work you have not done."
 )
 
+#: Words that assert the work is FINISHED.  Deliberately narrower than
+#: :func:`_looks_incomplete`'s markers and only ever combined with the
+#: evidence check below — a plain "done" in an answer is not a claim.
+_COMPLETION_CLAIM_MARKERS = (
+    "task complete",
+    "task is complete",
+    "all done",
+    "is done",
+    "completed",
+    "finished",
+    "all fixed",
+    "successfully",
+    "commit verified",
+)
+
+#: Sent when a run's every tool call failed but the answer claims success
+#: (2026-11-16: the model called ``run(pytest)``, the full-suite gate refused
+#: it, and the next answer was "Task complete ... Commit hash verified" —
+#: inverting a refusal into a fabricated completion).
+_EVIDENCE_NOTE = (
+    "You called tools this turn but none of them succeeded — every result was "
+    "an error, a refusal or empty. You cannot have completed the work, so do "
+    "not say it is done. Report exactly what failed (quote the tool result), "
+    "what is still unverified, and the next concrete step. If a different, "
+    "valid call would make progress, make it now instead of explaining."
+)
+
+#: Same guard, zero-call variant: the answer claims the work is finished
+#: without a single tool call in an imperative turn.
+_NO_WORK_NOTE = (
+    "You answered without calling a single tool this turn, so nothing was "
+    "done and you cannot know the outcome. Do not claim the work is complete. "
+    "Either take the action with a tool now, or state plainly that you did "
+    "nothing and what remains."
+)
+
+
+#: How an answer admits that a tool did not work.  A turn whose every call
+#: failed is fine when the text says so — the guard only intervenes when the
+#: answer hides the failure (or claims success over it).
+_FAILURE_ACK_MARKERS = (
+    "refus",
+    "error",
+    "failed",
+    "could not",
+    "couldn't",
+    "unable",
+    "not run",
+    "did not",
+    "didn't",
+    "blocked",
+    "no changes",
+    "nothing was",
+    "not verified",
+)
+
+
+def _acknowledges_failure(text: str) -> bool:
+    """True when *text* reports that something did not work."""
+    low = (text or "").lower()
+    return any(marker in low for marker in _FAILURE_ACK_MARKERS)
+
+
+def _claims_completion(text: str) -> bool:
+    """True when *text* asserts that the work is finished."""
+    low = (text or "").lower()
+    return any(marker in low for marker in _COMPLETION_CLAIM_MARKERS)
+
+
+#: Imperative openers that ask the agent to CHANGE workspace state.  Used only
+#: together with the all-calls-failed evidence check: a question ("how do I
+#: run the tests?") is never treated as a work order.
+_ACTION_REQUEST_RE = re.compile(
+    r"\b(run|execute|create|write|add|implement|fix|repair|refactor|update|"
+    r"change|edit|delete|remove|install|build|test|commit|push|merge|"
+    r"migrate|debug|verify|continue)\b",
+    re.I,
+)
+
+
+def _is_action_request(user_input: str) -> bool:
+    """True when the user asked the agent to DO something (not a question)."""
+    text = (user_input or "").strip()
+    if not text or "?" in text:
+        return False
+    return bool(_ACTION_REQUEST_RE.search(text))
+
+
+def _action_request_without_evidence(user_input: str, loop: Any) -> bool:
+    """True when an imperative request produced ONLY failed tool calls.
+
+    The 2026-11-16 turn: "continue with the current work" -> the model called
+    ``run(pytest)``, the full-suite gate refused it, and the turn ended with
+    "Task complete" after 161s.  One attempt, zero evidence, request unserved.
+    Such a turn must not be allowed to end silently: continue once (the caller
+    marks the post-answer nudge as spent) so the model either makes a valid
+    call or reports the refusal honestly.  Questions are excluded, so an
+    explanatory answer is never chained.
+    """
+    if not _is_action_request(user_input):
+        return False
+    made = int(getattr(loop, "tool_calls_made", 0) or 0)
+    failed = int(getattr(loop, "tool_calls_failed", 0) or 0)
+    return made > 0 and failed >= made
+
 
 async def _jev_answer_delivered(
     user_input: str, final_text: str, *, workspace: str | None = None
@@ -276,6 +381,63 @@ async def _run_chained_tool_loop(
                     and mod._looks_incomplete(final_text)
                 )
             )
+            # Claim-vs-evidence guard (deterministic, one shot): a run whose
+            # EVERY tool call failed cannot have finished the task.  Fires when
+            # the answer claims success, or when the user asked for an ACTION
+            # and nothing worked — the model either fabricates a result (2026-
+            # 11-16: "Task complete ... commit verified" after the pytest gate
+            # refused its only call) or stops after one refusal.  Needs no model
+            # call; the Jev verdict missed this case (p(no)=0.33).
+            _made = int(getattr(loop, "tool_calls_made", 0) or 0)
+            _failed = int(getattr(loop, "tool_calls_failed", 0) or 0)
+            _imperative = _is_action_request(user_input)
+            _claims = _claims_completion(final_text)
+            no_tool_evidence = _made > 0 and _failed >= _made
+            # Zero calls + an imperative request + a completion claim is the
+            # same lie one level earlier: "done" without doing anything.
+            no_work_claim = _made == 0 and _imperative and _claims
+            fabricated_completion = (
+                not needs_more
+                and reason == "answer"
+                and not llm_error
+                and not jev_delivery_checked
+                and (no_tool_evidence or no_work_claim)
+                and not _acknowledges_failure(final_text)
+                and (
+                    _claims
+                    or _action_request_without_evidence(user_input, loop)
+                )
+            )
+            if fabricated_completion:
+                jev_delivery_checked = True  # share the one post-answer nudge
+                if continuations < mod._MAX_CHAINED_RUNS:
+                    if display_mode == AgentDisplayMode.NORMAL:
+                        print(
+                            gray(
+                                "  · nothing this turn actually worked — asking "
+                                "for an honest next step"
+                            )
+                        )
+                    elif display_mode != AgentDisplayMode.QUIET:
+                        print(
+                            magenta("\n  [evidence-check] ")
+                            + yellow(
+                                "every tool call this turn failed or was "
+                                "refused — requesting an honest report and a "
+                                "different approach.\n"
+                            )
+                        )
+                    continuations += 1
+                    final_messages = list(final_messages) + [
+                        {
+                            "role": "user",
+                            "content": (
+                                _NO_WORK_NOTE if _made == 0 else _EVIDENCE_NOTE
+                            ),
+                            mod._CONTINUE_NOTE_TAG_KEY: mod._CONTINUE_NOTE_TAG,
+                        }
+                    ]
+                    continue
             # Jev delivery-check (one-shot, fail-open): catches the silent-ending
             # case heuristics miss — the loop ended with reason "answer" after real
             # tool work, but the model never delivered a clear final summary (it

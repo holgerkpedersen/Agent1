@@ -903,6 +903,11 @@ class ToolLoopRunner:
         #: Observability stats for the final-answer fallback: what the run
         #: actually did when the model produced no usable answer.
         self.tool_calls_made: int = 0
+        #: Calls whose result was an error, a refusal or empty ("No files
+        #: found").  ``tool_calls_failed == tool_calls_made`` means NOTHING
+        #: this run actually worked — the evidence a final answer must not
+        #: contradict (turn_loop's claim-vs-evidence guard).
+        self.tool_calls_failed: int = 0
         self.tools_used: dict[str, int] = {}
         self.last_tool_call: str = ""
         self.iterations_used: int = 0
@@ -1120,6 +1125,7 @@ class ToolLoopRunner:
         #: already emitted with its own values before this one started).
         self.termination_reason = "answer"
         self.tool_calls_made = 0
+        self.tool_calls_failed = 0
         self.tools_used = {}
         self.last_tool_call = ""
         self.iterations_used = 0
@@ -1574,6 +1580,7 @@ class ToolLoopRunner:
                     tool_consec_failures[tool_name] = (
                         tool_consec_failures.get(tool_name, 0) + 1
                     )
+                    self.tool_calls_failed += 1
                 else:
                     tool_consec_failures[tool_name] = 0
                 if (

@@ -47,7 +47,15 @@ async def _save_verify_note(
     (no changes)" message when ``save_file_py`` finds nothing to do.
     """
     if not save_file_py(path, content, auto_yes=True):
-        return f"Skipped {path} (no changes)"
+        # The model re-sent text it already wrote (2026-11-16: two of six
+        # edits in one turn were byte-identical).  Say WHY and what to do
+        # next, instead of a bare "no changes" it just retries.
+        return (
+            f"Skipped {path} (no changes)\n"
+            "The new text is identical to what is already on disk, so nothing "
+            "was written. Re-read the exact region (read with offset/limit) "
+            "before editing again - or stop editing and run the code / answer."
+        )
     verify = await getattr(agent, "_verify_file")(path) if path.endswith(".py") else ""
     getattr(agent, "_note_effect")(path)
     return f"{ok_msg}\n{verify}".strip()
@@ -170,6 +178,44 @@ def _ruff_command(path: str) -> list[str] | None:
 #: Greedy path so ``C:`` never becomes the first split point on Windows.
 _CONCISE_LINE_RE = re.compile(r"^(?P<path>.+):(?P<line>\d+):(?P<col>\d+): (?P<msg>.+)$")
 
+#: Rule codes that are real defects: parse errors (E9xx) and undefined names
+#: (F821) — the ONLY findings this repo's CI blocks on top of parsing
+#: (AGENTS.md: blocking ``ruff check --select F821`` + advisory full lint).
+#: Everything else in the E/F/W set (E501, W293, W292, F401, ...) is style.
+#:
+#: Reporting style as a red ``✗`` cost a whole turn on 2026-11-16: a 119B
+#: model wrote a Playwright script, then spent six edits chasing E501/W293 in
+#: it and never ran it.  A verification line the model reads as "the write
+#: FAILED" must mean a defect, not a formatting nit.
+_BLOCKING_RUFF_CODES_RE = re.compile(r"^(?:E9\d+|F821)$")
+
+#: Machine hint appended to advisory-only findings.  Read by the model, not a
+#: log: it says explicitly that another edit is not the expected response.
+_ADVISORY_HINT = "advisory - do not edit again just for formatting"
+
+#: Extract the rule code from one ``_format_ruff_violations`` item
+#: (``x.py:3: F401 `os` imported but unused``).  The position prefix is
+#: matched first, so a message that happens to quote a code cannot win.
+_ITEM_CODE_RE = re.compile(r":\d+: (?P<code>[A-Z]+\d+)\b")
+
+
+def _ruff_code(item: str) -> str:
+    """Rule code of one violation item ("" when it cannot be parsed)."""
+    match = _ITEM_CODE_RE.search(item)
+    return match.group("code") if match else ""
+
+
+def _is_blocking_ruff_violation(item: str) -> bool:
+    """True when *item* is a defect worth another edit, not formatting.
+
+    Unknown/unparseable items count as blocking on purpose: an unreadable
+    finding must never be silently downgraded to advice.
+    """
+    code = _ruff_code(item)
+    if not code:
+        return True
+    return bool(_BLOCKING_RUFF_CODES_RE.match(code))
+
 
 def _format_ruff_violations(stdout: str) -> list[str]:
     """Turn ``--output-format=concise`` output into short ``file:line`` items."""
@@ -224,9 +270,26 @@ def _lint_file(path: str) -> str:
     violations = _format_ruff_violations(r.stdout or r.stderr)
     if not violations:
         return f"[verify] ruff ✗: {(r.stderr or r.stdout).strip()[:200]}"
-    shown = "; ".join(violations[:5])
-    more = f" (+{len(violations) - 5} more)" if len(violations) > 5 else ""
-    return f"[verify] ruff ✗ {len(violations)}: {shown}{more}"
+    blocking = [v for v in violations if _is_blocking_ruff_violation(v)]
+    style = [v for v in violations if not _is_blocking_ruff_violation(v)]
+    if not blocking:
+        # Style only: report it once, WITHOUT the ✗ marker, so neither the
+        # model nor the colouriser reads it as a failed write.
+        shown = "; ".join(style[:5])
+        more = f" (+{len(style) - 5} more)" if len(style) > 5 else ""
+        return (
+            f"[verify] ruff style {len(style)} ({_ADVISORY_HINT}): {shown}{more}"
+        )
+    shown = "; ".join(blocking[:5])
+    more = f" (+{len(blocking) - 5} more blocking)" if len(blocking) > 5 else ""
+    summary = f"[verify] ruff ✗ {len(blocking)} blocking: {shown}{more}"
+    if style:
+        codes = ",".join(sorted({_ruff_code(v) for v in style if _ruff_code(v)}))
+        style_note = f"+{len(style)} style"
+        if codes:
+            style_note += f" ({codes})"
+        summary += f"; {style_note} {_ADVISORY_HINT}"
+    return summary
 
 
 def _note_effect(agent: "Agent", path: str) -> None:

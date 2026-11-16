@@ -165,7 +165,12 @@ def test_save_verify_note_skips_when_no_changes(tmp_path) -> None:
     target = tmp_path / "same.py"
     target.write_text("x = 1\n", encoding="utf-8")
     out = asyncio.run(bot._save_verify_note(str(target), "x = 1\n", "Written f"))
-    assert out == f"Skipped {target} (no changes)"
+    # The prefix is load-bearing (normal-mode evidence + skipped-write display).
+    assert out.splitlines()[0] == f"Skipped {target} (no changes)"
+    # ...and the model must learn WHY, or it re-sends the same text: on
+    # 2026-11-16 two of six edits in one turn were byte-identical retries.
+    assert "identical" in out
+    assert "re-read" in out.lower()
 
 
 def test_nlp_write_and_edit_use_shared_tail() -> None:
