@@ -8,18 +8,28 @@ Usage:
     decide resolve <id1> <id2>
     decide link <id1> <id2> --why "reason"
     decide extract [--from analysis.md]
+    decide autonomous [--limit N]
+    decide discrepancies [--severity warning|error|critical] [--decision id]
+    decide improve [--threshold 0.5]
+    decide apply [--threshold 0.5] [--dry-run] [--yes]
 """
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .base import Command, auto_choice, read_input, stop_requested
 from .doc_paths import find_input
 from .workflow_cmd import _module_inventory
+from agent_core.decision_improvement import (
+    apply_decision_updates,
+    format_improvement_report,
+)
 from agent_core.decisions import (
     STATUS_ACTIVE,
     _STATUSES,
     add_decision,
+    load_autonomous_log,
+    load_discrepancies,
     annotate_candidates,
     check_contradictions_fast,
     count_by_category,
@@ -74,7 +84,23 @@ _DECIDE_HELP = """decide \
       Change a decision's status (active/superseded/archived)
 
   decide categories
-      Show decision counts by category"""
+      Show decision counts by category
+
+  decide autonomous [--limit N]
+      Show the last autonomous decisions the agent recorded for itself
+      (what it changed without being asked).  Default limit: 10.
+
+  decide discrepancies [--severity warning|error|critical] [--decision <id>]
+      Show recorded divergences between actions and recorded decisions.
+
+  decide improve [--threshold 0.5]
+      Show which active decisions are violated often enough to be worth
+      rewording.  Read-only: nothing is applied.
+
+  decide apply [--threshold 0.5] [--dry-run] [--yes]
+      Apply the improvement proposals: the revised wording is appended and
+      the original is marked superseded (the old record is kept).  --dry-run
+      shows the proposals without writing; --yes skips the confirmation."""
 
 
 class DecideCommand(Command):
@@ -112,6 +138,14 @@ class DecideCommand(Command):
             return await self._cmd_set_status(args[1:], agent)
         elif sub == "categories":
             return await self._cmd_categories(args[1:], agent)
+        elif sub == "autonomous":
+            return await self._cmd_autonomous(args[1:], agent)
+        elif sub == "discrepancies":
+            return await self._cmd_discrepancies(args[1:], agent)
+        elif sub == "improve":
+            return await self._cmd_improve(args[1:], agent)
+        elif sub == "apply":
+            return await self._cmd_apply(args[1:], agent)
         else:
             return await self._cmd_add(args, agent)
 
@@ -539,6 +573,114 @@ class DecideCommand(Command):
             print(f"  {cat:25s} {count}")
         return True
 
+    # ── autonomous / discrepancies ──────────────────────────────────────
+
+    async def _cmd_autonomous(self, args: list[str], agent: "Agent") -> bool:
+        """Show the autonomous decisions the agent recorded for itself."""
+        ws = str(Path(agent.workspace).resolve())
+        raw_limit = _extract_flag(args, "--limit")
+        try:
+            limit = int(raw_limit) if raw_limit else 10
+        except ValueError:
+            self.error(f"--limit needs a number, got '{raw_limit}'")
+            return True
+        if limit < 1:
+            self.error("--limit must be at least 1")
+            return True
+
+        entries = load_autonomous_log(ws)
+        if not entries:
+            print("No autonomous decisions recorded yet.")
+            return True
+        shown = entries[-limit:]
+        print(f"{len(entries)} autonomous decision(s) recorded, last {len(shown)}:")
+        print("-" * 60)
+        for entry in shown:
+            title = entry.get("title") or "(untitled)"
+            when = entry.get("detected_at") or "?"
+            tool = entry.get("tool_name") or "?"
+            stored = entry.get("decision_id")
+            marker = f"#{stored}" if stored else "not stored (duplicate)"
+            print(f"  {when}  [{tool}]  {title}  -> {marker}")
+        return True
+
+    async def _cmd_discrepancies(self, args: list[str], agent: "Agent") -> bool:
+        """Show recorded divergences between actions and decisions."""
+        ws = str(Path(agent.workspace).resolve())
+        severity = _extract_flag(args, "--severity") or None
+        decision_id = _extract_flag(args, "--decision") or None
+        records = load_discrepancies(ws, decision_id=decision_id, severity=severity)
+        if not records:
+            print("No discrepancies recorded.")
+            return True
+        print(f"{len(records)} discrepancy record(s):")
+        print("-" * 60)
+        for rec in records:
+            print(
+                f"  #{rec.get('decision_id', '?')}  "
+                f"{rec.get('discrepancy_type', '?')}  "
+                f"({rec.get('severity', '?')})  "
+                f"tool={rec.get('action_tool', '?')}  "
+                f"at={rec.get('detected_at', '?')}"
+            )
+            suggestion = rec.get("suggestion")
+            if suggestion:
+                print(f"     {suggestion}")
+        return True
+
+    # ── improve / apply ─────────────────────────────────────────────────
+
+    async def _cmd_improve(self, args: list[str], agent: "Agent") -> bool:
+        """Report which decisions are violated often enough to be reworded.
+
+        Read-only: the pipeline only reads both ledgers.  Applying is
+        ``decide apply``, after review.
+        """
+        threshold = _extract_threshold(args, self)
+        if threshold is None:
+            return True
+        proposals = _collect_proposals(agent, threshold)
+        print(format_improvement_report(proposals))
+        return True
+
+    async def _cmd_apply(self, args: list[str], agent: "Agent") -> bool:
+        """Apply improvement proposals after confirmation.
+
+        The ledger keeps both records: the revision is appended and the
+        original is marked ``superseded`` with ``resolved_by`` pointing at it,
+        so nothing is ever overwritten in place.
+        """
+        threshold = _extract_threshold(args, self)
+        if threshold is None:
+            return True
+        dry_run = "--dry-run" in args
+        assume_yes = "--yes" in args
+
+        proposals = _collect_proposals(agent, threshold)
+        if not proposals:
+            print(format_improvement_report(proposals))
+            return True
+
+        print(format_improvement_report(proposals))
+        if dry_run:
+            print("\n--dry-run: nothing was written.")
+            return True
+        if not assume_yes and not auto_choice(
+            f"\n  Apply {len(proposals)} revision(s) to the ledger? (y/N): ",
+            default="n",
+            auto_default="n",
+        ).strip().lower().startswith("y"):
+            print("Cancelled: nothing was written.")
+            return True
+
+        ws = str(Path(agent.workspace).resolve())
+        result = apply_decision_updates(ws, proposals, threshold=threshold)
+        applied, rejected = result["applied"], result["rejected"]
+        print(f"\nApplied {len(applied)} revision(s); {len(rejected)} declined.")
+        for decision_id in applied:
+            print(f"  #{decision_id} superseded by a new active record")
+        return True
+
     # ── helpers ──────────────────────────────────────────────────────────────
 
 
@@ -562,3 +704,46 @@ def _extract_file_refs(text: str) -> list[str]:
     import re
 
     return re.findall(r"[\w/\\-]+\.py", text)
+
+
+def _extract_threshold(args: list[str], command: Command) -> float | None:
+    """Parse ``--threshold`` as a fraction in [0, 1], or ``None`` on bad input.
+
+    Returns the default (0.5) when the flag is absent, so the CLI and
+    :func:`agent_core.decision_improvement.apply_decision_updates` agree on what
+    "reaches the threshold" means.  On bad input the error is reported and
+    ``None`` comes back, which the caller must treat as "stop".
+    """
+    raw = _extract_flag(args, "--threshold")
+    if not raw:
+        return 0.5
+    try:
+        value = float(raw)
+    except ValueError:
+        command.error(f"--threshold needs a number, got '{raw}'")
+        return None
+    if not 0.0 <= value <= 1.0:
+        command.error(f"--threshold must be between 0 and 1, got {value}")
+        return None
+    return value
+
+
+def _collect_proposals(agent: "Agent", threshold: float) -> list[Any]:
+    """Aggregate the ledgers and build improvement proposals for *agent*.
+
+    Wraps the three read-only steps ``improve`` and ``apply`` share, so the two
+    subcommands can never analyse the workspace differently.  A failure is
+    returned as an empty list — the caller prints the "nothing to do" message
+    rather than a traceback.
+    """
+    from agent_core.decision_collector import DecisionCollector
+    from agent_core.decision_improvement import propose_decision_updates
+
+    ws = str(Path(agent.workspace).resolve())
+    try:
+        collector = DecisionCollector(ws)
+        collector.aggregate_periodic()
+        return propose_decision_updates(ws, collector, threshold=threshold)
+    except Exception as exc:  # noqa: BLE001 — analysis is bookkeeping only
+        print(f"Decision improvement analysis failed: {exc}")
+        return []

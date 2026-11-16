@@ -1,3 +1,22 @@
+## 2026-11-16 - feat(decisions): expose the decision ledgers as `decide` subcommands (Phase 5)
+
+**Change**: Phase 5 of `.decisions_plan.md`. Four read/review surfaces are added to the existing `decide` command in `agent_core/commands/decide_cmd.py`, so the ledger has one dispatch point instead of a new `agent_core/commands/decisions.py`:
+
+- `decide autonomous [--limit N]` lists the decisions the agent recorded for itself (default 10, newest last) and says whether each one reached the ledger or was dropped as a duplicate.
+- `decide discrepancies [--severity warning|error|critical] [--decision <id>]` lists recorded divergences between actions and decisions, with the recorded suggestion.
+- `decide improve [--threshold 0.5]` reports which active decisions are violated often enough to be reworded. Read-only by contract.
+- `decide apply [--threshold 0.5] [--dry-run] [--yes]` writes an accepted proposal as a new revision. `--dry-run` prints the proposals and writes nothing; without `--yes` it asks for confirmation and defaults to no.
+
+`format_improvement_report()` is added to `agent_core/decision_improvement.py` so the REPL view and the CLI view are one definition.
+
+**Reason**: Phases 1-4 collected the data but nothing user-facing could read it, so autonomous decisions, discrepancies and drift were only visible to a Python caller. The read path is separated from the write path on purpose: `improve` cannot rewrite the ledger, and `apply` refuses to write until the user confirms, because the ledger is an audit trail. `--threshold` is parsed and range-checked (`[0, 1]`) instead of silently defaulting, so a typo cannot quietly change which proposals qualify. Applying keeps both records — the revision is appended and the original is marked `superseded` with `resolved_by` — the same guard 4.2 established.
+
+**Files**: `agent_core/commands/decide_cmd.py` (`_cmd_autonomous`, `_cmd_discrepancies`, `_cmd_improve`, `_cmd_apply`, `_extract_threshold`, `_collect_proposals`, help text), `agent_core/decision_improvement.py` (`format_improvement_report`), `agent_core/agent.py` (`_improve_decisions`, `_generate_improvement_report`), `tests/test_decide_cmd_improvement.py` (new, 23 tests), `.decisions_plan.md` (Phases 4.3 and 5 marked done).
+
+**Verification**: `tests/test_decide_cmd_improvement.py` -> 23 passed. Testmon lane over the changed files -> `1333 passed, 1 skipped, 1194 deselected in 674.48s`. Ruff (the blocking CI command: `ruff check agent_core harnessfix fixcommand tests performance_dashboard`) -> All checks passed.
+
+**Next**: 4.3 is implemented but has no callers — `_improve_decisions()` on `AgentCore` duplicates what the CLI gets from `_collect_proposals`. `.decisions_plan.md` lists the three ways to resolve it.
+
 ## 2026-11-15 - feat(decisions): apply accepted improvement proposals to the ledger (Phase 4.2)
 
 **Change**: `agent_core/decision_improvement.py` gains the write half of the improvement pipeline: `review_proposals(proposals, threshold)` splits proposals into accepted/rejected on confidence and labels each, and `apply_decision_updates(workspace, proposals, threshold)` writes an accepted proposal to the decision ledger as a new revision — appending a record with `source="improvement"` and marking the old one `superseded` with `resolved_by`.

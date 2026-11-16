@@ -476,3 +476,42 @@ def apply_decision_updates(
         result["applied"].append(str(proposal.decision_id))
 
     return result
+
+
+# ── Reporting (Phase 5) ─────────────────────────────────────────────────────
+
+
+def format_improvement_report(proposals: list[DecisionUpdateProposal]) -> str:
+    """Render *proposals* as plain text, strongest first.
+
+    Shared by the REPL report (``AgentCore._generate_improvement_report``) and
+    the ``decide improve`` command, so the two can never drift apart.  Plain
+    text on purpose: it is printed to a terminal, but it is also a tool result,
+    so it must read well without colour or a width assumption.
+    """
+    if not proposals:
+        return (
+            "No decision needs rewording: no active decision is being "
+            "violated often enough to qualify."
+        )
+    lines = [f"{len(proposals)} decision(s) worth revisiting:", "-" * 60]
+    for i, p in enumerate(proposals, 1):
+        lines.append(
+            f"{i}. #{p.decision_id} "
+            f"(confidence {p.confidence:.0%}, {len(p.evidence)} violation(s))"
+        )
+        if p.suggested_title:
+            lines.append(f"   new title:   {p.suggested_title}")
+        if p.suggested_decision:
+            lines.append(f"   new wording: {p.suggested_decision}")
+        if p.suggested_rationale:
+            lines.append(f"   why:         {p.suggested_rationale}")
+        for entry in p.evidence[:3]:
+            tool = entry.get("action_tool") or entry.get("tool_name") or "?"
+            kind = entry.get("discrepancy_type") or "violation"
+            lines.append(f"   evidence:    {tool} — {kind}")
+        if len(p.evidence) > 3:
+            lines.append(f"   ... {len(p.evidence) - 3} more")
+    lines.append("")
+    lines.append("Nothing was changed. Run `decide apply` to accept.")
+    return "\n".join(lines)

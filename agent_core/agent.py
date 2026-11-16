@@ -848,6 +848,46 @@ class AgentCore:
         self._last_turn_decisions = list(found)
         return found
 
+    async def _improve_decisions(self, threshold: float = 0.5) -> str:
+        """Run the decision improvement pipeline and report what it found.
+
+        Phase 4.3 of the autonomous-decision plan.  Aggregates the collected
+        observations (Phase 3), asks
+        :func:`agent_core.decision_improvement.propose_decision_updates` which
+        active decisions are being violated often enough to be worth rewording
+        (Phase 4.1), and formats the result.
+
+        Read-only: proposals are produced, none is applied.  Applying them is
+        ``apply_decision_updates`` (Phase 4.2), which the ``decisions apply``
+        CLI command drives after review.  So a call here can never rewrite the
+        ledger.
+
+        Never raises — the report says so instead, because a failed analysis
+        must not break the caller's turn.
+        """
+        from agent_core.decision_improvement import propose_decision_updates
+
+        try:
+            collector = self._decision_collector_for_workspace()
+            collector.aggregate_periodic()
+            proposals = propose_decision_updates(
+                self.workspace, collector, threshold=threshold
+            )
+        except Exception as e:  # noqa: BLE001 — analysis is bookkeeping only
+            logger.debug("decision improvement pass failed", exc_info=True)
+            return f"Decision improvement analysis failed: {e}"
+        return self._generate_improvement_report(proposals)
+
+    def _generate_improvement_report(self, proposals: list[Any]) -> str:
+        """Format improvement proposals for display.
+
+        Delegates to :func:`agent_core.decision_improvement.format_improvement_report`
+        so the REPL view and the ``decide improve`` CLI view are one definition.
+        """
+        from agent_core.decision_improvement import format_improvement_report
+
+        return format_improvement_report(proposals)
+
     def _chat_messages_since_turn_start(self) -> list[dict[str, Any]]:
         """This turn's messages, per the ``_turn_start_index`` boundary."""
         history = list(self._chat_history or [])
