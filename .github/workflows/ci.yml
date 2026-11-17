@@ -13,10 +13,10 @@ jobs:
     # PyPI untested. This job builds the real artifact and validates metadata.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -73,7 +73,7 @@ jobs:
       # a slow-but-healthy run is not os._exit(124)-killed mid-suite.
       PYTEST_FULL_SUITE_TIMEOUT: "10000"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # The cross-repo bridge tests (tests/test_card_modal.py,
       # test_kanban_roundtrip.py, test_linked_cards.py,
@@ -87,7 +87,7 @@ jobs:
         uses: ./.github/actions/kanban-checkout
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
 
