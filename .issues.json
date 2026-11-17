@@ -534,5 +534,347 @@
     "created_at": "2026-11-16T12:46:02+00:00",
     "resolved_at": null,
     "parent_card_id": "e19bd051c80d422db8898b8703688d19"
+  },
+  {
+    "id": "iss-general-kanban_0dfa14b207204f29b57385d88789c8e5",
+    "title": "Episodic memory / RAG over successful runs",
+    "category": "general",
+    "severity": "low",
+    "locations": [
+      "kanban:0dfa14b207204f29b57385d88789c8e5"
+    ],
+    "status": "reviewing",
+    "autonomy_level": 1,
+    "evidence": "",
+    "suggested_approach": "Index successful traces (loop_end=completed, tests green) as problem->action->outcome episodes and inject top-k into fix/implement prompts. Builds on harnessfix/tracing.py + VectorDatabase (exists, only used in perf tests).",
+    "decision_ref": null,
+    "repair_ref": null,
+    "created_at": "2026-11-17T11:49:21+00:00",
+    "resolved_at": null,
+    "parent_card_id": "0dfa14b207204f29b57385d88789c8e5"
+  },
+  {
+    "id": "iss-general-kanban_a1eac2720b6b4bca976eec190ac42ae6",
+    "title": "Speculative read-only fan-out",
+    "category": "general",
+    "severity": "low",
+    "locations": [
+      "kanban:a1eac2720b6b4bca976eec190ac42ae6"
+    ],
+    "status": "reviewing",
+    "autonomy_level": 1,
+    "evidence": "",
+    "suggested_approach": "For exploration turns (read/search/references - all safe), speculatively run 2-3 candidate next steps in parallel via existing parallel.py, keep the branch the model confirms. Zero risk, fewer round-trips.",
+    "decision_ref": null,
+    "repair_ref": null,
+    "created_at": "2026-11-17T11:49:21+00:00",
+    "resolved_at": null,
+    "parent_card_id": "a1eac2720b6b4bca976eec190ac42ae6"
+  },
+  {
+    "id": "iss-general-kanban_8a05033090cf414b961eced17122e0b9",
+    "title": "Prompt-cache hit-rate in perf view/dashboard",
+    "category": "general",
+    "severity": "low",
+    "locations": [
+      "kanban:8a05033090cf414b961eced17122e0b9"
+    ],
+    "status": "reviewing",
+    "autonomy_level": 1,
+    "evidence": "",
+    "suggested_approach": "Wire prompt_cache.py stats into the perf view and the monitoring dashboard. Surface template-cache hits/misses and hit % (overall and per command, attributed when a command context is active) so cache effectiveness and the impact of token-trimming work are visible. Note: PromptCache is a template cache (task/profile-keyed); per-command attribution is best-effort via the active command context.",
+    "decision_ref": null,
+    "repair_ref": null,
+    "created_at": "2026-11-17T11:49:21+00:00",
+    "resolved_at": null,
+    "parent_card_id": "8a05033090cf414b961eced17122e0b9"
+  },
+  {
+    "id": "iss-general-kanban_e06c893897b243989e8f132c107ee414",
+    "title": "propose mode = PR-style changes",
+    "category": "general",
+    "severity": "low",
+    "locations": [
+      "kanban:e06c893897b243989e8f132c107ee414"
+    ],
+    "status": "reviewing",
+    "autonomy_level": 1,
+    "evidence": "",
+    "suggested_approach": "implement already supports [PATCH:] + anchored diffs + --review. Add first-class propose where the agent never writes the tree - emits reviewed diff + rationale + test result, human/CI merges. Stronger than git checkpoints.",
+    "decision_ref": null,
+    "repair_ref": null,
+    "created_at": "2026-11-17T11:49:21+00:00",
+    "resolved_at": null,
+    "parent_card_id": "e06c893897b243989e8f132c107ee414"
+  },
+  {
+    "id": "iss-general-kanban_b687bd0a6ca3437eb631998912a80db3",
+    "title": "Wire the dormant planner->executor",
+    "category": "general",
+    "severity": "low",
+    "locations": [
+      "kanban:b687bd0a6ca3437eb631998912a80db3"
+    ],
+    "status": "reviewing",
+    "autonomy_level": 1,
+    "evidence": "",
+    "suggested_approach": "DependencyGraph/TaskScheduler (unused) is the natural target for plan-mode output -> scheduled subtask execution with subagent.py isolation already present. Closes plan #13.",
+    "decision_ref": null,
+    "repair_ref": null,
+    "created_at": "2026-11-17T11:49:21+00:00",
+    "resolved_at": null,
+    "parent_card_id": "b687bd0a6ca3437eb631998912a80db3"
+  },
+  {
+    "id": "iss-general-kanban_356b7c2ed699425cb0b440c02a6fff6f",
+    "title": "Remove the opencode-zen freetier models",
+    "category": "general",
+    "severity": "low",
+    "locations": [
+      "kanban:356b7c2ed699425cb0b440c02a6fff6f"
+    ],
+    "status": "open",
+    "autonomy_level": 1,
+    "evidence": "",
+    "suggested_approach": "all opencode-zen/*-free models should be removed from the model command output, since they cannot be used outside opencode.",
+    "decision_ref": null,
+    "repair_ref": null,
+    "created_at": "2026-11-17T11:49:21+00:00",
+    "resolved_at": null,
+    "parent_card_id": "356b7c2ed699425cb0b440c02a6fff6f"
+  },
+  {
+    "id": "iss-general-kanban_34f9bc20e77341869f6817ed5057cb00",
+    "title": "Injecting prompts into an already running prompt.",
+    "category": "general",
+    "severity": "low",
+    "locations": [
+      "kanban:34f9bc20e77341869f6817ed5057cb00"
+    ],
+    "status": "open",
+    "autonomy_level": 1,
+    "evidence": "To be able to correct an already sent prompt, by injecting prompts into an already running prompt, make sure the use can use the Escape Escape keypresses to get access to the user input, which should be entered as text from the chat, waiting for continuation of the previous prompt, where the entered text from the chat has been injected. \n\nThink about whether there should be access to the clipboard too. But never use the clipboard without showing the user a copy of the clipboard. And the user should be able to accept or undo the injection of clipboard.",
+    "suggested_approach": "To be able to correct an already sent prompt, by injecting prompts into an already running prompt, make sure the use can use the Escape Escape keypresses to get access to the user input. \n\nThink about whether there should be access to the clipboard too. But never use the clipboard without showing the user a copy of the clipboard. And the user should be able to undo the injection. \n\nIf the prompt is injected, the current processing should get the injected prompt on next attempt to infer a prediction.",
+    "decision_ref": null,
+    "repair_ref": null,
+    "created_at": "2026-11-17T11:49:22+00:00",
+    "resolved_at": null,
+    "parent_card_id": "34f9bc20e77341869f6817ed5057cb00"
+  },
+  {
+    "id": "iss-general-kanban_e8bdd37aa911459088778e2c0a5ac957",
+    "title": "Tree View \"Collapse All\" and \"Expand All\" doesn't do anything",
+    "category": "general",
+    "severity": "low",
+    "locations": [
+      "kanban:e8bdd37aa911459088778e2c0a5ac957"
+    ],
+    "status": "open",
+    "autonomy_level": 1,
+    "evidence": "",
+    "suggested_approach": "Tree View \"Collapse All\" and \"Expand All\" doesn't do anything.\n\nFix it!",
+    "decision_ref": null,
+    "repair_ref": null,
+    "created_at": "2026-11-17T11:49:22+00:00",
+    "resolved_at": null,
+    "parent_card_id": "e8bdd37aa911459088778e2c0a5ac957"
+  },
+  {
+    "id": "iss-general-kanban_9bc4327f46b34853bb7fac0334c398cb",
+    "title": "Improve Autonomous Decisions in Agent1",
+    "category": "general",
+    "severity": "low",
+    "locations": [
+      "kanban:9bc4327f46b34853bb7fac0334c398cb"
+    ],
+    "status": "open",
+    "autonomy_level": 1,
+    "evidence": "",
+    "suggested_approach": "When working with Agent1, we need the agent to register its' own decisions, and flag discrepancies in the processing. These autonomous  decisions are to be collected and used to improve the major decisions in the Agent1 .decision.json file.\n\nSo we need tools to improve/measure/decide/build better solutions.\n\nCreate a major plan for this refactoring.",
+    "decision_ref": null,
+    "repair_ref": null,
+    "created_at": "2026-11-17T11:49:22+00:00",
+    "resolved_at": null,
+    "parent_card_id": "9bc4327f46b34853bb7fac0334c398cb"
+  },
+  {
+    "id": "iss-general-kanban_77a8784945ca4e36872d567467af2ea9",
+    "title": "Kanban Card with Orphan Parent Ids",
+    "category": "general",
+    "severity": "low",
+    "locations": [
+      "kanban:77a8784945ca4e36872d567467af2ea9"
+    ],
+    "status": "open",
+    "autonomy_level": 1,
+    "evidence": "",
+    "suggested_approach": "Make sure that the Kanban Cards with Orphan Parent Ids arehandled in such a way that Orphan Parents cannot happen whne deleting a Kanban Card, redirecting the Parent Ids of the deleted cards' children to the deleted cards' parent, or ask the user if the children Kanban Cards should be deleted or moved to the parent card.",
+    "decision_ref": null,
+    "repair_ref": null,
+    "created_at": "2026-11-17T11:49:22+00:00",
+    "resolved_at": null,
+    "parent_card_id": "77a8784945ca4e36872d567467af2ea9"
+  },
+  {
+    "id": "iss-general-kanban_5275aa3f18d24b279ef904b6e78c1bdd",
+    "title": "Work button",
+    "category": "general",
+    "severity": "low",
+    "locations": [
+      "kanban:5275aa3f18d24b279ef904b6e78c1bdd"
+    ],
+    "status": "open",
+    "autonomy_level": 1,
+    "evidence": "",
+    "suggested_approach": "We need a Work button to be able to send the Kanban Card to the Agent1 to be executed by Agent1.",
+    "decision_ref": null,
+    "repair_ref": null,
+    "created_at": "2026-11-17T11:49:22+00:00",
+    "resolved_at": null,
+    "parent_card_id": "5275aa3f18d24b279ef904b6e78c1bdd"
+  },
+  {
+    "id": "iss-general-kanban_c70a5f488f364ed5ba8c722f0f113844",
+    "title": "Deleting a Frame",
+    "category": "general",
+    "severity": "low",
+    "locations": [
+      "kanban:c70a5f488f364ed5ba8c722f0f113844"
+    ],
+    "status": "open",
+    "autonomy_level": 1,
+    "evidence": "",
+    "suggested_approach": "If the user deletes a frame. We need a way to make sure the cards on the frame are moved to a default frame, and the default frame is not allowed to be deleted, becaute the cards should be accessible from a Frame.",
+    "decision_ref": null,
+    "repair_ref": null,
+    "created_at": "2026-11-17T11:49:22+00:00",
+    "resolved_at": null,
+    "parent_card_id": "c70a5f488f364ed5ba8c722f0f113844"
+  },
+  {
+    "id": "iss-general-kanban_1128d74b6e714a69a68265f8f0c663da",
+    "title": "Make a clone of Github, Gitserver",
+    "category": "general",
+    "severity": "low",
+    "locations": [
+      "kanban:1128d74b6e714a69a68265f8f0c663da"
+    ],
+    "status": "open",
+    "autonomy_level": 1,
+    "evidence": "",
+    "suggested_approach": "To be able to be on a free platform, we need to have a free alternative to Github. \n\nMake a plan to understand the Github functionality, by using websearch for how to create a Github Clone with yaml-based CI/CD pipeline on a local computer.",
+    "decision_ref": null,
+    "repair_ref": null,
+    "created_at": "2026-11-17T11:49:22+00:00",
+    "resolved_at": null,
+    "parent_card_id": "1128d74b6e714a69a68265f8f0c663da"
+  },
+  {
+    "id": "iss-general-kanban_27f53a871fa04e2fa8611c3e9103d4c1",
+    "title": "Kanban Card properties",
+    "category": "general",
+    "severity": "low",
+    "locations": [
+      "kanban:27f53a871fa04e2fa8611c3e9103d4c1"
+    ],
+    "status": "open",
+    "autonomy_level": 1,
+    "evidence": "",
+    "suggested_approach": "We need a new property for Ready status of the card.\n\n- Not ready\n- Ready\n\nThe user should be able to build the description, and the card should not be considered ready for integration, before this is set to Ready. It should not be possible to set it to Not ready, when the card is integrated. The card should be Read-only when it's set to Ready.",
+    "decision_ref": null,
+    "repair_ref": null,
+    "created_at": "2026-11-17T11:49:22+00:00",
+    "resolved_at": null,
+    "parent_card_id": "27f53a871fa04e2fa8611c3e9103d4c1"
+  },
+  {
+    "id": "iss-general-kanban_74c4a7208d6b4b4cba6bb7d489812c59",
+    "title": "Remove the cut-off when showing the descriptions in the Cards in Tree View.",
+    "category": "general",
+    "severity": "low",
+    "locations": [
+      "kanban:74c4a7208d6b4b4cba6bb7d489812c59"
+    ],
+    "status": "open",
+    "autonomy_level": 1,
+    "evidence": "",
+    "suggested_approach": "Remove the cut-off when showing the descriptions in the Cards in Tree View.",
+    "decision_ref": null,
+    "repair_ref": null,
+    "created_at": "2026-11-17T11:49:22+00:00",
+    "resolved_at": null,
+    "parent_card_id": "74c4a7208d6b4b4cba6bb7d489812c59"
+  },
+  {
+    "id": "iss-general-kanban_0c58c433dbaf4250b59d23af2fe570a7",
+    "title": "Setting the Frame column of the Kanban Card, during Agent1 work",
+    "category": "general",
+    "severity": "low",
+    "locations": [
+      "kanban:0c58c433dbaf4250b59d23af2fe570a7"
+    ],
+    "status": "open",
+    "autonomy_level": 1,
+    "evidence": "",
+    "suggested_approach": "When the Agent1 is working on a card, it should report where in the Status and Frame processing the card should be, setting the Frame column of the Kanban Card.\n\nWe have a kind of double registration on these two fields.",
+    "decision_ref": null,
+    "repair_ref": null,
+    "created_at": "2026-11-17T11:49:22+00:00",
+    "resolved_at": null,
+    "parent_card_id": "0c58c433dbaf4250b59d23af2fe570a7"
+  },
+  {
+    "id": "iss-general-kanban_670dfe8d8d1a40b988e60bf5c3e548f8",
+    "title": "Decision on starting a listener",
+    "category": "general",
+    "severity": "low",
+    "locations": [
+      "kanban:670dfe8d8d1a40b988e60bf5c3e548f8"
+    ],
+    "status": "open",
+    "autonomy_level": 1,
+    "evidence": "",
+    "suggested_approach": "[intent 35]\n    proof: started: 2026-11-13 00:52:04.796808\n    intent: to execute/verify timeout=15\n      why: to execute/verify timeout=15 — because the last step showed: started: 2026-11-13 00:52:04.796808\nrun executing OUTSIDE the sandbox (AGENT_RUN_SANDBOX=dev): cd C:\\Dev\\Kanban && start /b python -m src.agent1.app > data\\agent1-app.log 2>&1 & echo started\n\n\nWhen I came back to the computer, the computer stood still for 8 hours, because the Agent1 LLM decided to start a listener WITHOUT a timeout for the Kanban app. \n\nWe need this decision in the system prompt.",
+    "decision_ref": null,
+    "repair_ref": null,
+    "created_at": "2026-11-17T11:49:22+00:00",
+    "resolved_at": null,
+    "parent_card_id": "670dfe8d8d1a40b988e60bf5c3e548f8"
+  },
+  {
+    "id": "iss-general-kanban_879f7d80ab634a2d9214c85efd807820",
+    "title": "AGENT_RUN_SANDBOX=strict",
+    "category": "general",
+    "severity": "low",
+    "locations": [
+      "kanban:879f7d80ab634a2d9214c85efd807820"
+    ],
+    "status": "open",
+    "autonomy_level": 1,
+    "evidence": "",
+    "suggested_approach": "When running in strict mode, there's a need to be able to set the workspace clearly. So work can be done in other workspaces than the Agent1.\n\nThe LLM should be instructed to ask the user, to allow changes to the workspace, for the current session.",
+    "decision_ref": null,
+    "repair_ref": null,
+    "created_at": "2026-11-17T11:49:22+00:00",
+    "resolved_at": null,
+    "parent_card_id": "879f7d80ab634a2d9214c85efd807820"
+  },
+  {
+    "id": "iss-general-kanban_d7e09002e0324473a7e5e95a09299ed6",
+    "title": "When showing [intent X]: Intent text should be using the small model (used by Jev) to summarize the run command intent.",
+    "category": "general",
+    "severity": "low",
+    "locations": [
+      "kanban:d7e09002e0324473a7e5e95a09299ed6"
+    ],
+    "status": "open",
+    "autonomy_level": 1,
+    "evidence": "[intent 36] to execute/verify timeout=300\nrun executing OUTSIDE the sandbox (AGENT_RUN_SANDBOX=dev): cd /d C:\\Dev\\Kanban && python -m pytest tests/test_kanban_sync.py -q 2>&1 | findstr /n \".\"\n  [intent 37] to execute/verify (command)\nrun executing OUTSIDE the sandbox (AGENT_RUN_SANDBOX=dev): cd /d C:\\Dev\\Kanban && python -m ruff check tests/test_kanban_sync.py --statistics 2>&1 | findstr /n \".\"\n  [intent 38] to execute/verify (command)\nrun executing OUTSIDE the sandbox (AGENT_RUN_SANDBOX=dev): cd /d C:\\Dev\\Kanban && python -m ruff check tests/test_kanban_sync.py --statistics\n  [intent 39] to execute/verify (command)\nrun executing OUTSIDE the sandbox (AGENT_RUN_SANDBOX=dev): cd /d C:\\Dev\\Kanban && python -m ruff check tests/test_kanban_sync.py",
+    "suggested_approach": "This can be much cleaner in AGENT_DISPLAY_MODE=clean\n\nIntent is not accurate. It's much too generic. Make a better effort to explain the intent, using a NPU model to summarize the run command content.",
+    "decision_ref": null,
+    "repair_ref": null,
+    "created_at": "2026-11-17T11:49:22+00:00",
+    "resolved_at": null,
+    "parent_card_id": "d7e09002e0324473a7e5e95a09299ed6"
   }
 ]

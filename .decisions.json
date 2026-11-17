@@ -3934,5 +3934,99 @@
     "status": "active",
     "category": "autonomous",
     "source": "agent"
+  },
+  {
+    "id": "179",
+    "date": "2026-11-17T11:57:44+00:00",
+    "title": "Change tests/test_kg_seed.py",
+    "context": "============================= test session starts ============================= platform win32 -- Python 3.12.10, pytest-9.0.3, pluggy-1.6.0 -- C:\\Program Files\\Python312\\python.exe cachedir: .pytest_",
+    "decision": "tests modified tests/test_kg_seed.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "tests/test_kg_seed.py"
+    ],
+    "tags": [
+      "autonomous",
+      "tests"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "180",
+    "date": "2026-11-17T12:18:43+00:00",
+    "title": "Change agent_core/injection.py",
+    "context": "Written C:\\Dev\\Agent1\\agent_core\\injection.py (7404 bytes) [verify] py_compile ✓ [verify] ruff style 2 (advisory - do not edit again just for formatting): injection.py:121: E501 Line too long (89 > 88",
+    "decision": "write modified agent_core/injection.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [],
+    "tags": [
+      "autonomous",
+      "write"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "181",
+    "date": "2026-11-17T12:26:26+00:00",
+    "title": "Delete 64:",
+    "context": "deleted 64: def __init__( 79: def push(self, message: str) -> bool: 96: def drain(self) -> List[str]: 104: def pending(self) -> int: 108: def clear(self) -> None:",
+    "decision": "run removed 64: without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [],
+    "tags": [
+      "autonomous",
+      "run"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "182",
+    "date": "2026-11-17T12:29:55+00:00",
+    "title": "Change scripts/seed_kg.py",
+    "context": "Edited C:\\Dev\\Agent1\\scripts\\seed_kg.py [verify] py_compile ✓ [verify] ruff ✓",
+    "decision": "edit modified scripts/seed_kg.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "scripts/seed_kg.py"
+    ],
+    "tags": [
+      "autonomous",
+      "edit"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "183",
+    "date": "2026-11-17T12:37:00+00:00",
+    "title": "Change ``Agent.run_interactive``,",
+    "context": "diff --git a/tests/test_kg_seed.py b/tests/test_kg_seed.py index 4ebcaad..3ad795e 100644 --- a/tests/test_kg_seed.py +++ b/tests/test_kg_seed.py @@ -7,9 +7,12 @@ agent_memory.json is never touched.",
+    "decision": "git modified ``Agent.run_interactive``, without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [],
+    "tags": [
+      "autonomous",
+      "git"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
   }
 ]
