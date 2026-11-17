@@ -3606,9 +3606,7 @@
     "context": "Written C:\\Dev\\Agent1\\scripts\\test_work_button.py (978 bytes) [verify] py_compile ✓ [verify] ruff ✗ 4: test_work_button.py:11: W293 [*] Blank line contains whitespace; test_work_button.py:14: W293 [*]",
     "decision": "write modified scripts/test_work_button.py without that path being named in the request.",
     "rationale": "Chosen during execution to advance the task.",
-    "affected_files": [
-      "scripts/test_work_button.py"
-    ],
+    "affected_files": [],
     "tags": [
       "autonomous",
       "write"
@@ -3690,6 +3688,246 @@
     "tags": [
       "autonomous",
       "write"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "167",
+    "date": "2026-11-17T08:49:35+00:00",
+    "title": "Change agent_core/memory/types.py",
+    "context": "Edited C:/Dev/Agent1/agent_core/memory/types.py [verify] py_compile ✓ [verify] ruff ✓",
+    "decision": "edit modified agent_core/memory/types.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "agent_core/memory/types.py"
+    ],
+    "tags": [
+      "autonomous",
+      "edit"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "168",
+    "date": "2026-11-17T08:50:35+00:00",
+    "title": "Change agent_core/memory/scoring.py",
+    "context": "Written C:/Dev/Agent1/agent_core/memory/scoring.py (10552 bytes) [verify] py_compile ✓ [verify] ruff ✓",
+    "decision": "write modified agent_core/memory/scoring.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "agent_core/memory/scoring.py"
+    ],
+    "tags": [
+      "autonomous",
+      "write"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "169",
+    "date": "2026-11-17T08:51:34+00:00",
+    "title": "Change agent_core/memory/distill.py",
+    "context": "Written C:/Dev/Agent1/agent_core/memory/distill.py (14275 bytes) [verify] py_compile ✓ [verify] ruff ✓",
+    "decision": "write modified agent_core/memory/distill.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "agent_core/memory/distill.py"
+    ],
+    "tags": [
+      "autonomous",
+      "write"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "170",
+    "date": "2026-11-17T08:51:43+00:00",
+    "title": "Change agent_core/memory/__init__.py",
+    "context": "Edited C:/Dev/Agent1/agent_core/memory/__init__.py [verify] py_compile ✓ [verify] ruff ✓",
+    "decision": "edit modified agent_core/memory/__init__.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "agent_core/memory/__init__.py"
+    ],
+    "tags": [
+      "autonomous",
+      "edit"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "171",
+    "date": "2026-11-17T08:51:52+00:00",
+    "title": "Change conftest.py",
+    "context": "Edited C:/Dev/Agent1/conftest.py [verify] py_compile ✓ [verify] ruff ✗ 1 blocking: conftest.py:247: F821 Undefined name `REPO_ROOT`",
+    "decision": "edit modified conftest.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "conftest.py"
+    ],
+    "tags": [
+      "autonomous",
+      "edit"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "172",
+    "date": "2026-11-17T08:52:03+00:00",
+    "title": "Change agent_core/turn_loop.py",
+    "context": "Edited C:/Dev/Agent1/agent_core/turn_loop.py [verify] py_compile ✓ [verify] ruff ✓",
+    "decision": "edit modified agent_core/turn_loop.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "agent_core/turn_loop.py"
+    ],
+    "tags": [
+      "autonomous",
+      "edit"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "173",
+    "date": "2026-11-17T08:52:18+00:00",
+    "title": "Change agent_core/prompts/context_blocks.py",
+    "context": "Edited C:/Dev/Agent1/agent_core/prompts/context_blocks.py [verify] py_compile ✓ [verify] ruff ✗ 2 blocking: context_blocks.py:268: F821 Undefined name `rank_memories`; context_blocks.py:280: F821 Unde",
+    "decision": "edit modified agent_core/prompts/context_blocks.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "agent_core/prompts/context_blocks.py"
+    ],
+    "tags": [
+      "autonomous",
+      "edit"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "174",
+    "date": "2026-11-17T08:53:02+00:00",
+    "title": "Change agent_core/memory/memory_store.py",
+    "context": "Edited C:/Dev/Agent1/agent_core/memory/memory_store.py [verify] py_compile ✓ [verify] ruff ✗ 9 blocking: memory_store.py:129: F821 Undefined name `_SEMANTIC_VECTOR_CACHE_LOCK`; memory_store.py:130: F8",
+    "decision": "edit modified agent_core/memory/memory_store.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "agent_core/memory/memory_store.py"
+    ],
+    "tags": [
+      "autonomous",
+      "edit"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "175",
+    "date": "2026-11-17T08:57:07+00:00",
+    "title": "Change tests/test_semantic_search_wiring.py",
+    "context": "Edited C:/Dev/Agent1/tests/test_semantic_search_wiring.py [verify] py_compile ✓ [verify] ruff ✓",
+    "decision": "edit modified tests/test_semantic_search_wiring.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "tests/test_semantic_search_wiring.py"
+    ],
+    "tags": [
+      "autonomous",
+      "edit"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "176",
+    "date": "2026-11-17T09:03:10+00:00",
+    "title": "Change tests/test_semantic_memory_ledger_writer.py",
+    "context": "Written C:/Dev/Agent1/tests/test_semantic_memory_ledger_writer.py (12302 bytes) [verify] py_compile ✓ [verify] ruff ✓",
+    "decision": "write modified tests/test_semantic_memory_ledger_writer.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "tests/test_semantic_memory_ledger_writer.py"
+    ],
+    "tags": [
+      "autonomous",
+      "write"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "177",
+    "date": "2026-11-17T09:08:15+00:00",
+    "title": "Change docs/AGENT_ARCHITECTURE.md",
+    "context": "Edited C:/Dev/Agent1/docs/AGENT_ARCHITECTURE.md",
+    "decision": "edit modified docs/AGENT_ARCHITECTURE.md without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "docs/AGENT_ARCHITECTURE.md"
+    ],
+    "tags": [
+      "autonomous",
+      "edit"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "178",
+    "date": "2026-11-17T10:02:31+00:00",
+    "title": "Change .gitignore",
+    "context": "Edited C:\\Dev\\Agent1\\.gitignore",
+    "decision": "edit modified .gitignore without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      ".gitignore"
+    ],
+    "tags": [
+      "autonomous",
+      "edit"
     ],
     "contradictions": [],
     "resolved_by": null,

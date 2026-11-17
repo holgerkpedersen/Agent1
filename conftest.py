@@ -14,6 +14,9 @@ from pathlib import Path
 import pytest
 
 os.environ.setdefault("AGENT_NO_TRACE", "1")
+#: Repository root — the LIVE workspace whose runtime-state files the fixtures
+#: below redirect into ``tmp_path``.  Resolved once, from this file's location.
+REPO_ROOT = Path(__file__).resolve().parent
 # The Jev delivery-check runs a real small-model decision at end-of-turn; in
 # tests it would make "answer after tool work" non-deterministic and slow (or
 # hit LM Studio).  Tests that exercise it monkeypatch _jev_answer_delivered /
@@ -232,6 +235,19 @@ def _isolate_from_real_tree_and_beacons(
         perf_cmd_module,
         "PERF_HISTORY_JSON_PATH",
         str(runtime_dir / "perf_history.json"),
+    )
+    # The semantic-memory ledger (``.semantic_memory.json``) had the same leak
+    # class once ``distill.record_turn`` started writing it from a real
+    # ``_finish_turn``: the path resolves from the LIVE workspace at call time,
+    # so every test that drives a turn would have appended its fixture files
+    # and errors to the developer's real ledger.  Redirect the live root only —
+    # a test that hand-builds a ledger under ``tmp_path`` keeps reading its own.
+    import agent_core.memory.types as memory_types
+
+    monkeypatch.setattr(
+        memory_types,
+        "_LEDGER_OVERRIDE",
+        (os.path.abspath(str(REPO_ROOT)), runtime_dir / "semantic_memory"),
     )
     # Wiki I/O is the same class of leak but git-INVISIBLE: the wiki is
     # gitignored, and retrieval itself persists ``hit_count`` — so a test that

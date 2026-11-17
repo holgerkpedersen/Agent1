@@ -136,6 +136,12 @@ Desktop.ini
 .implement_cache.json
 .generated_manifest.json
 .project_memory.json
+
+# Semantic-memory ledger written by agent_core.memory.distill (runtime state:
+# one distilled line per turn, plus per-entry embeddings).  It is per-workspace
+# session debris, not source — a fresh clone rebuilds it as it works.
+.semantic_memory.json
+
 chat_history.json
 chat_history_prior.json
 .metrics_events.jsonl

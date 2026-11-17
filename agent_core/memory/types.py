@@ -178,6 +178,20 @@ SEMANTIC_MEMORY_FILENAME = ".semantic_memory.json"
 #: Hard cap on rendered lines so the block cannot bloat the system prompt.
 MAX_BLOCK_LINES = 8
 
+#: Hard cap on stored ledger entries.  Past this the ledger is pruned to its
+#: lowest-scoring entries (:func:`agent_core.memory.distill.record_turn`), so
+#: the file — and the per-turn embedding pass over it — stays bounded.
+MAX_ENTRIES = 500
+
+#: Hard cap on one stored entry's text.  An entry is a *distilled* line, not a
+#: transcript excerpt: 300 chars is roughly 75 tokens, and the rendered block
+#: shows at most ``MAX_BLOCK_LINES`` of them (~240 tokens in total).
+MAX_ENTRY_CHARS = 300
+
+#: Schema version stamped into each entry's ``metadata`` so a future reader can
+#: migrate instead of guessing what a field means.
+MEMORY_SCHEMA_VERSION = 1
+
 #: Marker prefixing the pinned "original task" block.  ``agent.py`` strips
 #: everything from this marker onward before re-injecting a fresh block, so a
 #: long-lived session never accumulates stale copies (same contract as
@@ -319,9 +333,28 @@ def original_goal_from_block(
 # ---------------------------------------------------------------------------
 
 
+#: ``(live_root, redirect_dir)`` — when set, a ledger path derived from
+#: *live_root* resolves into *redirect_dir* instead.  Tests install this so a
+#: real chat turn cannot write the developer's workspace ledger (same class of
+#: leak as the ``AGENT_MEMORY_JSON_PATH`` redirect in ``conftest.py``).  A
+#: ledger path derived from any OTHER workspace is untouched, so tests that
+#: hand-build a ledger under ``tmp_path`` keep reading exactly what they wrote.
+_LEDGER_OVERRIDE: tuple[str, Path] | None = None
+
+
 def _semantic_memory_path(workspace: str | Path) -> Path:
     """The workspace's ``.semantic_memory.json`` ledger path."""
-    return Path(workspace) / SEMANTIC_MEMORY_FILENAME
+    root = Path(workspace)
+    override = _LEDGER_OVERRIDE
+    if override is not None:
+        live_root, redirect = override
+        try:
+            is_live = os.path.abspath(root) == live_root
+        except (OSError, ValueError):  # pragma: no cover - defensive
+            is_live = False
+        if is_live:
+            return Path(redirect) / SEMANTIC_MEMORY_FILENAME
+    return root / SEMANTIC_MEMORY_FILENAME
 
 
 def load_semantic_memory(workspace: str | Path) -> list[dict[str, Any]]:
@@ -378,6 +411,89 @@ def load_semantic_memory(workspace: str | Path) -> list[dict[str, Any]]:
     return memories
 
 
+def set_ledger_override(
+    live_root: str | Path | None, redirect: str | Path | None
+) -> None:
+    """Redirect ledger writes for *live_root* into *redirect* (``None`` clears).
+
+    Test-only seam: ``conftest.py`` points it at ``tmp_path`` so a real chat
+    turn never touches the developer's ``.semantic_memory.json``.  Passing
+    ``None`` for either argument restores the default path.
+    """
+    global _LEDGER_OVERRIDE
+    if live_root is None or redirect is None:
+        _LEDGER_OVERRIDE = None
+        return
+    _LEDGER_OVERRIDE = (os.path.abspath(str(live_root)), Path(redirect))
+
+
+def save_semantic_memory(
+    workspace: str | Path, memories: Sequence[Any], *, max_entries: int = MAX_ENTRIES
+) -> Path | None:
+    """Persist *memories* to the workspace ledger atomically.
+
+    Accepts the same entry shapes as :func:`semantic_memory_block`
+    (``{"metadata": {...}}`` dicts or plain strings) and writes
+    ``[{"metadata": {...}, "similarity_score": float}, ...]`` — the shape
+    :func:`load_semantic_memory` reads back.
+
+    ``metadata.text`` is the ONLY text carrier: the loader rebuilds every
+    entry from it, so any other field would be dropped on the next load.  All
+    ranking bookkeeping (``id``, ``kind``, ``importance``, ``created_at``,
+    ``last_used_at``, ``use_count``, ``supersedes``) therefore lives inside
+    ``metadata`` as well.
+
+    Written via a temp file + :func:`os.replace`, so a crash mid-write leaves
+    the previous ledger intact rather than a truncated one.  Returns the path
+    written, or ``None`` when nothing could be written (never raises — a
+    failed ledger write must not fail a chat turn).
+    """
+    entries: list[dict[str, Any]] = []
+    for mem in memories or []:
+        if isinstance(mem, Mapping):
+            metadata = dict(mem.get("metadata") or {})
+            text = str(metadata.get("text") or "").strip()
+            if not text:
+                continue
+            metadata["text"] = text[:MAX_ENTRY_CHARS]
+            metadata.setdefault("schema", MEMORY_SCHEMA_VERSION)
+            entry: dict[str, Any] = {"metadata": metadata}
+            score = mem.get("similarity_score")
+            if score is not None:
+                try:
+                    entry["similarity_score"] = float(score)
+                except (TypeError, ValueError):
+                    pass
+            entries.append(entry)
+        elif isinstance(mem, str) and mem.strip():
+            entries.append(
+                {
+                    "metadata": {
+                        "text": mem.strip()[:MAX_ENTRY_CHARS],
+                        "schema": MEMORY_SCHEMA_VERSION,
+                    }
+                }
+            )
+    if max_entries > 0:
+        entries = entries[:max_entries]
+    path = _semantic_memory_path(workspace)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tmp_path.open("w", encoding="utf-8") as handle:
+            json.dump(entries, handle, indent=2, sort_keys=True, default=str)
+        os.replace(tmp_path, path)
+        return path
+    except Exception:  # noqa: BLE001 - contract: never raise
+        logger.exception("Semantic memory save unavailable:\n")
+        try:
+            if tmp_path.exists():
+                tmp_path.unlink()
+        except OSError:  # pragma: no cover - best effort cleanup
+            pass
+        return None
+
+
 __all__ = [
     "StorageBackend",
     "SQLiteStorage",
@@ -387,6 +503,9 @@ __all__ = [
     "SEMANTIC_MEMORY_MARKER",
     "SEMANTIC_MEMORY_FILENAME",
     "MAX_BLOCK_LINES",
+    "MAX_ENTRIES",
+    "MAX_ENTRY_CHARS",
+    "MEMORY_SCHEMA_VERSION",
     "ORIGINAL_GOAL_MARKER",
     "ORIGINAL_GOAL_SUFFIX",
     "MAX_GOAL_CHARS",
@@ -395,4 +514,6 @@ __all__ = [
     "_semantic_memory_block",
     "semantic_memory_block",
     "load_semantic_memory",
+    "save_semantic_memory",
+    "set_ledger_override",
 ]

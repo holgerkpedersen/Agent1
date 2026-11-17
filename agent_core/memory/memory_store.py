@@ -1,7 +1,8 @@
 from typing import Dict, Any, Mapping, Optional, List, Sequence
-import json
 import logging
 import threading
+
+import numpy as np
 
 from .types import (
     StorageBackend,
@@ -12,14 +13,14 @@ from .types import (
 
 logger = logging.getLogger(__name__)
 
-# Cache of embedded ledger indexes, keyed by (embedding-service id, vector-db
-# id, ledger fingerprint).  ``semantic_search_memories`` runs on EVERY chat
-# turn, so re-embedding an unchanged ledger each turn would add needless LM
-# Studio round-trips; the fingerprint entry ensures a ledger changed
-# mid-session IS re-embedded on the next turn.
-_SEMANTIC_INDEX_CACHE: Dict[tuple, "MemoryStore"] = {}
-_SEMANTIC_CACHE_LOCK = threading.Lock()
-_SEMANTIC_CACHE_MAX = 8
+#: Per-entry embedding cache.  Keyed by ``(id(service), text)``: an unchanged
+#: ledger entry is embedded ONCE per process, so a turn that appends one line
+#: costs one embedding instead of a full re-embed.  The previous whole-ledger
+#: cache was keyed by a fingerprint of ALL entries, so one appended line
+#: invalidated it and re-embedded the entire ledger through LM Studio.
+_SEMANTIC_VECTOR_CACHE: Dict[tuple, Any] = {}
+_SEMANTIC_VECTOR_CACHE_LOCK = threading.Lock()
+_SEMANTIC_VECTOR_CACHE_MAX = 2048
 
 # Stable default embedding service: the cache key contains ``id(service)``, so
 # the default must be a singleton — a fresh instance per call would never hit
@@ -87,6 +88,21 @@ class MemoryStore:
         if self._embedding_service is None or self._vector_db is None:
             raise RuntimeError("Semantic search components not configured")
         embeddings = self._embedding_service.embed_text(texts)
+        return self.index_vectors(embeddings, metadata_list)
+
+    def index_vectors(
+        self, embeddings: Any, metadata_list: List[Dict[str, Any]]
+    ) -> List[int]:
+        """Store already-computed *embeddings* for later semantic retrieval.
+
+        The counterpart of :meth:`index_texts` for a caller that caches
+        per-entry vectors: it re-uses each stored vector instead of paying for
+        the embedding again.
+        """
+        if len(embeddings) != len(metadata_list):
+            raise ValueError("embeddings and metadata_list must have equal length")
+        if self._vector_db is None:
+            raise RuntimeError("Semantic search components not configured")
         vector_ids: List[int] = []
         for i in range(len(embeddings)):
             vid = self._vector_db.add_vector(embeddings[i], metadata_list[i])
@@ -107,9 +123,45 @@ class MemoryStore:
 
 
 def clear_semantic_index_cache() -> None:
-    """Drop all cached embedding indexes (tests / memory hygiene)."""
-    with _SEMANTIC_CACHE_LOCK:
-        _SEMANTIC_INDEX_CACHE.clear()
+    """Drop all cached embedding vectors (tests / memory hygiene).
+
+    Kept under its original name so existing callers and tests keep working;
+    the cache it clears is now per-entry rather than per-ledger.
+    """
+    with _SEMANTIC_VECTOR_CACHE_LOCK:
+        _SEMANTIC_VECTOR_CACHE.clear()
+
+
+def _vector_for(service: Any, text: str) -> Any:
+    """The embedding vector for *text*, memoised per ``(service, text)``.
+
+    ``semantic_search_memories`` runs on EVERY chat turn, and
+    :func:`agent_core.memory.distill.record_turn` now writes the ledger every
+    turn — so a whole-ledger cache keyed by a fingerprint of all entries was
+    invalidated by a single appended line and re-embedded the entire ledger
+    through LM Studio.  Keying the cache by entry TEXT means an unchanged
+    entry is embedded once for the life of the process and a write costs
+    exactly one new embedding.
+    """
+    key = (id(service), text)
+    with _SEMANTIC_VECTOR_CACHE_LOCK:
+        cached = _SEMANTIC_VECTOR_CACHE.get(key)
+    if cached is not None:
+        return cached
+    vector = service.embed_text([text])[0]
+    with _SEMANTIC_VECTOR_CACHE_LOCK:
+        if len(_SEMANTIC_VECTOR_CACHE) >= _SEMANTIC_VECTOR_CACHE_MAX:
+            _SEMANTIC_VECTOR_CACHE.pop(next(iter(_SEMANTIC_VECTOR_CACHE)))
+        _SEMANTIC_VECTOR_CACHE[key] = vector
+    return vector
+
+
+def _is_zero_vector(vector: Any) -> bool:
+    """True when *vector* is all zeros (the embedder's fail-open stub)."""
+    try:
+        return not bool(np.any(vector))
+    except Exception:  # noqa: BLE001 - unknown shape counts as unusable
+        return True
 
 
 def semantic_search_memories(
@@ -124,10 +176,14 @@ def semantic_search_memories(
 
     Production wrapper around :meth:`MemoryStore.semantic_search`: normalises
     ledger entries (``{"metadata": {...}}`` dicts or plain strings, as accepted
-    by :func:`agent_core.memory.types.semantic_memory_block`), embeds them via
-    ``index_texts`` and retrieves the top-*k* with the query embedding.  The
-    result shape is ``{"metadata": {...}, "similarity_score": float, ...}`` —
-    ready for the SEMANTIC MEMORY prompt block.
+    by :func:`agent_core.memory.types.semantic_memory_block`), embeds them and
+    retrieves the top-*k* with the query embedding.  The result shape is
+    ``{"metadata": {...}, "similarity_score": float, ...}`` — ready for the
+    SEMANTIC MEMORY prompt block.
+
+    Embeddings are memoised per entry TEXT (:func:`_vector_for`), so a ledger
+    that grows by one entry per turn costs one new embedding, not a full
+    re-embed.
 
     Fail-open: returns ``[]`` whenever no meaningful ranking is available
     (embeddings backend down — every cosine score would be exactly ``0.0`` on
@@ -136,9 +192,7 @@ def semantic_search_memories(
 
     ``embedding_service`` / ``vector_db`` default to the real
     :class:`EmbeddingService` (LM Studio) and an in-memory
-    :class:`VectorDatabase`; tests inject a deterministic embedder.  The
-    resulting index is cached per ledger fingerprint (see
-    :func:`clear_semantic_index_cache`).
+    :class:`VectorDatabase`; tests inject a deterministic embedder.
     """
     try:
         if isinstance(memories, str):
@@ -169,40 +223,23 @@ def semantic_search_memories(
             if _DEFAULT_EMBEDDING_SERVICE is None:
                 _DEFAULT_EMBEDDING_SERVICE = EmbeddingService()
             service = _DEFAULT_EMBEDDING_SERVICE
-        fingerprint = tuple(
-            (text, json.dumps(md, sort_keys=True, default=str))
-            for text, md in zip(texts, metadata_list)
+        store = MemoryStore(SQLiteStorage(":memory:"))
+        store.configure_semantic_search(
+            service, vector_db if vector_db is not None else VectorDatabase()
         )
-        # ``None`` marks the default case: each cache entry then owns a FRESH
-        # VectorDatabase (a shared one would leak vectors across ledgers).
-        key = (
-            id(service),
-            id(vector_db) if vector_db is not None else None,
-            fingerprint,
-        )
-        with _SEMANTIC_CACHE_LOCK:
-            store = _SEMANTIC_INDEX_CACHE.get(key)
-        if store is None:
-            store = MemoryStore(SQLiteStorage(":memory:"))
-            store.configure_semantic_search(
-                service,
-                vector_db if vector_db is not None else VectorDatabase(),
-            )
-            store.index_texts(texts, metadata_list)
+        vectors = [_vector_for(service, text) for text in texts]
+        if all(_is_zero_vector(vector) for vector in vectors):
+            # Zero vectors (embeddings unavailable) score exactly 0.0 for every
+            # entry — no meaningful ranking, so report "none" and let the
+            # caller fall back to its lexical order.  Nothing is cached either:
+            # the backend may come back and must be retried.
+            return []
+        store.index_vectors(vectors, metadata_list)
         results = store.semantic_search(query_text, k)
         if not results or all(
             float(item.get("similarity_score") or 0.0) == 0.0 for item in results
         ):
-            # Zero vectors (embeddings unavailable) score exactly 0.0 for every
-            # entry — no meaningful ranking, so report "none" and let the
-            # caller fall back to unranked ledger order.  Do NOT cache such an
-            # index either: the backend may come back and must be retried.
             return []
-        with _SEMANTIC_CACHE_LOCK:
-            if key not in _SEMANTIC_INDEX_CACHE:
-                if len(_SEMANTIC_INDEX_CACHE) >= _SEMANTIC_CACHE_MAX:
-                    _SEMANTIC_INDEX_CACHE.pop(next(iter(_SEMANTIC_INDEX_CACHE)))
-                _SEMANTIC_INDEX_CACHE[key] = store
         return results
     except Exception:  # noqa: BLE001 - fail-open contract: never raise
         logger.debug("semantic_search_memories unavailable", exc_info=True)

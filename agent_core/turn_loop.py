@@ -701,6 +701,25 @@ def _finish_turn(
             _collect(_turn_messages)
     except Exception:
         logger.debug("turn decision collection failed (no-op)", exc_info=True)
+    # Distil this turn into the workspace's semantic-memory ledger: the
+    # ``SEMANTIC MEMORY`` prompt block had a reader, a ranker and a renderer
+    # but no writer, so it was permanently empty.  ``_turn_messages`` are read
+    # here on purpose — ``_trim_chat_history`` above dropped the oldest ones
+    # from history, and ``mutated_files`` is what makes a turn worth
+    # remembering.  Heuristic only (no LLM, no VRAM) and its own guard:
+    # remembering must never fail a finished turn.
+    try:
+        if _turn_messages or mutated_files:
+            from agent_core.memory.distill import record_turn
+
+            record_turn(
+                agent._effective_ws_dir(),
+                _turn_messages,
+                mutated_files,
+                goal=getattr(agent, "_original_goal", None) or None,
+            )
+    except Exception:
+        logger.debug("semantic memory distillation failed (no-op)", exc_info=True)
     getattr(agent, "_snapshot_session_meta", lambda **_: None)(turn=True)
     getattr(agent, "_save_chat_history")()
     getattr(agent, "_save_memory")()

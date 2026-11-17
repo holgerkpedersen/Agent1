@@ -27,6 +27,7 @@ from agent_core.history_compaction import (
 from agent_core.language import language_block
 from agent_core.memory import (
     load_semantic_memory,
+    rank_memories,
     semantic_memory_block,
     semantic_search_memories,
 )
@@ -237,21 +238,48 @@ def _semantic_memory_block(agent: "Agent", query: str | None = None) -> str:
     """
     try:
         indexed_memories = load_semantic_memory(getattr(agent, "_effective_ws_dir")())
-        if query and indexed_memories:
+        if not indexed_memories:
+            return ""
+        goal = getattr(agent, "_original_goal", None) or None
+        if query:
+            # Semantic score per entry text, then a WEIGHTED ranking over it:
+            # relevance alone ignores what the session was asked to do and how
+            # important the line is.  ``rank_memories`` also falls back to
+            # lexical overlap per entry, so the block keeps a sensible order
+            # when embeddings are down (a raw cosine list would collapse to
+            # ledger order — the pre-ranking behaviour).
+            semantic_scores: dict[str, float] = {}
             try:
                 ranked = semantic_search_memories(
                     indexed_memories,
                     query,
-                    k=5,
+                    k=len(indexed_memories),
                     embedding_service=getattr(
                         agent, "_semantic_embedding_service", None
                     ),
                 )
             except Exception:
                 ranked = []
-            if ranked:
-                return semantic_memory_block(ranked, query=query, k=5)
-        return semantic_memory_block(indexed_memories, k=5)
+            for item in ranked or []:
+                metadata = item.get("metadata") or {}
+                text = str(metadata.get("text") or "").strip()
+                score = item.get("similarity_score")
+                if text and score is not None:
+                    semantic_scores[text] = float(score)
+            fused = rank_memories(
+                indexed_memories,
+                query,
+                goal,
+                semantic_scores=semantic_scores,
+                k=5,
+            )
+            if fused:
+                return semantic_memory_block(fused, query=query, k=5)
+        # No query (or nothing ranked): still order by importance/recency so
+        # the capped block shows the entries that matter, not the oldest five.
+        return semantic_memory_block(
+            rank_memories(indexed_memories, None, goal, k=5), k=5
+        )
     except Exception:
         logger.exception("Semantic memory block unavailable:\n")
         return ""

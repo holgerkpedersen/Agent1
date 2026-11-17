@@ -217,20 +217,35 @@ def test_agent_block_query_ranks_and_prefixes_query(tmp_path) -> None:
 
 
 def test_agent_block_query_falls_back_when_embeddings_down(tmp_path) -> None:
-    """Embeddings unavailable => old unranked block, no QUERY line."""
+    """Embeddings unavailable => still query-aware, via lexical overlap.
+
+    Deliberately CHANGED with the weighted ranking
+    (``agent_core.memory.scoring.rank_memories``): this test used to require
+    "no QUERY line and unranked ledger order" when the embedder was down.  The
+    block is now ordered by lexical overlap with the query in that case, so the
+    QUERY line is no longer a claim about a ranking that did not happen — it is
+    an accurate statement of how the lines were chosen, and a session with
+    LM Studio down still surfaces the entry about pytest instead of the first
+    five ledger lines.  The "must not crash / must not hide entries" part of
+    the original assertion is kept.
+    """
     _write_ledger(tmp_path, _memories())
     agent = _bare_agent(tmp_path, ZeroEmbedder())
 
     block = agent._semantic_memory_block("pytest failures in the suite")
 
     assert block.startswith(SEMANTIC_MEMORY_MARKER)
-    assert "QUERY:" not in block
+    assert "QUERY: pytest failures in the suite" in block
     assert "user prefers pytest" in block
     assert "deploy uses blue-green" in block
+    body = block.split("QUERY:", 1)[1]
+    # Lexical relevance (4 content words of the query matched) outranks the
+    # two entries that share no content word with it.
+    assert body.index("user prefers pytest") < body.index("deploy uses blue-green")
 
 
-def test_agent_block_without_query_is_unchanged(tmp_path) -> None:
-    """No query => legacy unranked block even with embeddings available."""
+def test_agent_block_without_query_orders_by_importance_and_recency(tmp_path) -> None:
+    """No query => no QUERY line; entries ordered by importance/recency."""
     _write_ledger(tmp_path, _memories())
     agent = _bare_agent(tmp_path, FakeEmbedder())
 

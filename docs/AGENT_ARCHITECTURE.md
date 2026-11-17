@@ -258,6 +258,89 @@ Named-session layer coverage is unchanged by this plan (store/lock/cli/context a
 
 ---
 
+## Memory Layer: `agent_core/memory/` — the `SEMANTIC MEMORY` block
+
+Keeps what the session has learned **out of the context window and out of
+VRAM**. Nothing is held in the prompt except a small ranked excerpt; the facts
+themselves live in a workspace file that is read, scored and re-written on
+every turn.
+
+```
+turn ends
+  └─ _finish_turn()            agent_core/turn_loop.py
+       └─ distill.record_turn()        extract facts, dedupe, prune, save
+            └─ .semantic_memory.json   (workspace ledger, atomic write)
+
+next turn builds its prompt
+  └─ _semantic_memory_block()  agent_core/prompts/context_blocks.py
+       ├─ types.load_semantic_memory()   read the ledger
+       ├─ memory_store.semantic_search_memories()
+       │      cosine per entry — each entry's vector is CACHED, so a ledger
+       │      that grows one line per turn costs one new embedding
+       └─ scoring.rank_memories()        weighted fusion, keep top 5
+            └─ types.semantic_memory_block()   ≤ 8 lines in the prompt
+```
+
+| Module | Responsibility |
+|--------|----------------|
+| `types.py` | Ledger format + I/O: `load_semantic_memory`, `save_semantic_memory` (temp file + `os.replace`), the `SEMANTIC MEMORY` renderer, and the pinned `ORIGINAL GOAL` block |
+| `distill.py` | The **writer**: `record_turn` → `extract_signals` → `consolidate`. Heuristic only (no LLM, no VRAM) |
+| `scoring.py` | The **ranker**: pure functions, no I/O — `lexical_relevance`, `recency_score`, `importance_of`, `fuse`, `rank_memories` |
+| `memory_store.py` | `MemoryStore` plus `semantic_search_memories` (embedding ranking with a per-entry vector cache) |
+
+### Ranking: four signals against the live prompt
+
+`score = 0.45·relevance + 0.25·goal_alignment + 0.15·recency + 0.15·importance`
+(weights sum to 1.0, so a fully-relevant, on-goal, fresh, important entry
+scores exactly `1.0`).
+
+| Signal | Weight | Meaning |
+|--------|--------|---------|
+| relevance | `0.45` | cosine similarity to the live user message; falls back to **lexical** overlap when embeddings are down, so the block stays ordered instead of collapsing to ledger order |
+| goal_alignment | `0.25` | overlap with the session's pinned original goal — stops a long run drifting away from what was asked |
+| recency | `0.15` | `0.5 ** (age_days / 7)` — a week-old memory scores half |
+| importance | `0.15` | the writer's per-kind judgement: `decision 0.9`, `error 0.85`, `preference 0.8`, `goal 0.75`, `file`/`note 0.5` |
+
+This is the Generative Agents retrieval function (relevance + recency +
+importance, arXiv 2304.03442) with the goal term added for the long-session
+case that MemGPT-style context management targets (arXiv 2310.08560).
+
+### Budget and storage
+
+| Constant | Value | Effect |
+|----------|-------|--------|
+| `SEMANTIC_MEMORY_FILENAME` | `.semantic_memory.json` | one ledger per workspace, in the workspace root |
+| `MAX_ENTRIES` | `500` | ledger cap; the writer prunes to it on every save |
+| `MAX_ENTRY_CHARS` | `300` | one fact is one clipped line |
+| `MAX_BLOCK_LINES` | `8` | what actually reaches the prompt (~240 tokens), ranked, never the whole ledger |
+| `MEMORY_SCHEMA_VERSION` | `1` | stamped on each entry as `metadata.schema` |
+
+Entry shape — `metadata.text` is the ONLY text carrier, so every ranking field
+survives a round trip:
+
+```json
+{"metadata": {"text": "Touched agent_core/memory/scoring.py", "kind": "file",
+              "id": "9f1c…", "importance": 0.5, "created_at": "…",
+              "last_used_at": "…", "use_count": 2, "schema": 1}}
+```
+
+### Failure contract
+
+Remembering must never fail a finished turn and never kill the next one:
+
+* `record_turn` returns `0` and logs at `debug` on any error.
+* A corrupt ledger is **quarantined** to `.semantic_memory.json.bad-<ts>` and
+  read as empty — the bytes stay inspectable, the session continues.
+* Writes are atomic (`.tmp` + `os.replace`), so a crash mid-write leaves the
+  previous ledger intact rather than a truncated one.
+* `load_semantic_memory` never raises (`[]` on any failure).
+
+Tests: `tests/test_semantic_memory_ledger_writer.py` (writer + ranker +
+per-entry embedding cache), `tests/test_semantic_search_wiring.py`,
+`tests/test_semantic_memory_block.py`.
+
+---
+
 ## Core Utilities: `agent_core/`
 
 | Module | Class/Function | Purpose |
