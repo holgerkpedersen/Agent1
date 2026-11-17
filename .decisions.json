@@ -3598,5 +3598,103 @@
     "status": "active",
     "category": "autonomous",
     "source": "agent"
+  },
+  {
+    "id": "162",
+    "date": "2026-11-16T14:16:18+00:00",
+    "title": "Change scripts/test_work_button.py",
+    "context": "Written C:\\Dev\\Agent1\\scripts\\test_work_button.py (978 bytes) [verify] py_compile ✓ [verify] ruff ✗ 4: test_work_button.py:11: W293 [*] Blank line contains whitespace; test_work_button.py:14: W293 [*]",
+    "decision": "write modified scripts/test_work_button.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "scripts/test_work_button.py"
+    ],
+    "tags": [
+      "autonomous",
+      "write"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "163",
+    "date": "2026-11-16T15:52:50+00:00",
+    "title": "Change tests/test_kanban_bridge_flaws.py",
+    "context": "Edited C:\\Dev\\Agent1\\tests\\test_kanban_bridge_flaws.py [verify] py_compile ✓ [verify] ruff style 1 (advisory - do not edit again just for formatting): test_kanban_bridge_flaws.py:508: E501 Line too lo",
+    "decision": "edit modified tests/test_kanban_bridge_flaws.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "tests/test_kanban_bridge_flaws.py"
+    ],
+    "tags": [
+      "autonomous",
+      "edit"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "164",
+    "date": "2026-11-16T15:58:58+00:00",
+    "title": "Change offset",
+    "context": "temp removed offset now: 20",
+    "decision": "run modified offset without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [],
+    "tags": [
+      "autonomous",
+      "run"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "165",
+    "date": "2026-11-16T16:03:47+00:00",
+    "title": "Change scripts/run_hidden.vbs",
+    "context": "Written C:\\Dev\\Agent1\\scripts\\run_hidden.vbs (4258 bytes)",
+    "decision": "write modified scripts/run_hidden.vbs without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "scripts/run_hidden.vbs"
+    ],
+    "tags": [
+      "autonomous",
+      "write"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "166",
+    "date": "2026-11-16T16:04:16+00:00",
+    "title": "Change scripts/kanban_queue_drain_task.xml",
+    "context": "Written C:\\Dev\\Agent1\\scripts\\kanban_queue_drain_task.xml (1276 bytes)",
+    "decision": "write modified scripts/kanban_queue_drain_task.xml without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "scripts/kanban_queue_drain_task.xml"
+    ],
+    "tags": [
+      "autonomous",
+      "write"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
   }
 ]

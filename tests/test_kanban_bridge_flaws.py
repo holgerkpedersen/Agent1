@@ -421,6 +421,114 @@ class TestUndecodableQueueLines:
 
 
 # ---------------------------------------------------------------------------
+# 6. A cursor past EOF must not hide the lines that are still there
+# ---------------------------------------------------------------------------
+
+
+class TestCursorPastEndOfFile:
+    """A stale ``offset.txt`` must be REPAIRED, not silently obeyed forever.
+
+    Found in production on 2026-11-16: ``messages.jsonl`` was replaced by a
+    20-line file while ``offset.txt`` still held 174 from an earlier
+    ``Processed 173/173`` run.  ``read_queue()`` counts LINES, so
+    ``idx < current_offset`` was true for all 20 lines, ``next_offset`` never
+    exceeded the stored 174, and ``_drain_inbound``'s ``next_offset >
+    current_offset`` guard kept the stale value on disk forever.  Every
+    scheduled tick logged "Processed 0 messages" and every message appended
+    afterwards sat behind the cursor, so the board-to-Agent1 sync was dead
+    while looking idle.
+
+    The repair must NOT re-deliver the lines that are still in the file: they
+    are history of unknown provenance (the compaction backup shares no line
+    with them), and replaying ``card_move``/``card_delete`` on stale payloads
+    would mutate real cards.  So the cursor is clamped to the line count —
+    "at the end of what exists" — and the very next append is delivered.
+    """
+
+    def _queue(self, tmp_path, offset: int, lines: list[str]) -> Path:
+        qdir = tmp_path / "q"
+        qdir.mkdir(parents=True)
+        (qdir / "messages.jsonl").write_text(
+            "".join(line + "\n" for line in lines), encoding="utf-8"
+        )
+        (qdir / "offset.txt").write_text(str(offset), encoding="utf-8")
+        return qdir
+
+    def test_stale_offset_is_clamped_without_replaying_the_file(self, tmp_path):
+        """The cursor is repaired to the line count; the lines are NOT replayed."""
+        import harnessfix.kanban_bridge as kb
+
+        qdir = self._queue(
+            tmp_path,
+            offset=174,
+            lines=['{"seq": 1, "op": "card_create"}', '{"seq": 2, "op": "card_move"}'],
+        )
+
+        messages, next_offset = kb.read_queue(qdir)
+
+        assert messages == [], (
+            "lines of unknown provenance must not be re-delivered to the handlers"
+        )
+        assert next_offset == 2, "the stale 174 must come back down to the line count"
+
+    def test_process_inbound_repairs_a_stuck_cursor_and_delivers_the_next_append(
+        self, tmp_path, monkeypatch
+    ):
+        """The end-to-end proof: the tick repairs offset.txt, the append lands."""
+        import harnessfix.kanban_bridge as kb
+
+        monkeypatch.setattr(kb, "DEAD_LETTER_DIR", tmp_path / "dead-letter")
+        monkeypatch.setattr(kb, "_process_single_message", lambda msg: True)
+        qdir = self._queue(
+            tmp_path,
+            offset=174,
+            lines=['{"seq": 1, "op": "card_create"}', '{"seq": 2, "op": "card_move"}'],
+        )
+
+        assert kb.process_inbound(qdir) == 0, "nothing is replayed to reach the repair"
+        assert int((qdir / "offset.txt").read_text(encoding="utf-8")) == 2, (
+            "the stale cursor must be persisted back, or every tick repeats"
+        )
+
+        with open(qdir / "messages.jsonl", "a", encoding="utf-8") as f:
+            f.write('{"seq": 3, "op": "card_move"}\n')
+
+        assert kb.process_inbound(qdir) == 1, (
+            "the sync must resume for messages appended after the repair"
+        )
+        assert int((qdir / "offset.txt").read_text(encoding="utf-8")) == 3
+
+    def test_a_short_file_with_a_valid_cursor_is_still_read_from_the_cursor(
+        self, tmp_path,
+    ):
+        """The clamp must not turn a normal resume into a full re-read."""
+        import harnessfix.kanban_bridge as kb
+
+        qdir = self._queue(
+            tmp_path,
+            offset=1,
+            lines=['{"seq": 1, "op": "card_create"}', '{"seq": 2, "op": "card_move"}'],
+        )
+
+        messages, next_offset = kb.read_queue(qdir)
+
+        assert [m["seq"] for m in messages] == [2]
+        assert next_offset == 2
+
+    def test_an_empty_offset_file_still_reads_from_the_start(self, tmp_path):
+        import harnessfix.kanban_bridge as kb
+
+        qdir = self._queue(
+            tmp_path, offset=0, lines=['{"seq": 1, "op": "card_create"}']
+        )
+
+        messages, next_offset = kb.read_queue(qdir)
+
+        assert [m["seq"] for m in messages] == [1]
+        assert next_offset == 1
+
+
+# ---------------------------------------------------------------------------
 # 5. Legacy operational scripts must use the bridge, not hard-coded paths
 # ---------------------------------------------------------------------------
 

@@ -517,6 +517,30 @@ def link_ids(
     return mapping
 
 
+def unlink_ids(
+    source_id: str,
+    target_id: str | None = None,
+    mapping: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Drop a stale bidirectional ID pair and save it.
+
+    The counterpart of :func:`link_ids`.  Used when a card's mapped issue is
+    no longer in the ledger: the map is the only thing keeping the stale
+    pointer alive, so it has to be removed or every future delete/move/update
+    for that card retries forever and dead-letters.  Missing keys are ignored
+    (idempotent), and a missing *target_id* is resolved from the map.
+    """
+    if mapping is None:
+        mapping = _load_id_map()
+    if target_id is None:
+        target_id = mapping.get(source_id)
+    mapping.pop(source_id, None)
+    if target_id is not None:
+        mapping.pop(target_id, None)
+    _save_id_map(mapping)
+    return mapping
+
+
 def resolve_id(source_id: str, mapping: dict[str, str] | None = None) -> str | None:
     """Look up the counterpart ID for a known source ID."""
     if mapping is None:
@@ -766,11 +790,15 @@ def _apply_card_update(payload: dict[str, Any]) -> bool:
             return True
         logger.warning(
             "card_update: mapped to issue %s that is absent from the ledger "
-            "(source=%s)",
+            "(source=%s) — unlinking the stale mapping",
             issue_id,
             source_id,
         )
-        return False
+        try:
+            unlink_ids(source_id, issue_id)
+        except Exception as exc:  # noqa: BLE001 - never block an update on map I/O
+            logger.debug("could not unlink stale mapping for %s: %s", source_id, exc)
+        return True
 
     data = card_to_issue_data(payload.get("payload", payload))
     updated = False
@@ -880,11 +908,15 @@ def _apply_card_move(payload: dict[str, Any]) -> bool:
             return True
         logger.warning(
             "card_move: mapped to issue %s that is absent from the ledger "
-            "(source=%s)",
+            "(source=%s) — unlinking the stale mapping",
             issue_id,
             source_id,
         )
-        return False
+        try:
+            unlink_ids(source_id, issue_id)
+        except Exception as exc:  # noqa: BLE001 - never block a move on map I/O
+            logger.debug("could not unlink stale mapping for %s: %s", source_id, exc)
+        return True
 
     if status is None:
         # The column is unknown, so the move supplies no status.  Consume it:
@@ -933,11 +965,15 @@ def _apply_card_delete(payload: dict[str, Any]) -> bool:
             return True
         logger.warning(
             "card_delete: mapped to issue %s that is absent from the ledger "
-            "(source=%s)",
+            "(source=%s) — unlinking the stale mapping",
             issue_id,
             source_id,
         )
-        return False
+        try:
+            unlink_ids(source_id, issue_id)
+        except Exception as exc:  # noqa: BLE001 - never block a delete on map I/O
+            logger.debug("could not unlink stale mapping for %s: %s", source_id, exc)
+        return True
 
     # Mark as wontfix rather than hard-delete to preserve history
     issue_store.resolve(
@@ -1069,6 +1105,13 @@ def read_queue(queue_dir: Path) -> tuple[list[dict[str, Any]], int]:
     ``UnicodeDecodeError`` was worse than a ``JSONDecodeError`` — it is raised
     by ``read_text()`` for the WHOLE file, so it escaped the loop, out of
     ``process_inbound``, and pinned the cursor: the queue stalled completely.
+
+    A cursor that points past the end of the file is clamped to the line count,
+    so a queue whose file was compacted or restored shorter repairs itself
+    instead of reporting "0 messages" on every tick while new appends pile up
+    behind the stale offset.  The clamped lines are NOT re-delivered: they are
+    history of unknown provenance, and replaying ``card_move``/``card_delete``
+    on stale payloads would mutate real cards.
     """
     queue_dir = queue_dir.resolve()
     msg_file = queue_dir / "messages.jsonl"
@@ -1085,6 +1128,23 @@ def read_queue(queue_dir: Path) -> tuple[list[dict[str, Any]], int]:
     lines = _read_queue_lines(msg_file)
     if lines is None:
         return [], current_offset
+
+    # A cursor that addresses no line at all is stale, not authoritative: it
+    # happens when the file is compacted or restored from a shorter backup
+    # under a cursor that counted the longer file (a 463-line queue reduced to
+    # 20 lines leaves offset.txt at 174).  Offsets are LINE COUNTS, so reading
+    # went ``idx < current_offset`` for every line, ``next_offset`` never
+    # exceeded the stale cursor, and the drain reported "Processed 0" forever
+    # while pending cards sat in the file.  Clamping to the line count means
+    # "resume at the end of what exists" — never "skip the whole queue".
+    if current_offset > len(lines):
+        logger.warning(
+            "Queue %s has cursor %d past its %d lines — clamping to the end",
+            queue_dir,
+            current_offset,
+            len(lines),
+        )
+        current_offset = len(lines)
 
     new_messages: list[dict[str, Any]] = []
     next_offset = current_offset
@@ -1233,7 +1293,13 @@ def _drain_inbound(queue_dir: Path) -> int:
     # no messages but a higher next_offset; guarding on `new_messages` left the
     # cursor at 0, so that unparseable line was re-read (and re-quarantined) on
     # every poll for the life of the queue.
-    if next_offset > current_offset:
+    #
+    # ``!=`` rather than ``>``: ``read_queue`` clamps a cursor that points past
+    # EOF down to the line count, so the repaired value is LOWER than the stored
+    # one.  Comparing with ``>`` kept the stale 174 in offset.txt while the
+    # reader re-delivered the same 20 lines on every tick — a queue that neither
+    # drained nor stayed quiet.
+    if next_offset != current_offset:
         advance_offset(queue_dir, next_offset)
         logger.info(
             "Processed %d/%d messages from %s (offset now %d)",

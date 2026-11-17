@@ -27,6 +27,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "run_kanban_queue_drain.cmd"
+HIDDEN_WRAPPER = REPO_ROOT / "scripts" / "run_hidden.vbs"
+TASK_XML = REPO_ROOT / "scripts" / "kanban_queue_drain_task.xml"
 
 
 def _script_text() -> str:
@@ -139,3 +141,96 @@ def test_launcher_does_not_start_a_second_daemon(monkeypatch):
     assert not started, (
         "the scheduled drain must not start a poller thread — it IS the handler"
     )
+
+
+# ---------------------------------------------------------------------------
+# Hidden window.
+#
+# The task fires every 5 minutes under LogonType=InteractiveToken, so a console
+# launcher action creates a real cmd.exe window in the user's session: it pops
+# up, steals focus from whatever is being typed, and vanishes.  Task Scheduler
+# has NO "run hidden" flag for a console action, so the only way to keep the
+# window off the desktop is to launch the .cmd through a script host that asks
+# Windows to create the process with a hidden window.
+# ---------------------------------------------------------------------------
+
+
+def _wrapper_text() -> str:
+    assert HIDDEN_WRAPPER.is_file(), f"hidden wrapper is missing: {HIDDEN_WRAPPER}"
+    return HIDDEN_WRAPPER.read_text(encoding="utf-8", errors="replace")
+
+
+def test_hidden_wrapper_runs_the_launcher_with_window_style_zero():
+    """``Run(cmd, 0, ...)`` is the ONLY thing that hides the console."""
+    text = _wrapper_text()
+    # Match the ASSIGNMENT, not the prose in the header comment (which also
+    # mentions ``Run(..., 0, ...)``) — an earlier loose pattern matched the
+    # comment and asserted against the wrong text.
+    match = re.search(r"rc\s*=\s*shell\.Run\(([^)]*)\)", text)
+    assert match, "wrapper must call WScript.Shell.Run and capture its result"
+    args = [part.strip() for part in match.group(1).split(",")]
+    assert len(args) >= 2, f"Run() needs a window style, got {args!r}"
+    # Position 1 is intWindowStyle; 0 == hidden.
+    assert args[1] == "HIDDEN_WINDOW", (
+        f"window style must be the named HIDDEN_WINDOW constant, got {args[1]!r}"
+    )
+    assert re.search(r"^\s*Const HIDDEN_WINDOW\s*=\s*0\b", text, re.M), (
+        "HIDDEN_WINDOW must be 0 — that is SW_HIDE; 1 would SHOW the window"
+    )
+
+
+def test_hidden_wrapper_waits_so_the_exit_code_survives():
+    """Detaching immediately would report 0 for every tick, hiding failures."""
+    text = _wrapper_text()
+    assert re.search(r"^\s*Const WAIT_FOR_LAUNCHER\s*=\s*True\b", text, re.M), (
+        "bWaitOnReturn must be True, otherwise Task Scheduler's Last Result is "
+        "always 0 and a broken drain looks healthy"
+    )
+    assert "WScript.Quit rc" in text, (
+        "the wrapper must propagate the launcher's exit code"
+    )
+
+
+def test_hidden_wrapper_points_at_the_real_launcher_absolutely():
+    """A task gets a different PATH and cwd, so the default must be absolute."""
+    text = _wrapper_text()
+    match = re.search(r'Const DEFAULT_LAUNCHER\s*=\s*"([^"]+)"', text)
+    assert match, "DEFAULT_LAUNCHER must be declared"
+    launcher = Path(match.group(1))
+    assert launcher.is_absolute(), f"launcher path must be absolute: {launcher}"
+    assert launcher == SCRIPT, (
+        f"wrapper must default to the drain launcher ({SCRIPT}), got {launcher}"
+    )
+
+
+def test_task_definition_runs_the_wrapper_not_the_cmd_directly():
+    """Pin the registered action: ``wscript.exe`` + the wrapper, never the .cmd.
+
+    The .cmd action is what showed the console; a future re-registration from
+    a stale XML would bring the flashing window straight back.
+    """
+    assert TASK_XML.is_file(), f"task definition is missing: {TASK_XML}"
+    text = TASK_XML.read_text(encoding="utf-8", errors="replace")
+
+    command = re.search(r"<Command>([^<]+)</Command>", text)
+    arguments = re.search(r"<Arguments>([^<]+)</Arguments>", text)
+    assert command, "task XML must declare a <Command>"
+    assert arguments, "task XML must declare <Arguments>"
+
+    assert command.group(1).lower() == "wscript.exe", (
+        f"task action must be wscript.exe, got {command.group(1)!r} — pointing "
+        "it at the .cmd is what shows the console window"
+    )
+    assert "run_hidden.vbs" in arguments.group(1), (
+        f"task arguments must invoke the hidden wrapper, got {arguments.group(1)!r}"
+    )
+    assert SCRIPT.name not in arguments.group(1), (
+        "the .cmd must be reached THROUGH the wrapper, not directly"
+    )
+    assert "//B" in arguments.group(1), (
+        "//B suppresses script-error dialogs; a modal box from a hidden script "
+        "would block the task forever with nothing on screen to explain it"
+    )
+    # The schedule is what makes this a repeated focus-steal; keep it pinned.
+    assert re.search(r"<Interval>PT5M</Interval>", text), "schedule must stay 5 min"
+

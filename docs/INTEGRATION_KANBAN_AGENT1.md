@@ -280,7 +280,8 @@ refuses to rewrite the file under a live handler for the same reason.
 
 ```mermaid
 flowchart TD
-    A["Task Scheduler<br/>\\Agent1\\Kanban Queue Drain (every 5 min)"] --> B["scripts/run_kanban_queue_drain.cmd"]
+    A["Task Scheduler<br/>\\Agent1\\Kanban Queue Drain (every 5 min)"] --> W["wscript.exe //B //Nologo<br/>scripts/run_hidden.vbs"]
+    W -- "Run(cmd, 0, True)<br/>hidden window, waits" --> B["scripts/run_kanban_queue_drain.cmd"]
     B --> C["python -m harnessfix.kanban_bridge<br/>--process-in --timeout 120"]
     C --> D{"handler.lock free?"}
     D -- yes --> E["drain; advance offset.txt"]
@@ -294,7 +295,10 @@ offset stops moving. The task fills exactly that gap:
 | Piece | Value |
 | --- | --- |
 | Task name | `\Agent1\Kanban Queue Drain` |
-| Action | `C:\Dev\Agent1\scripts\run_kanban_queue_drain.cmd` |
+| Action | `wscript.exe //B //Nologo "C:\Dev\Agent1\scripts\run_hidden.vbs"` |
+| Hidden wrapper | `scripts\run_hidden.vbs` — runs the `.cmd` with window style `0` (SW_HIDE) |
+| Real launcher | `C:\Dev\Agent1\scripts\run_kanban_queue_drain.cmd` (run by the wrapper) |
+| Registered definition | `scripts\kanban_queue_drain_task.xml` (import with `schtasks /create /xml`) |
 | Schedule | every 5 minutes, repeats indefinitely |
 | Log | `reports\harnessfix\kanban_queue_drain.log` |
 | Interpreter / cwd | absolute (`PYTHON_EXE`, `cd /d %REPO_ROOT%`) — a task gets a different PATH and no guaranteed "Start in", and trusting either fails with `0x80070002` |
@@ -306,6 +310,39 @@ lock instead of reporting "Processed 0 messages" while a live session holds the
 queue. Because of the lock in §10a it can run at any moment, including during an
 active session, without applying a line twice.
 
+#### Why the action is the VBS wrapper and not the `.cmd`
+
+The task runs under `LogonType=InteractiveToken`, and Task Scheduler starts a
+`.cmd` through `cmd.exe` **in the user's session**. So a console action puts a
+`cmd.exe` window on the desktop every 5 minutes: it appears, steals focus from
+whatever is being typed, and vanishes — 288 interruptions a day. Task Scheduler
+has no "run hidden" flag for a console action, so the window has to be removed at
+launch time: `scripts\run_hidden.vbs` calls `WScript.Shell.Run(cmd, 0, True)`,
+and `intWindowStyle = 0` is `SW_HIDE` — the process is created with a hidden
+window while keeping its console, so `chcp 65001`, `>>` logging and
+`%ERRORLEVEL%` behave exactly as before.
+
+Two alternatives were rejected, and the reasons are the ones that come back if
+someone "simplifies" this later:
+
+- **`pythonw.exe`** has no console at all, so the launcher's redirection,
+  `chcp 65001` and `PYTHONIOENCODING` would be lost and the log would stop
+  existing.
+- **Running as `SYSTEM`** (session 0) also hides the window, but then the queue
+  files, `offset.txt` and the log get SYSTEM ownership, which breaks the files
+  the interactive agent must also write.
+
+`bWaitOnReturn = True` matters as much as the window style: it makes the wrapper
+wait and forward the drain's exit code via `WScript.Quit`. Without it the task's
+"Last Run Result" is a meaningless `0` for every tick and a broken drain looks
+healthy. `//B` is required too — a modal script-error box raised by a *hidden*
+script would block the task forever with nothing on screen to explain it.
+
+The registered definition is kept in the repo as
+`scripts\kanban_queue_drain_task.xml` so the hidden action survives a
+re-registration, and `tests/test_kanban_drain_launcher.py` asserts the action is
+`wscript.exe` + `run_hidden.vbs` and **not** the `.cmd`.
+
 Manage it with:
 
 ```bat
@@ -313,11 +350,15 @@ schtasks /query  /tn "\Agent1\Kanban Queue Drain" /fo LIST /v
 schtasks /run    /tn "\Agent1\Kanban Queue Drain"
 schtasks /change /tn "\Agent1\Kanban Queue Drain" /disable
 schtasks /delete /tn "\Agent1\Kanban Queue Drain" /f
+rem re-import the repo-tracked (hidden) definition:
+schtasks /create /tn "\Agent1\Kanban Queue Drain" /xml scripts\kanban_queue_drain_task.xml /f
 ```
 
 `tests/test_kanban_drain_launcher.py` pins the launcher to the real CLI (every
 flag it passes is accepted by `main()`) and asserts the paths stay absolute, so a
-renamed option cannot rot silently until a 03:00 failure.
+renamed option cannot rot silently until a 03:00 failure. It also pins the hidden
+wrapper (window style `0`, wait-and-propagate, absolute launcher path) and the
+task action.
 
 ## 10c. Read-side tooling — the `kanban` REPL command and `kanban_inspect`
 
