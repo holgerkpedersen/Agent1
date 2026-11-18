@@ -4378,5 +4378,23 @@
     "status": "active",
     "category": "autonomous",
     "source": "agent"
+  },
+  {
+    "id": "203",
+    "date": "2026-11-18T18:20:42+00:00",
+    "title": "Finished a plan autonomously",
+    "context": "Error: plan is 'proposed', can only finish an executing plan.",
+    "decision": "Marked the plan executed once the remaining tasks passed.",
+    "rationale": "Plan transition chosen during execution.",
+    "affected_files": [],
+    "tags": [
+      "autonomous",
+      "plan_finish"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
   }
 ]

@@ -615,14 +615,14 @@
     "locations": [
       "kanban:b687bd0a6ca3437eb631998912a80db3"
     ],
-    "status": "reviewing",
+    "status": "resolved",
     "autonomy_level": 1,
-    "evidence": "",
+    "evidence": "[note] Verified shipped: agent_core/plan_execution (runner.py) activates DependencyGraph + TaskScheduler; plan exec command with dry-run + decision gates; tests unit(11)+integration(4)+chunking green. Closes plan #13.",
     "suggested_approach": "DependencyGraph/TaskScheduler (unused) is the natural target for plan-mode output -> scheduled subtask execution with subagent.py isolation already present. Closes plan #13.",
     "decision_ref": null,
     "repair_ref": null,
     "created_at": "2026-11-17T11:49:21+00:00",
-    "resolved_at": null,
+    "resolved_at": "2026-11-18T19:12:02+00:00",
     "parent_card_id": "b687bd0a6ca3437eb631998912a80db3"
   },
   {
