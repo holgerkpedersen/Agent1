@@ -162,6 +162,7 @@ def collect_references(
     symbol: str,
     root: str,
     max_results: int = MAX_REFERENCES,
+    path: str | None = None,
 ) -> str:
     """Scan the workspace for *symbol* uses; return a capped file:line list.
 
@@ -177,13 +178,27 @@ def collect_references(
     pattern = re.compile(r"(?<![\w.])" + re.escape(symbol) + r"(?![\w])")
     hits: list[tuple[str, int, str]] = []
     truncated_files = 0
-    for path in _iter_py_files(root):
-        rel = os.path.relpath(path, root).replace("\\", "/")
+
+    # Optional subtree/file filter.
+    scan_root = root
+    target_file: str | None = None
+    if path:
+        candidate = path if os.path.isabs(path) else os.path.join(root, path)
+        if os.path.isdir(candidate):
+            scan_root = candidate
+        elif os.path.isfile(candidate):
+            scan_root = os.path.dirname(candidate) or root
+            target_file = os.path.basename(candidate)
+
+    for filepath in _iter_py_files(scan_root):
+        if target_file and os.path.basename(filepath) != target_file:
+            continue
+        rel = os.path.relpath(filepath, root).replace("\\", "/")
         try:
-            if os.path.getsize(path) > _MAX_SCAN_BYTES:
+            if os.path.getsize(filepath) > _MAX_SCAN_BYTES:
                 truncated_files += 1
                 continue
-            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            with open(filepath, "r", encoding="utf-8", errors="replace") as fh:
                 for lineno, line in enumerate(fh, 1):
                     if pattern.search(line):
                         hits.append((rel, lineno, line.strip()))

@@ -6,6 +6,7 @@ matches as ``path:lineno: content`` lines so the LLM can act on them.
 """
 
 from __future__ import annotations
+import fnmatch
 import os
 
 from agent_core.path_utils import safe_path
@@ -110,14 +111,24 @@ class FileSearcher:
     def __init__(self, workspace: str | None = None):
         self.workspace = workspace
 
-    async def search(self, query: str, path: str) -> str:
+    async def search(
+        self, query: str, path: str, include: str | None = None
+    ) -> str:
         """Search for text pattern in files.
 
+        ``path`` may be a directory (searched recursively) OR a single file
+        (searched directly) — a file path no longer silently yields zero
+        matches.  ``include`` is an optional glob (e.g. ``*.py``) restricting
+        which file names are scanned.
+
         Returns one ``path:lineno: content`` line per match (at most
-        ``_MAX_RESULTS``), or ``"No matches found"``.
+        ``_MAX_RESULTS``), or ``"No matches found"`` / a clear error when the
+        path does not exist.
         """
         local_path = self._safe_path(path)
-        matches = self._walk_search(query, local_path)
+        if not os.path.exists(local_path):
+            return f"No such path: {local_path}"
+        matches = self._walk_search(query, local_path, include=include)
         if not matches:
             return "No matches found"
         lines = []
@@ -134,9 +145,46 @@ class FileSearcher:
         """Normalize path for search."""
         return safe_path(path)
 
-    def _walk_search(self, query: str, local_path: str) -> list[tuple[str, int, str]]:
-        """Pure-Python search honoring ignore rules; returns (path, line, text)."""
+    def _walk_search(
+        self,
+        query: str,
+        local_path: str,
+        include: str | None = None,
+    ) -> list[tuple[str, int, str]]:
+        """Pure-Python search honoring ignore rules; returns (path, line, text).
+
+        A single file path is searched directly (no longer silently empty).
+        ``include`` optionally restricts file names via fnmatch.
+        """
         matches: list[tuple[str, int, str]] = []
+
+        def _scan_file(filepath: str) -> None:
+            nonlocal matches
+            name = os.path.basename(filepath)
+            if _is_ignored_file(name) or name.endswith((".pyc", ".pyo")):
+                return
+            ext = os.path.splitext(name)[1].lower()
+            if ext in _IGNORED_EXTENSIONS:
+                return
+            if include and not fnmatch.fnmatch(name, include):
+                return
+            try:
+                with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+                    for lineno, line in enumerate(f, 1):
+                        if query in line:
+                            matches.append(
+                                (os.path.normpath(filepath), lineno, line.rstrip())
+                            )
+                            if len(matches) >= _MAX_RESULTS * 2:
+                                return
+            except OSError:
+                return
+
+        # Single file: search it directly.
+        if os.path.isfile(local_path):
+            _scan_file(local_path)
+            return matches
+
         if not os.path.isdir(local_path):
             return matches
         for root, dirs, files in os.walk(local_path):
@@ -146,23 +194,12 @@ class FileSearcher:
                 if d not in _IGNORED_DIRS and not d.endswith(".egg-info")
             )
             for file in sorted(files):
-                if _is_ignored_file(file) or file.endswith((".pyc", ".pyo")):
-                    continue
-                ext = os.path.splitext(file)[1].lower()
-                if ext in _IGNORED_EXTENSIONS:
-                    continue
+                if len(matches) >= _MAX_RESULTS * 2:
+                    return matches
                 filepath = os.path.join(root, file)
-                try:
-                    with open(filepath, "r", encoding="utf-8", errors="replace") as f:
-                        for lineno, line in enumerate(f, 1):
-                            if query in line:
-                                matches.append(
-                                    (os.path.normpath(filepath), lineno, line.rstrip())
-                                )
-                                if len(matches) >= _MAX_RESULTS * 2:
-                                    return matches
-                except OSError:
-                    continue
+                _scan_file(filepath)
+                if len(matches) >= _MAX_RESULTS * 2:
+                    return matches
         return matches
 
 

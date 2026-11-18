@@ -1,6 +1,6 @@
 ---
 name: playwright
-description: Drive a real browser with Playwright for scraping, E2E checks and page inspection — Python sync API (the style used in this repo) plus the playwright-cli reference. Covers selectors, waiting, persistent profiles, login walls and cleanup. (use when: automating a browser, scraping a site, writing an E2E test, inspecting DOM/network, screenshots, or debugging a flaky Playwright script)
+description: "Drive a real browser with Playwright for scraping, E2E checks and page inspection — Python sync API plus playwright-cli reference. Covers selectors, waiting, persistent profiles, login walls, cleanup. (use when: automating a browser, scraping, E2E test, screenshots, debugging flaky scripts)"
 ---
 
 # Playwright Browser Automation
@@ -167,6 +167,37 @@ playwright-cli close
 Install with `npm i -g @playwright/cli` (not installed in this workspace). Docs:
 https://playwright.dev/agent-cli/skills — Microsoft's own skill file is the reference
 model for this runbook.
+
+## 8.5 Playwright via MCP (optional, for agent-driven exploration)
+
+The `microsoft/playwright-mcp` server exposes browser tools (navigate, click, type,
+snapshot) over MCP. It is configured in `mcp.json` (repo root, gitignored) as a
+stdio server:
+
+```json
+"playwright": {
+  "transport": "stdio",
+  "command": ["npx", "-y", "@playwright/mcp@latest", "--headless", "--isolated"],
+  "expose_to_llm": false,
+  "timeout_s": 60
+}
+```
+
+Connect it from the REPL: `mcp connect playwright` (see `agent_core/commands/mcp_cmd.py`).
+Tools are listed with `mcp tools playwright` and invoked with `mcp call playwright <tool> {...}`.
+
+- `expose_to_llm` stays **false by default**. Flipping it to `true` (`mcp expose playwright on`)
+  puts a browser driver in the LLM tool loop — only do so after reviewing the profile
+  and cleanup rules below. The Python sync API (sections 1-7) remains the preferred path
+  for deterministic probe scripts and anything that lands in `tests/`.
+- MCP snapshots are accessibility trees (text), not screenshots — no vision model needed,
+  but they are larger and slower than a hand-written script for a known flow.
+- The same safety rules apply: never copy/decrypt the user's real Chrome profile
+  (`Cookies`, `Login Data`), never create a junction to it, give each session its own
+  `user_data_dir`, and delete scratch output when finished. The MCP server manages its
+  own browser instance; persistent state lives under the MCP server's working dir, not
+  the repo — keep profile dirs out of the repo root.
+- `npx` must be on PATH (it is in this workspace: `C:\\Program Files\\nodejs\\npx`).
 
 ## 9. Safety and ethics
 

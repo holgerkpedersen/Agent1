@@ -57,13 +57,11 @@ class TestFileSearcher:
         result = asyncio.run(FileSearcher().search("zzz-not-there", str(tmp_path)))
         assert result == "No matches found"
 
-    def test_path_is_a_directory_not_a_filename_filter(self, tmp_path):
-        """`path` must be a DIRECTORY searched recursively, never a file filter.
+    def test_path_accepts_single_file(self, tmp_path):
+        """`path` may be a directory OR a single file.
 
-        Pinning the real failure mode: pointing `path` at a FILE whose contents
-        DO match returns "No matches found", because _walk_search bails out on
-        `if not os.path.isdir(local_path)`. This was previously misdiagnosed as
-        `path` filtering by filename; it does not filter at all.
+        Previously a file path silently returned "No matches found" (the model
+        then retried with other terms). Now the single file is searched directly.
         """
         target = tmp_path / "types.py"
         target.write_text("SEMANTIC_MEMORY_MARKER = 'x'\n", encoding="utf-8")
@@ -74,12 +72,11 @@ class TestFileSearcher:
         )
         assert "types.py:1" in via_dir
 
-        # The same path aimed at the FILE finds nothing, though the needle is
-        # on line 1 of that very file.
+        # A file path now searches that one file and finds the needle.
         via_file = asyncio.run(
             FileSearcher().search("SEMANTIC_MEMORY_MARKER", str(target))
         )
-        assert via_file == "No matches found"
+        assert "types.py:1" in via_file
 
     def test_directory_search_is_recursive_and_separator_agnostic(self, tmp_path):
         """A subdirectory argument recurses; '/' and '\\' behave identically.
@@ -96,11 +93,12 @@ class TestFileSearcher:
             result = asyncio.run(FileSearcher().search("DEEP_NEEDLE", arg))
             assert "deep.py:1" in result, arg
 
-        # A non-existent directory yields no matches rather than raising.
+        # A non-existent path now yields a clear error instead of a silent
+        # "No matches found" (which previously caused retry loops).
         missing = asyncio.run(
             FileSearcher().search("DEEP_NEEDLE", str(tmp_path / "nope"))
         )
-        assert missing == "No matches found"
+        assert missing.startswith("No such path:")
 
     def test_project_workflow_docs_are_not_code_matches(self, tmp_path):
         """project_*.md are temporary workflow artifacts — a symbol that only

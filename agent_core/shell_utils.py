@@ -715,7 +715,11 @@ SYSTEM_PROMPT = (
     "is staged, committed or pushed. Call the git tool before stating it; an "
     'unverified "already committed and pushed" is a fabrication.\n'
     "- If a search finds nothing in source files, state that the symbol does "
-    "not exist in the current code - never repeat the same search.\n"
+     "not exist in the current code - never repeat the same search.\n"
+     "- search matches LITERAL text only (not regex). Narrow with 'include' "
+     "(glob, e.g. '*.py') and pass a single file as 'path' to avoid scanning "
+     "the whole workspace. For regex, use the git tool ('git grep -E'/'-P'). "
+     "Prefer references/definitions over search for 'where is X used/defined'.\n"
     "- A failing test is a real signal: fix the implementation - never weaken "
     "or delete an assertion just to make it pass. Only change a test if the "
     "test itself is demonstrably wrong, and say why.\n"

@@ -28,8 +28,11 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "search",
             "description": (
-                "Search workspace files for text. Returns matching file paths "
-                "with line numbers. Use this to locate code before editing it."
+                "Search workspace files for LITERAL text (not regex). Returns "
+                "matching file paths with line numbers. Use this to locate code "
+                "before editing it. 'path' may be a directory or a single file. "
+                "'include' (glob) narrows by file name. For regex, use the git "
+                "tool with 'git grep -E'/'git grep -P' instead."
             ),
             "parameters": {
                 "type": "object",
@@ -37,7 +40,19 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
                     "query": {"type": "string", "description": "Text to search for"},
                     "path": {
                         "type": "string",
-                        "description": "Directory to search (default: workspace root)",
+                        "description": (
+                            "Directory OR single file to search (default: "
+                            "workspace root). A file path searches that one "
+                            "file instead of returning no matches."
+                        ),
+                    },
+                    "include": {
+                        "type": "string",
+                        "description": (
+                            "Optional glob restricting file names, e.g. '*.py' "
+                            "or '*.{py,md}'. Use to avoid noise from config, "
+                            "docs and generated files."
+                        ),
                     },
                 },
                 "required": ["query"],
@@ -487,6 +502,13 @@ NLP_TOOL_SCHEMAS: list[dict[str, Any]] = [
                     "symbol": {
                         "type": "string",
                         "description": "Symbol name to locate",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": (
+                            "Optional directory or file to restrict the scan "
+                            "(default: whole workspace)."
+                        ),
                     },
                     "max_results": {
                         "type": "integer",

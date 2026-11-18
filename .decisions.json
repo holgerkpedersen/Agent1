@@ -4068,5 +4068,315 @@
     "status": "active",
     "category": "autonomous",
     "source": "agent"
+  },
+  {
+    "id": "186",
+    "date": "2026-11-17T16:30:41+00:00",
+    "title": "Change or",
+    "context": "commit 359ed992bab06a941e5af38cd48ffb9b943f0c36 Author: Holger <holgerkpedersen@gmail.com> Date: Tue Nov 17 09:45:49 2026 +0100 fix(kanban-bridge): consume stale card->issue mappings instead of retryi",
+    "decision": "git modified or without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [],
+    "tags": [
+      "autonomous",
+      "git"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "187",
+    "date": "2026-11-17T22:48:32+00:00",
+    "title": "Change applications/ansoegning_13_industrienspension.md",
+    "context": "Written C:\\Dev\\Agent1\\applications\\ansoegning_13_industrienspension.md (4209 bytes)",
+    "decision": "write modified applications/ansoegning_13_industrienspension.md without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [],
+    "tags": [
+      "autonomous",
+      "write"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "188",
+    "date": "2026-11-17T22:49:32+00:00",
+    "title": "Change applications/ansoegning_14_sgav.md",
+    "context": "Written C:\\Dev\\Agent1\\applications\\ansoegning_14_sgav.md (5306 bytes)",
+    "decision": "write modified applications/ansoegning_14_sgav.md without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [],
+    "tags": [
+      "autonomous",
+      "write"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "189",
+    "date": "2026-11-17T23:08:45+00:00",
+    "title": "Change in",
+    "context": "C:\\Users\\Holger\\AppData\\Roaming\\Python\\Python312\\site-packages\\fitz\\__init__.py:17: FutureWarning: The `fitz` API is deprecated and will be removed in future.",
+    "decision": "run modified in without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [],
+    "tags": [
+      "autonomous",
+      "run"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "190",
+    "date": "2026-11-17T23:36:21+00:00",
+    "title": "Change 14",
+    "context": "removed 14",
+    "decision": "run modified 14 without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [],
+    "tags": [
+      "autonomous",
+      "run"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "191",
+    "date": "2026-11-18T00:08:18+00:00",
+    "title": "Change _ji_fetch.py",
+    "context": "Written C:\\Dev\\Agent1\\_ji_fetch.py (748 bytes) [verify] py_compile ✓ [verify] ruff ✓",
+    "decision": "write modified _ji_fetch.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [],
+    "tags": [
+      "autonomous",
+      "write"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "192",
+    "date": "2026-11-18T00:08:44+00:00",
+    "title": "Change _ji_hist.py",
+    "context": "Written C:\\Dev\\Agent1\\_ji_hist.py (846 bytes) [verify] py_compile ✓ [verify] ruff style 4 (advisory - do not edit again just for formatting): _ji_hist.py:1: E401 [*] Multiple imports on one line; _ji_",
+    "decision": "write modified _ji_hist.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [],
+    "tags": [
+      "autonomous",
+      "write"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "193",
+    "date": "2026-11-18T00:09:34+00:00",
+    "title": "Change _ji_ads.py",
+    "context": "Written C:\\Dev\\Agent1\\_ji_ads.py (908 bytes) [verify] py_compile ✓ [verify] ruff style 1 (advisory - do not edit again just for formatting): _ji_ads.py:1: F401 [*] `sys` imported but unused",
+    "decision": "write modified _ji_ads.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [],
+    "tags": [
+      "autonomous",
+      "write"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "194",
+    "date": "2026-11-18T00:10:26+00:00",
+    "title": "Change _ji_apply.py",
+    "context": "Written C:\\Dev\\Agent1\\_ji_apply.py (671 bytes) [verify] py_compile ✓ [verify] ruff style 1 (advisory - do not edit again just for formatting): _ji_apply.py:13: E501 Line too long (143 > 88)",
+    "decision": "write modified _ji_apply.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [],
+    "tags": [
+      "autonomous",
+      "write"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "195",
+    "date": "2026-11-18T00:10:44+00:00",
+    "title": "Change _ji_track.py",
+    "context": "Written C:\\Dev\\Agent1\\_ji_track.py (883 bytes) [verify] py_compile ✓ [verify] ruff style 1 (advisory - do not edit again just for formatting): _ji_track.py:17: E501 Line too long (154 > 88)",
+    "decision": "write modified _ji_track.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [],
+    "tags": [
+      "autonomous",
+      "write"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "196",
+    "date": "2026-11-18T00:11:52+00:00",
+    "title": "Change applications/ansoegning_15_jyskebank.md",
+    "context": "Written C:\\Dev\\Agent1\\applications\\ansoegning_15_jyskebank.md (5490 bytes)",
+    "decision": "write modified applications/ansoegning_15_jyskebank.md without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [],
+    "tags": [
+      "autonomous",
+      "write"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "197",
+    "date": "2026-11-18T00:16:27+00:00",
+    "title": "Change _ji_cv.py",
+    "context": "Written C:\\Dev\\Agent1\\_ji_cv.py (748 bytes) [verify] py_compile ✓ [verify] ruff style 2 (advisory - do not edit again just for formatting): _ji_cv.py:1: E401 [*] Multiple imports on one line; _ji_cv.p",
+    "decision": "write modified _ji_cv.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [],
+    "tags": [
+      "autonomous",
+      "write"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "198",
+    "date": "2026-11-18T00:33:56+00:00",
+    "title": "Change _ji_cv2.py",
+    "context": "Written C:\\Dev\\Agent1\\_ji_cv2.py (840 bytes) [verify] py_compile ✓ [verify] ruff style 2 (advisory - do not edit again just for formatting): _ji_cv2.py:1: E401 [*] Multiple imports on one line; _ji_cv",
+    "decision": "write modified _ji_cv2.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [],
+    "tags": [
+      "autonomous",
+      "write"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "199",
+    "date": "2026-11-18T00:34:12+00:00",
+    "title": "Change _ji_cv3.py",
+    "context": "Written C:\\Dev\\Agent1\\_ji_cv3.py (1385 bytes) [verify] py_compile ✓ [verify] ruff style 1 (advisory - do not edit again just for formatting): _ji_cv3.py:1: E401 [*] Multiple imports on one line",
+    "decision": "write modified _ji_cv3.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [],
+    "tags": [
+      "autonomous",
+      "write"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "200",
+    "date": "2026-11-18T09:10:58+00:00",
+    "title": "Change skills/playwright/SKILL.md",
+    "context": "Written C:\\Dev\\Agent1\\skills\\playwright\\SKILL.md (8185 bytes)",
+    "decision": "write modified skills/playwright/SKILL.md without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "skills/playwright/SKILL.md"
+    ],
+    "tags": [
+      "autonomous",
+      "write"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "201",
+    "date": "2026-11-18T13:07:24+00:00",
+    "title": "Change mcp.json",
+    "context": "Written C:\\Dev\\Agent1\\mcp.json (696 bytes)",
+    "decision": "write modified mcp.json without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "mcp.json"
+    ],
+    "tags": [
+      "autonomous",
+      "write"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "202",
+    "date": "2026-11-18T15:39:58+00:00",
+    "title": "Change 14\",",
+    "context": "diff --git a/.decisions.json b/.decisions.json index 9c147fa..c2441de 100644 --- a/.decisions.json +++ b/.decisions.json @@ -4068,5 +4068,303 @@ \"status\": \"active\", \"category\": \"autonomous\", \"source\":",
+    "decision": "git modified 14\", without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [],
+    "tags": [
+      "autonomous",
+      "git"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
   }
 ]

@@ -876,5 +876,23 @@
     "created_at": "2026-11-17T11:49:22+00:00",
     "resolved_at": null,
     "parent_card_id": "d7e09002e0324473a7e5e95a09299ed6"
+  },
+  {
+    "id": "iss-general-kanban_33e652cef1f34b7fb4395857a73e4db7",
+    "title": "Playwright on https://jobindex.dk",
+    "category": "general",
+    "severity": "low",
+    "locations": [
+      "kanban:33e652cef1f34b7fb4395857a73e4db7"
+    ],
+    "status": "open",
+    "autonomy_level": 1,
+    "evidence": "Use playwright to find jobs fitting my CV on https://jobindex.dk My CV is already on the site. I login with a Google Account, but you are not allowed to log in, så you can work on it while I am logged in to the site.",
+    "suggested_approach": "Use playwright to find jobs fitting my CV on http://jobindex.dk My CV is already on the site. I login with a Google Account, but you are not allowed to log in, så you can work on it while I am logged in to the site.",
+    "decision_ref": null,
+    "repair_ref": null,
+    "created_at": "2026-11-17T17:25:08+00:00",
+    "resolved_at": null,
+    "parent_card_id": "33e652cef1f34b7fb4395857a73e4db7"
   }
 ]

@@ -246,8 +246,10 @@ def collect_definitions(source: str, filename: str = "") -> str:
     return _agent_module_attr("collect_definitions")(source, filename=filename)
 
 
-def collect_references(symbol: str, ws_dir: str, max_results: int) -> str:
-    return _agent_module_attr("collect_references")(symbol, ws_dir, max_results)
+def collect_references(
+    symbol: str, ws_dir: str, max_results: int, path: str | None = None
+) -> str:
+    return _agent_module_attr("collect_references")(symbol, ws_dir, max_results, path)
 
 
 def read_text_preserving(path: str):
@@ -655,11 +657,14 @@ async def _nlp_references(agent: "Agent", args: dict[str, Any]) -> str:
     except (TypeError, ValueError):
         max_results = 60
     _agent_attr(agent, "_note_effect")(agent.workspace)
+    ref_path = args.get("path")
+    ref_path = str(ref_path).strip() if ref_path else None
     return await asyncio.to_thread(
         collect_references,
         symbol,
         _effective_ws_dir(agent),
         max_results,
+        ref_path,
     )
 
 
@@ -880,12 +885,16 @@ async def _nlp_search(agent: "Agent", args: dict[str, Any]) -> str:
     """Search workspace files for text (first 30 matches)."""
     query = str(args.get("query", ""))
     search_path = _agent_attr(agent, "_resolve_nlp_path")(str(args.get("path") or "."))
+    include = args.get("include")
+    include = str(include).strip() if include else None
     try:
-        found = await agent.searcher.search(query, search_path)
+        found = await agent.searcher.search(query, search_path, include=include)
     except Exception as e:
         return f"Search error: {e}"
     if not found or found == "No matches found":
         return _search_no_hit_message(query)
+    if found.startswith("No such path:"):
+        return found
     _agent_attr(agent, "_note_effect")(search_path)
     lines = found.splitlines()
     return "\n".join(f"  {line}" for line in lines[:30])
