@@ -894,5 +894,23 @@
     "created_at": "2026-11-17T17:25:08+00:00",
     "resolved_at": null,
     "parent_card_id": "33e652cef1f34b7fb4395857a73e4db7"
+  },
+  {
+    "id": "iss-general-kanban_caf17c348b0c4d9dbdaf58989f6504cd",
+    "title": "Kanban cards with duplicated  tags",
+    "category": "general",
+    "severity": "low",
+    "locations": [
+      "kanban:caf17c348b0c4d9dbdaf58989f6504cd"
+    ],
+    "status": "open",
+    "autonomy_level": 1,
+    "evidence": "Make sure tags are not duplicated in Kanban Cards.\n\nLook at Kanban Card id 1f48f07131b74b9ba37124000033c1fc for the issue",
+    "suggested_approach": "Make sure tags are not duplicated in Kanban Cards",
+    "decision_ref": null,
+    "repair_ref": null,
+    "created_at": "2026-11-18T19:31:50+00:00",
+    "resolved_at": null,
+    "parent_card_id": "caf17c348b0c4d9dbdaf58989f6504cd"
   }
 ]
