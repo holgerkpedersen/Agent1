@@ -222,3 +222,8 @@ reports/mcp/
 
 # Scratch / debug output files (e.g. _tmp_* written by tests or ad-hoc runs)
 _tmp_*
+
+# Quarantine for retired scratch files/dirs (Chrome profile copies, jobindex
+# probes, temp DBs).  Staged here so nothing is destroyed; delete by hand once
+# confirmed unneeded.
+.scratch-quarantine/
