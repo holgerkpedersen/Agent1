@@ -66,6 +66,10 @@ rag-embeddings = [
 strata-download = [
     "huggingface-hub>=0.23",
 ]
+# Terminal markdown preview for LLM chat output (rich package).
+rich = [
+    "rich>=13.0",
+]
 dev = [
     # The build backend named in [build-system].  tests/test_packaging_metadata.py
     # builds a real wheel with `pip wheel`; when setuptools is absent from this
@@ -102,6 +106,8 @@ dev = [
     # is importable without huggingface_hub (its use is a lazy import), and
     # the download tests mock hf_hub_download, so no network is needed.
     "huggingface-hub>=0.23",
+    # Terminal markdown preview for LLM chat output.
+    "rich>=13.0",
     # The live Hub checks at the bottom of tests/test_strata_download.py do
     # `import requests` inside the test body.  No first-party module imports
     # requests and current huggingface-hub no longer depends on it, so on a

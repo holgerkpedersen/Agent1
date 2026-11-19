@@ -438,3 +438,103 @@ def test_relative_escape_target_is_never_recorded(tmp_path: Path) -> None:
         user_input="investigate the bug",
     )
     assert found == []
+
+
+# ---------------------------------------------------------------------------
+# Regression: prose is not a file path (ledger pollution)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        "once",
+        "cards",
+        "(idempotent),",
+        "done",
+        "echo",
+        "git",
+        "status",
+        "py_compile",
+        "F821",
+        "pytest passed.",
+        "a b c",
+        "src/mod.py:42",
+        "agent_core/security/`",
+        "x" * 300,
+    ],
+)
+def test_prose_tokens_are_never_path_targets(token: str) -> None:
+    """A word from a result sentence resolves against the workspace happily.
+
+    Regression: ``workspace_paths`` accepted every string it was given, so the
+    prose of ``run`` results became ledger entries — "Delete once",
+    "Change cards", "Change (idempotent)," (decisions #211-#215) — each with an
+    ``affected_file`` that never existed and therefore reported stale forever.
+    """
+    from agent_core.decisions import looks_like_path, workspace_paths
+
+    assert not looks_like_path(token)
+    assert workspace_paths(Path.cwd(), [token]) == []
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        "agent_core/decisions.py",
+        ".decisions.json",
+        "tests/test_decisions.py",
+        "README.md",
+        "notes/plan.md",
+        "agent_core/security/",
+        "x.py",
+    ],
+)
+def test_real_path_shapes_still_pass_the_gate(token: str) -> None:
+    """The prose gate must not silence genuine targets (incl. deleted ones)."""
+    from agent_core.decisions import looks_like_path
+
+    assert looks_like_path(token)
+
+
+def test_shell_prose_records_no_file_decision(tmp_path: Path) -> None:
+    """A shell command's words are not the files it touched."""
+    found = detect_autonomous_decisions(
+        tmp_path,
+        "run",
+        {"command": "git diff --stat && echo done"},
+        "1 file changed, 90 insertions(+)\ndone\n",
+        user_input="check what changed",
+    )
+    assert [c["affected_files"] for c in found] == []
+
+
+def test_shell_delete_still_records_its_target(tmp_path: Path) -> None:
+    """The gate must keep the one real signal a shell delete leaves behind."""
+    (tmp_path / "gone.py").write_text("x", encoding="utf-8")
+    found = detect_autonomous_decisions(
+        tmp_path,
+        "run",
+        {"command": "del gone.py"},
+        "Deleted gone.py",
+        user_input="clean up the scratch files",
+    )
+    assert len(found) == 1
+    assert found[0]["affected_files"] == ["gone.py"]
+    assert found[0]["title"] == "Delete gone.py"
+
+
+def test_prose_words_never_reach_the_ledger(tmp_path: Path) -> None:
+    """End-to-end: the #211-#215 shape produces no ledger entries at all."""
+    stored = record_autonomous_decisions(
+        tmp_path,
+        detect_autonomous_decisions(
+            tmp_path,
+            "run",
+            {"command": "python -c \"print('Delete once')\" && echo cards"},
+            "Delete once\n(idempotent),\ncards\n",
+            user_input="check the output",
+        ),
+    )
+    assert stored == []
+    assert load_decisions(tmp_path) == []

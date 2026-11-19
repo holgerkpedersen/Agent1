@@ -39,6 +39,47 @@ AUTONOMOUS_TAG = "autonomous"
 #: Marker that a ledger decision came from execution rather than a human.
 SOURCE_AUTONOMOUS = "agent"
 
+#: A file path has at most this many name components, and each component is at
+#: most this long (255 is the on-disk limit on every filesystem in use).  Used
+#: by :func:`looks_like_path` to reject prose.
+_MAX_PATH_PARTS = 8
+_MAX_PATH_PART_LEN = 255
+
+#: Characters that never appear inside a real path token: shell operators,
+#: quotes, brackets, globbing and punctuation tails.  A candidate carrying one
+#: of these is prose (``(idempotent),``) or a command, not a file.
+_NON_PATH_CHARS = frozenset("&|;<>$`'\"()[]{}*?!^~,%#")
+
+#: Words that read exactly like a path and are never one: the words shell
+#: operators are described with in prose (``git status && echo done`` -> the
+#: segment ``echo done``).  A real identifier is not an English word, so
+#: rejecting this list costs nothing.
+_PROSE_PATH_WORDS = frozenset(
+    {
+        "and",
+        "then",
+        "done",
+        "ok",
+        "the",
+        "a",
+        "an",
+        "to",
+        "for",
+        "with",
+        "once",
+        "again",
+        "cards",
+        "test",
+        "tests",
+        "true",
+        "false",
+        "none",
+        "null",
+        "yes",
+        "no",
+    }
+)
+
 #: Append-only JSONL log of *observed* autonomous tool calls (Phase 1).
 #: One line per detected call; :func:`record_autonomous_decisions` turns the
 #: findings into ledger entries and records which ones it stored.  The log is
@@ -369,19 +410,105 @@ def _outside_workspace(workspace: str | Path, value: str) -> bool:
     return False
 
 
+def looks_like_path(value: str) -> bool:
+    """True when *value* is plausibly a file path and not prose.
+
+    A decision record's ``affected_files`` is a claim about repository state,
+    so every path-shaped string the agent typed must not become a target.  The
+    detector collects paths from tool **arguments** (the keys of
+    :data:`_PATH_ARG_KEYS`) and from result **prose** (:data:`_DELETED_PATH_RE`
+    and friends), and both sources contain ordinary words:
+
+    - ``run`` with ``command="git status && echo done"`` yields the shell
+      segment ``echo done``, whose first token is a command, not a file.
+    - A result sentence yields its nouns — "Delete once", "Change cards",
+      ``(idempotent),`` — and a bare word resolves against the workspace
+      perfectly well (``once`` -> ``<workspace>/once``), so the path checks in
+      :func:`_outside_workspace` / :func:`_canonical_rel` cannot reject it.
+
+    A token is a path candidate only when all of these hold:
+
+    - one name, or a directory **chain** (the prose token regex
+      :data:`_PATH_TOKEN_RE` matches the chain form);
+    - every component is a plausible filesystem name — non-empty, at most
+      :data:`_MAX_PATH_PART_LEN` characters, and free of
+      :data:`_NON_PATH_CHARS` (shell operators, quotes, brackets, globbing,
+      punctuation tails) and of whitespace;
+    - it carries a path signal: a separator, an extension, a leading ``.``,
+      or a drive-letter root;
+    - it is not one of the prose words in :data:`_PROSE_PATH_WORDS` (which
+      covers the single-word case with no extension, e.g. ``once``, ``cards``).
+
+    Real targets pass: ``agent_core/decisions.py``, ``.decisions.json``,
+    ``tests/test_decisions.py``, ``C:\\Dev\\Agent1\\x.py``, and a file that has
+    just been deleted (existence is never required — a delete target is absent
+    by definition).  A location reference such as ``decisions.py:738`` is **not**
+    a target: it names a place inside a file, so the file it points at is not
+    the thing that changed.
+    """
+    raw = str(value or "").strip()
+    if not raw:
+        return False
+    lowered = raw.lower()
+    if lowered in _PROSE_PATH_WORDS:
+        return False
+
+    drive_root = bool(re.match(r"^[a-z]:[\\/]", lowered))
+    # Strip a trailing separator (a directory marker, e.g. the ``agent_core/``
+    # the prose regex matches) and split into components.
+    stripped = raw.rstrip("/\\")
+    parts = [p for p in re.split(r"[/\\]+", stripped) if p]
+    has_chain = len(parts) > 1
+
+    # ``decisions.py:738`` / ``src/mod.py:42`` is a line reference, not a path.
+    # A colon is a Windows stream separator (``file:stream``) and never part of
+    # a name on any filesystem in use, so a component carrying one is prose —
+    # except the drive root, which the regex above already accepted.
+    for index, part in enumerate(parts):
+        if len(part) > _MAX_PATH_PART_LEN:
+            return False
+        if ":" in part and not (index == 0 and drive_root):
+            return False
+        if any(ch in _NON_PATH_CHARS for ch in part):
+            return False
+        if re.search(r"\s", part):
+            return False
+
+    # A single bare word with no extension is prose unless it starts with a
+    # dot (``.decisions.json``).  ``once`` / ``cards`` die here; ``x.py`` and
+    # ``README``-style names keep going (the word list above already caught
+    # the English ones).
+    if not has_chain:
+        return "." in parts[0]
+
+    # A chain needs at least one real name; a trailing separator
+    # (``agent_core/security/``) is a directory marker the prose regex
+    # deliberately matches.
+    return True
+
+
 def workspace_paths(workspace: str | Path, values: Any) -> list[str]:
-    """Workspace-relative form of every path-like *values* entry, in order.
+    """Workspace-relative form of every **path-like** entry in *values*.
 
     *values* may be a single string, a list of strings, or arbitrary argument
-    values (non-strings are skipped).  Paths that do not exist on disk are
-    kept: an action's target describes intent, and a delete target is absent
-    by definition.  Paths outside *workspace* are dropped — they are not
-    repository evidence (see :func:`_outside_workspace`).
+    values (non-strings are skipped).  An entry is only a path candidate when
+    :func:`looks_like_path` accepts it — the arguments of a tool call and the
+    prose of a result text contain ordinary words, and an ordinary word resolves
+    against the workspace just fine (``once`` -> ``C:\\Dev\\Agent1\\once``), so
+    without that gate every ``run`` result turns its vocabulary into ledger
+    entries.  See :func:`looks_like_path` for what counts as a path.
+
+    Paths that do not exist on disk are kept: an action's target describes
+    intent, and a delete target is absent by definition.  Paths outside
+    *workspace* are dropped — they are not repository evidence (see
+    :func:`_outside_workspace`).
     """
     items = values if isinstance(values, (list, tuple)) else [values]
     out: list[str] = []
     for item in items:
         if not isinstance(item, str):
+            continue
+        if not looks_like_path(item):
             continue
         if _outside_workspace(workspace, item):
             continue

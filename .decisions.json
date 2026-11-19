@@ -4532,5 +4532,230 @@
     "status": "active",
     "category": "autonomous",
     "source": "agent"
+  },
+  {
+    "id": "211",
+    "date": "2026-11-19T14:14:25+00:00",
+    "title": "Delete once",
+    "context": "VISORY_HINT`, `_ITEM_CODE_RE`, `_ruff_code`, `_is_blocking_ruff_violation`, two-tier `_lint_file`, skip message), `agent_core/shell_utils.py` (WORKING METHOD step 3 + run-what-you-write and report-fai",
+    "decision": "run removed once without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [],
+    "tags": [
+      "autonomous",
+      "run"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "212",
+    "date": "2026-11-19T14:15:36+00:00",
+    "title": "Change (idempotent),",
+    "context": "y` (new, 17 tests), `docs/INTEGRATION_KANBAN_AGENT1.md`, `skills/kanban-card-work/SKILL.md`.",
+    "decision": "run modified (idempotent), without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [],
+    "tags": [
+      "autonomous",
+      "run"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "213",
+    "date": "2026-11-19T14:15:41+00:00",
+    "title": "Delete cards",
+    "context": "_bridge.py tests/test_kanban_roundtrip.py -q --no-cov` -> 88 passed.",
+    "decision": "run removed cards without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [],
+    "tags": [
+      "autonomous",
+      "run"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "214",
+    "date": "2026-11-19T14:19:00+00:00",
+    "title": "Change once",
+    "context": "diff --git a/.decisions.json b/.decisions.json index 24034d3..d0d67e8 100644 --- a/.decisions.json +++ b/.decisions.json @@ -4532,5 +4532,59 @@ \"status\": \"active\", \"category\": \"autonomous\", \"source\":",
+    "decision": "run modified once without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [],
+    "tags": [
+      "autonomous",
+      "run"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "215",
+    "date": "2026-11-19T14:19:01+00:00",
+    "title": "Change cards",
+    "context": "diff --git a/.decisions.json b/.decisions.json index 24034d3..d0d67e8 100644 --- a/.decisions.json +++ b/.decisions.json @@ -4532,5 +4532,59 @@ \"status\": \"active\", \"category\": \"autonomous\", \"source\":",
+    "decision": "run modified cards without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [],
+    "tags": [
+      "autonomous",
+      "run"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "216",
+    "date": "2026-11-19T16:12:03+00:00",
+    "title": "Change agent_core/decisions.py",
+    "context": "Edited C:\\Dev\\Agent1\\agent_core\\decisions.py [verify] py_compile ✓ [verify] ruff ✓",
+    "decision": "edit modified agent_core/decisions.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "agent_core/decisions.py"
+    ],
+    "tags": [
+      "autonomous",
+      "edit"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "217",
+    "date": "2026-11-19T16:32:59+00:00",
+    "title": "Change tests/test_autonomous_decisions.py",
+    "context": "Edited C:\\Dev\\Agent1\\tests\\test_autonomous_decisions.py [verify] py_compile ✓ [verify] ruff ✓",
+    "decision": "edit modified tests/test_autonomous_decisions.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "tests/test_autonomous_decisions.py"
+    ],
+    "tags": [
+      "autonomous",
+      "edit"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "218",
+    "date": "2026-11-19T16:34:40+00:00",
+    "title": "Delete ones).\"\"\"",
+    "context": "============================= test session starts ============================= platform win32 -- Python 3.12.10, pytest-9.0.3, pluggy-1.6.0 rootdir: C:\\Dev\\Agent1 configfile: pyproject.toml plugins:",
+    "decision": "run removed ones).\"\"\" without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [],
+    "tags": [
+      "autonomous",
+      "run"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "219",
+    "date": "2026-11-19T17:05:11+00:00",
+    "title": "Delete ones)./\"/\"/\"",
+    "context": "diff --git a/.decisions.json b/.decisions.json index 24034d3..457afb7 100644 --- a/.decisions.json +++ b/.decisions.json @@ -4532,5 +4532,153 @@ \"status\": \"active\", \"category\": \"autonomous\", \"source\":",
+    "decision": "git removed ones)./\"/\"/\" without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [],
+    "tags": [
+      "autonomous",
+      "git"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "220",
+    "date": "2026-11-19T17:05:11+00:00",
+    "title": "Delete (existence",
+    "context": "diff --git a/.decisions.json b/.decisions.json index 24034d3..457afb7 100644 --- a/.decisions.json +++ b/.decisions.json @@ -4532,5 +4532,153 @@ \"status\": \"active\", \"category\": \"autonomous\", \"source\":",
+    "decision": "git removed (existence without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [],
+    "tags": [
+      "autonomous",
+      "git"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "221",
+    "date": "2026-11-19T17:05:11+00:00",
+    "title": "Delete gone.py\",",
+    "context": "diff --git a/.decisions.json b/.decisions.json index 24034d3..457afb7 100644 --- a/.decisions.json +++ b/.decisions.json @@ -4532,5 +4532,153 @@ \"status\": \"active\", \"category\": \"autonomous\", \"source\":",
+    "decision": "git removed gone.py\", without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [],
+    "tags": [
+      "autonomous",
+      "git"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "222",
+    "date": "2026-11-19T17:11:14+00:00",
+    "title": "Autonomous-decision path gate: prose tokens are not file targets",
+    "context": "Ledger entries 211-215 and 218 recorded Delete once / Change cards / Change (idempotent), from the prose of run results: workspace_paths accepted every string, and a bare word resolves against the workspace, so every run result turned its vocabulary into entries that report stale forever.",
+    "decision": "Added looks_like_path() in agent_core/decisions.py as a gate inside workspace_paths: a token is a path only when it is one name with an extension or leading dot, or a directory chain, with every component free of shell operators, quotes, brackets, whitespace, colons (line refs) and punctuation tails, not in _PROSE_PATH_WORDS, max 255 chars, max 8 components. Existence is never required - a delete target is absent by definition.",
+    "rationale": "The detector harvests paths from tool arguments AND result prose; prose is unbounded vocabulary, so the gate must classify shape, not existence. A location reference names a place inside a file, not a changed file, so it is not a target.",
+    "affected_files": [
+      "agent_core/decisions.py",
+      "tests/test_autonomous_decisions.py"
+    ],
+    "tags": [
+      "autonomous",
+      "decisions",
+      "path-gate",
+      "ledger-pollution"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "",
+    "source": "agent"
   }
 ]

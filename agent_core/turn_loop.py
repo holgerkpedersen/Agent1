@@ -753,7 +753,12 @@ def _finish_turn(
         print()
     if clean.strip():
         if not getattr(loop, "final_answer_streamed", False):
-            print(green(clean))
+            try:
+                from agent_core.rich_render import render_markdown
+
+                render_markdown(clean)
+            except Exception:
+                print(green(clean))
     else:
         print(yellow(_final_answer_fallback()))
     if agent.is_plan_mode() and clean.strip():

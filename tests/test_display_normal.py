@@ -502,7 +502,7 @@ def test_finish_turn_prints_normal_footer_not_self_review(monkeypatch, capsys):
     )
 
     out = capsys.readouterr().out
-    assert "All done: `normal` is wired." in out
+    assert "All done: normal is wired." in out
     assert "✓ done" in out
     assert "3 steps" in out
     assert "1 file changed" in out
