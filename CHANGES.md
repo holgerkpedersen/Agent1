@@ -1,3 +1,15 @@
+## 2026-11-19 - fix(metrics): `record_token_histograms` silently recorded nothing
+
+**Change**: two broken references in `harnessfix/scoring.py::record_token_histograms` are replaced with the real seams. The collector is now resolved through `get_metrics_collector()` from `agent_core.monitoring.metrics_bridge` (the process-wide singleton) when the caller passes none, and `append_event` is imported from `agent_core.monitoring.metrics_file`, where it lives. `token_histogram_samples` also defends its input: `usage = normalize_token_usage(tokens) or {}`, because that helper returns `None` — its documented contract — when no count is usable.
+
+**Reason**: both names the helper reached for do not exist. `MetricsCollector.get_instance()` is not a method on that class, and `metrics_collector` has never exported `append_event`. Each raised `AttributeError` **inside the helper's own `try/except Exception`**, so every call returned `{}` and wrote no samples — no traceback, no log line, no failing test. That self-swallowing shape is why it survived: the failure mode is indistinguishable from "there was nothing to record". The only real caller is `agent_core/plan_execution/plan_finish_eval.py:210`, which passes no collector at all and so took the broken branch every time; plan-finish token histograms have therefore never been recorded. A second latent defect sat behind the first: with `tokens=None` reaching `token_histogram_samples`, `normalize_token_usage()` returned `None` and the attribute access on it raised — also inside the same swallow.
+
+**Files**: `harnessfix/scoring.py` (`record_token_histograms` collector resolution + import, `token_histogram_samples` None guard), `tests/test_dashboard_tokens.py` (+3 regression tests: explicit-collector path, default-collector path, no-facts no-op).
+
+**Verification**: red/green proof for the new test — with the fix stashed, `test_record_token_histograms_records_to_collector` -> **1 failed**; with it applied -> **1 passed**. Full suite -> `5164 passed, 23 skipped in 8738.70s (2:25:38)`, zero failures. Kanban integration surface (`test_kanban_roundtrip.py`, `test_kanban_bridge.py`, `test_card_modal.py`, `test_linked_cards.py`, `test_kanban_status_contract.py`) -> `63 passed`; the fix touches no board path. Ruff on both changed files -> All checks passed.
+
+**Next**: a helper that swallows its own exception cannot report a defect, so anything in this shape should return a sentinel or log at WARNING when the resolution fails — the same argument as the `[verify] ruff` blocking/advisory split (entry below): a signal that never fires is worse than a noisy one.
+
 ## 2026-11-16 - fix(kanban): a queue whose cursor points past EOF now repairs itself
 
 **Change**: two fixes in `harnessfix/kanban_bridge.py` so the board-to-Agent1 sync cannot go permanently silent behind a stale reader cursor.
