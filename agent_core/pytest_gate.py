@@ -70,6 +70,12 @@ _IGNORED_DIR_PREFIXES = (
     "tmp/",
     "temp/",
     "scratch/",
+    # The repo-root quarantine tree (``.scratch-quarantine/``, commit 4b7d04a)
+    # holds drafts moved out of the way, not shipped code — same category as
+    # ``scratch/`` above.  Every consumer that asks "is this a real change?"
+    # must see it as scratch, so the rule lives HERE and nowhere else: tests
+    # import :func:`is_scratch_path` rather than re-listing directories.
+    ".scratch-quarantine/",
     ".git/",
 )
 

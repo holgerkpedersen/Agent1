@@ -30,6 +30,8 @@ Reproduced root causes
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 
@@ -123,8 +125,17 @@ class TestMoveResolvesCardWithoutIdMapEntry:
         ) is True
         assert issue_store.load_issues() == []
 
-    def test_mapped_but_missing_issue_is_still_an_anomaly(self, store):
-        """A map entry pointing at an absent issue must keep failing loudly."""
+    def test_mapped_but_missing_issue_is_warned_and_unlinked(self, store, caplog):
+        """A map entry pointing at an absent issue is loud, and it self-heals.
+
+        Contract changed in commit ``359ed99`` ("consume stale card->issue
+        mappings instead of retrying"): this case used to return
+        ``False``, so the message retried three times and dead-lettered — the
+        churn behind "Error when moving a Kanban Card".  The mapping is the
+        only thing keeping the dead pointer alive, so the move now warns, drops
+        both directions of the pair and is consumed.  Loudness moved from the
+        return value to the log, so this test asserts the warning.
+        """
         kb, issue_store = store
         issue = _seed(store)
         kb.link_ids(issue["id"], CARD)
@@ -132,7 +143,24 @@ class TestMoveResolvesCardWithoutIdMapEntry:
         ledger[:] = [i for i in ledger if i["id"] != issue["id"]]
         issue_store.save_issues(ledger)
 
-        assert _move(store, "Finished") is False
+        with caplog.at_level(logging.WARNING, logger="harnessfix.kanban_bridge"):
+            moved = _move(store, "Finished")
+
+        assert moved is True, (
+            "a stale mapping must not retry toward dead-letter — the map is the "
+            "only thing holding the pointer, and unlinking it ends the churn"
+        )
+        assert any(
+            "absent from the ledger" in rec.message and "unlinking" in rec.message
+            for rec in caplog.records
+            if rec.levelno == logging.WARNING
+        ), "the anomaly must stay visible in the log, not become a silent no-op"
+
+        mapping = kb._load_id_map()
+        assert CARD not in mapping and issue["id"] not in mapping, (
+            "both directions of the stale pair must be dropped, or every later "
+            "move for this card repeats the same dead pointer"
+        )
 
 
 # ---------------------------------------------------------------------------

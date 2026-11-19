@@ -4396,5 +4396,101 @@
     "status": "active",
     "category": "autonomous",
     "source": "agent"
+  },
+  {
+    "id": "204",
+    "date": "2026-11-18T22:31:39+00:00",
+    "title": "Delete the",
+    "context": "tests/test_autonomous_driver.py:464: f.unlink() tests/test_command_freshness.py:130: f.unlink() tests/test_decisions_review.py:71: (tmp_path / \"gone.py\").unlink() tests/test_fix_helpers.py:68: os.unli",
+    "decision": "run removed the without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [],
+    "tags": [
+      "autonomous",
+      "run"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "205",
+    "date": "2026-11-18T23:19:35+00:00",
+    "title": "Change agent_core/pytest_gate.py",
+    "context": "Edited C:\\Dev\\Agent1\\agent_core\\pytest_gate.py [verify] py_compile ✓ [verify] ruff ✓",
+    "decision": "edit modified agent_core/pytest_gate.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "agent_core/pytest_gate.py"
+    ],
+    "tags": [
+      "autonomous",
+      "edit"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "206",
+    "date": "2026-11-18T23:29:14+00:00",
+    "title": "Change the",
+    "context": "<class 'list'> 205 [{\"id\": \"203\", \"date\": \"2026-11-18T18:20:42+00:00\", \"title\": \"Finished a plan autonomously\", \"context\": \"Error: plan is 'proposed', can only finish an executing plan.\", \"decision\":",
+    "decision": "run modified the without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [],
+    "tags": [
+      "autonomous",
+      "run"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "207",
+    "date": "2026-11-18T23:36:01+00:00",
+    "title": "Change tests/test_kanban_card_move_errors.py",
+    "context": "Edited C:\\Dev\\Agent1\\tests\\test_kanban_card_move_errors.py [verify] py_compile ✓ [verify] ruff ✗ 2 blocking: test_kanban_card_move_errors.py:143: F821 Undefined name `logging`; test_kanban_card_move_e",
+    "decision": "edit modified tests/test_kanban_card_move_errors.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "tests/test_kanban_card_move_errors.py"
+    ],
+    "tags": [
+      "autonomous",
+      "edit"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "208",
+    "date": "2026-11-18T23:38:59+00:00",
+    "title": "Change tests/test_kanban_roundtrip.py",
+    "context": "Edited C:\\Dev\\Agent1\\tests\\test_kanban_roundtrip.py [verify] py_compile ✓ [verify] ruff ✗ 2 blocking: test_kanban_roundtrip.py:331: F821 Undefined name `logging`; test_kanban_roundtrip.py:348: F821 Un",
+    "decision": "edit modified tests/test_kanban_roundtrip.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "tests/test_kanban_roundtrip.py"
+    ],
+    "tags": [
+      "autonomous",
+      "edit"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
   }
 ]

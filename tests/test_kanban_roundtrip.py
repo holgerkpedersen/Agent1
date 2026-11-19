@@ -15,6 +15,7 @@ absorbs the echo.
 from __future__ import annotations
 
 import json
+import logging
 import sys
 import uuid
 from pathlib import Path
@@ -307,11 +308,17 @@ def test_mapped_card_move_still_resolves_the_issue(shared_queue, tmp_path, monke
     assert issue is not None and issue["status"] == "resolved"
 
 
-def test_mapped_but_missing_issue_is_a_loud_failure(
-    shared_queue, tmp_path, monkeypatch
+def test_mapped_but_missing_issue_is_warned_and_unlinked(
+    shared_queue, tmp_path, monkeypatch, caplog
 ):
-    """A mapping whose issue vanished from the ledger is a real anomaly: it
-    must keep failing loudly (warning + retry), never be silently consumed."""
+    """A mapping whose issue vanished from the ledger is loud, and it heals.
+
+    Contract changed in commit ``359ed99``: this case used to fail (warning +
+    retry), so each follow-up for such a card churned three times toward
+    dead-letter.  The id map is the only thing keeping the dead pointer alive,
+    so the bridge now warns, unlinks both directions and consumes the message.
+    Loudness lives in the log, so that is what this asserts.
+    """
     store, card_id, _ = _app_with_card(monkeypatch, tmp_path)
     assert kb.process_inbound() == 1
     issue_id = kb.resolve_id(card_id)
@@ -322,11 +329,39 @@ def test_mapped_but_missing_issue_is_a_loud_failure(
     issues[:] = [i for i in issues if i["id"] != issue_id]
     issue_store.save_issues(issues)
 
-    applied = _drain_inbound(
-        shared_queue,
-        {"op": "card_move", "source_id": card_id, "payload": {"frame_title": "Issues"}},
+    with caplog.at_level(logging.WARNING, logger="harnessfix.kanban_bridge"):
+        applied = _drain_inbound(
+            shared_queue,
+            {
+                "op": "card_move",
+                "source_id": card_id,
+                "payload": {"frame_title": "Issues"},
+            },
+        )
+    assert applied == 1, (
+        "mapped-but-missing must be consumed after unlinking — retrying it can "
+        "never add a mapping that no longer exists"
     )
-    assert applied == 0, (
-        "mapped-but-missing is a genuine anomaly — it must not be consumed "
-        "as a quiet no-op"
+
+    assert any(
+        "absent from the ledger" in rec.message and "unlinking" in rec.message
+        for rec in caplog.records
+        if rec.levelno == logging.WARNING
+    ), "the anomaly must stay visible in the log, not become a silent no-op"
+
+    mapping = kb._load_id_map()
+    assert card_id not in mapping and issue_id not in mapping, (
+        "both directions of the stale pair must go, or the next card op repeats "
+        "the same dead pointer"
     )
+
+    queue_dir = shared_queue / "queue-kanban-to-agent1"
+    lines = [
+        ln
+        for ln in (queue_dir / "messages.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if ln.strip()
+    ]
+    assert len(lines) == 2, f"the message was re-queued for retry: {lines}"
+
