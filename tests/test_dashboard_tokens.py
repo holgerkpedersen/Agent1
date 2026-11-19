@@ -104,6 +104,80 @@ def test_record_plan_token_metrics_missing_facts(tmp_path, monkeypatch) -> None:
     assert collector.get_counter_value("plans.finished.count") == 1.0
 
 
+def test_record_token_histograms_records_to_collector(tmp_path, monkeypatch) -> None:
+    """``record_token_histograms`` must reach the collector AND the event file.
+
+    Regression guard: the helper used to call ``MetricsCollector.get_instance()``
+    (no such method) and import ``append_event`` from ``metrics_collector``
+    (it lives in ``metrics_file``).  Both raised inside its own try-block, so
+    every call - including the only real caller, which passes NO collector -
+    recorded nothing at all and returned an empty dict.
+    """
+    from harnessfix.scoring import record_token_histograms
+
+    from agent_core.monitoring import metrics_file as mf
+    from agent_core.monitoring.metrics_collector import MetricsCollector
+
+    events = tmp_path / "events.jsonl"
+    monkeypatch.setattr(mf, "default_events_path", lambda: events)
+
+    collector = MetricsCollector()
+    samples = record_token_histograms(
+        {"prompt_tokens": 120, "completion_tokens": 30, "total_tokens": 150},
+        collector=collector,
+    )
+
+    assert samples == {
+        "tokens.run.prompt": 120.0,
+        "tokens.run.completion": 30.0,
+        "tokens.run.total": 150.0,
+    }
+    for metric in ("tokens.run.prompt", "tokens.run.completion", "tokens.run.total"):
+        assert collector.histogram_summary(metric)["count"] == 1.0
+
+    lines = [json.loads(x) for x in events.read_text(encoding="utf-8").splitlines()]
+    assert {e["name"] for e in lines} == set(samples)
+
+
+def test_record_token_histograms_default_collector(tmp_path, monkeypatch) -> None:
+    """No collector passed -> resolve the process-wide one (the real caller path)."""
+    from harnessfix import scoring
+
+    from agent_core.monitoring import metrics_file as mf
+    from agent_core.monitoring.metrics_collector import MetricsCollector
+
+    events = tmp_path / "events.jsonl"
+    monkeypatch.setattr(mf, "default_events_path", lambda: events)
+
+    collector = MetricsCollector()
+    import agent_core.monitoring.metrics_bridge as mb
+
+    monkeypatch.setattr(mb, "get_metrics_collector", lambda: collector, raising=False)
+
+    samples = scoring.record_token_histograms(
+        {"prompt_tokens": 500, "completion_tokens": 80, "total_tokens": 580}
+    )
+
+    assert samples["tokens.run.prompt"] == 500.0
+    assert collector.histogram_summary("tokens.run.prompt")["mean"] == 500.0
+    assert collector.histogram_summary("tokens.run.total")["mean"] == 580.0
+
+
+def test_record_token_histograms_no_facts_is_noop() -> None:
+    """No usable token facts -> empty dict, no collector writes, no raising."""
+    from harnessfix.scoring import record_token_histograms
+
+    from agent_core.monitoring.metrics_collector import MetricsCollector
+
+    collector = MetricsCollector()
+    assert record_token_histograms(None, collector=collector) == {}
+    assert record_token_histograms({"total_tokens": None}, collector=collector) == {}
+    # Nothing reached the collector: every histogram stays empty.
+    for metric in ("tokens.run.prompt", "tokens.run.completion", "tokens.run.total"):
+        assert collector.histogram_summary(metric)["count"] == 0.0
+    assert collector.all_histogram_samples() == {}
+
+
 # --------------------------------------------------------------------------
 # 2. API contract
 # --------------------------------------------------------------------------

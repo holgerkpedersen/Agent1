@@ -285,7 +285,10 @@ def token_histogram_samples(
     so absent facts never reach the distribution. An empty dict therefore
     means "nothing to record" - never invent a zero.
     """
-    usage = normalize_token_usage(tokens)
+    # ``normalize_token_usage`` returns None when NO count is usable (its
+    # documented contract), so guard it — the previous direct .get() raised
+    # AttributeError on a None/all-unknown usage mapping.
+    usage = normalize_token_usage(tokens) or {}
     out: dict[str, float] = {}
     for key, metric in TOKEN_HISTOGRAM_METRICS.items():
         value = usage.get(key)
@@ -306,17 +309,26 @@ def record_token_histograms(
     Returns the samples it recorded (empty when there are no facts). Never
     raises: a missing/broken collector degrades to a no-op, because metrics
     bookkeeping must not break the run that produced the facts.
+
+    With no *collector* passed, this resolves the process-wide collector
+    itself (:func:`get_metrics_collector`) — the previous form called
+    ``MetricsCollector.get_instance()``, a method that does not exist on the
+    class, and imported ``append_event`` from ``metrics_collector``, where it
+    also does not live (it is in ``metrics_file``).  Both raised
+    ``AttributeError`` inside the try-block, so every call — including the one
+    real caller, which passes no collector at all — silently recorded nothing.
     """
     samples = token_histogram_samples(tokens)
-    if not samples or collector is None:
+    if not samples:
         return {}
     try:
-        from agent_core.monitoring.metrics_collector import (
-            MetricsCollector,
-            append_event,
-        )
+        target = collector
+        if target is None:
+            from agent_core.monitoring.metrics_bridge import get_metrics_collector
 
-        target = collector if collector is not None else MetricsCollector.get_instance()
+            target = get_metrics_collector()
+        from agent_core.monitoring.metrics_file import append_event
+
         for metric, value in samples.items():
             target.record_histogram(metric, value)
             append_event("histogram", metric, value)
