@@ -198,7 +198,7 @@ def test_hidden_wrapper_points_at_the_real_launcher_absolutely():
     assert match, "DEFAULT_LAUNCHER must be declared"
     launcher = PureWindowsPath(match.group(1))
     assert launcher.is_absolute(), f"launcher path must be absolute: {launcher}"
-    assert launcher == SCRIPT, (
+    assert launcher == PureWindowsPath(*SCRIPT.parts), (
         f"wrapper must default to the drain launcher ({SCRIPT}), got {launcher}"
     )
 

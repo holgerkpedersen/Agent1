@@ -878,6 +878,10 @@ def find_stale_decisions(
     """
     stale: list[dict[str, Any]] = []
     for d in decisions:
+        # Only active decisions can be "stale"; void/superseded/archived
+        # records are historical and must not trip the audit.
+        if str(d.get("status", "active")).lower() not in ("", "active"):
+            continue
         missing = [
             f
             for f in d.get("affected_files", [])
