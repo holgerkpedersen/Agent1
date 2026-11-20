@@ -227,3 +227,6 @@ _tmp_*
 # probes, temp DBs).  Staged here so nothing is destroyed; delete by hand once
 # confirmed unneeded.
 .scratch-quarantine/
+
+# The times elapsed on tests files.
+durations.txt
