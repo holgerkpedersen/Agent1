@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import re
 import sys
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "run_kanban_queue_drain.cmd"
@@ -80,7 +80,7 @@ def test_launcher_uses_an_absolute_interpreter_path():
     text = _script_text()
     match = re.search(r'set "PYTHON_EXE=([^"]+)"', text)
     assert match, "PYTHON_EXE must be set explicitly"
-    assert Path(match.group(1)).is_absolute(), (
+    assert PureWindowsPath(match.group(1)).is_absolute(), (
         f"PYTHON_EXE must be absolute, got {match.group(1)!r}"
     )
 
@@ -196,7 +196,7 @@ def test_hidden_wrapper_points_at_the_real_launcher_absolutely():
     text = _wrapper_text()
     match = re.search(r'Const DEFAULT_LAUNCHER\s*=\s*"([^"]+)"', text)
     assert match, "DEFAULT_LAUNCHER must be declared"
-    launcher = Path(match.group(1))
+    launcher = PureWindowsPath(match.group(1))
     assert launcher.is_absolute(), f"launcher path must be absolute: {launcher}"
     assert launcher == SCRIPT, (
         f"wrapper must default to the drain launcher ({SCRIPT}), got {launcher}"

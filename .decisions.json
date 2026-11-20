@@ -4380,9 +4380,10 @@
     ],
     "contradictions": [],
     "resolved_by": null,
-    "status": "active",
+    "status": "void",
     "category": "autonomous",
-    "source": "agent"
+    "source": "agent",
+    "void_reason": "affected file mcp.json not present in workspace; voided 2026-11-20"
   },
   {
     "id": "202",
