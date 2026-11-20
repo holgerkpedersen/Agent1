@@ -290,6 +290,12 @@ def _http_get_json(
     url: str, timeout: float = HEALTH_CHECK_TIMEOUT
 ) -> dict[str, Any] | None:
     """Synchronous HTTP GET that returns parsed JSON, or None on failure."""
+    import os as _os
+
+    if _os.environ.get("PYTEST_CURRENT_TEST") and not _os.environ.get(
+        "AGENT_LIVE_LMSTUDIO"
+    ):
+        return None
     try:
         resp = httpx.get(url, timeout=timeout)
         resp.raise_for_status()

@@ -234,6 +234,10 @@ def _lmstudio_live_models() -> list[dict[str, Any]]:
     """
     from agent_core.llm.lmstudio import get_models_status
 
+    # Live poll: the persisted-model gate must NOT read the process cache,
+    # so a model installed after process start (or a poisoned cache) is
+    # still honoured.  See ``_live_loaded_models`` for the cached variant
+    # used by the first-run fallback.
     return list(get_models_status())
 
 

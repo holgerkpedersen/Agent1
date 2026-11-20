@@ -9,6 +9,7 @@ working on minimal installs.
 """
 from __future__ import annotations
 
+import sys
 from typing import Optional
 
 try:  # pragma: no cover - exercised only when rich is installed
@@ -37,7 +38,12 @@ def render_markdown(text: str, *, style: Optional[str] = None) -> None:
         print(text)
         return
     try:
-        console = Console()
+        # Resolve Console at call time so test patches of ``rich.console.Console``
+        # (and the capsys swap of ``sys.stdout``) take effect.  rich's
+        # module-global console caches the stream it saw at first use.
+        from rich.console import Console as _Console
+
+        console = _Console(file=sys.stdout)
         md = Markdown(text)
         if style:
             console.print(md, style=style)

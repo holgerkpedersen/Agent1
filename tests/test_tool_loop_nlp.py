@@ -1375,6 +1375,10 @@ class TestPersistentChatHistory:
         from agent import Agent
 
         history_file = tmp_path / "chat_history.json"
+
+        class NarrationLLM:
+            def __init__(self):
+                self.calls = 0
         history_file.write_text(
             json.dumps(
                 [
@@ -2756,6 +2760,8 @@ class TestDisplayModes:
         """In CLEAN mode chat_nlp folds a stray 'I will ...' narration into a
         short preamble so the report reads as one coherent answer."""
         import asyncio
+        import io
+        import os
         from unittest.mock import patch
         from agent_core.config import AgentDisplayMode
 
@@ -2785,11 +2791,24 @@ class TestDisplayModes:
                             ],
                         }
                     )
+                # A plain text answer (no tool_calls) — this is the final answer.
                 return "I will read the file and then answer."
 
         from agent import Agent
+        from rich.console import Console as _RealConsole
 
-        with patch("agent.CHAT_HISTORY_JSON_PATH", str(history_file)):
+        class _BufferedConsole(_RealConsole):
+            """rich writes through Console.file, bypassing patched print;
+            route every instance's output into one shared buffer."""
+
+            def __init__(self, *a, **k):
+                super().__init__(*a, **k)
+                self.file = buf
+
+        buf = io.StringIO()
+        with patch("agent.CHAT_HISTORY_JSON_PATH", str(history_file)), patch.dict(
+            os.environ, {"AGENT_DISPLAY_MODE": "clean"}
+        ):
             agent = Agent(workspace=".")
             agent.llm = NarrationLLM()
             captured: list[str] = []
@@ -2798,22 +2817,23 @@ class TestDisplayModes:
                 text = " ".join(str(x) for x in a) if a else ""
                 captured.append(text)
 
-            with patch("builtins.print", side_effect=_spy):
-                with patch(
-                    "agent._resolve_display_mode", return_value=AgentDisplayMode.CLEAN
-                ):
+            with patch("builtins.print", side_effect=_spy), patch(
+                "agent._resolve_display_mode", return_value=AgentDisplayMode.CLEAN
+            ), patch("rich.console.Console", _BufferedConsole):
 
-                    async def go():
-                        await agent.chat_nlp("read a.py")
+                async def go():
+                    await agent.chat_nlp("read a.py")
 
-                    asyncio.run(go())
+                asyncio.run(go())
         assert agent.llm.calls == 2  # tool-narration turn + final-answer turn
         # CLEAN mode printed a [reason] line before the executed tool call.
         reason_lines = [c for c in captured if "[reason]" in str(c)]
         assert reason_lines, "CLEAN should emit a [reason] line per executed call"
+        # The final answer is rendered through rich (Console.file), which
+        # bypasses patched builtins.print — capture it on the buffer.
+        out = buf.getvalue()
         # The final printed answer must be folded into a preamble (not raw narration).
-        last = next((c for c in reversed(captured) if c), "")
-        assert last.startswith("Plan: I will read")
+        assert "Plan: I will read" in out
 
     def test_quiet_chat_nlp_only_prints_final_answer(self, tmp_path, capsys):
         """In QUIET mode chat_nlp must not print [tool]/[result] lines; only the
