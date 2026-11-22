@@ -51,7 +51,7 @@
       color: var(--chat-text);
       font-family: 'Poppins', sans-serif;
       margin: 0;
-      padding: 24px;
+      padding: 20px 24px 24px;
     }
     .wrap { max-width: 900px; margin: 0 auto; }
     h1 { font-size: 1.35rem; font-weight: 700; display: flex; align-items: center; gap: 10px; }
@@ -283,6 +283,99 @@
     .msg:hover .msg-action, .msg:focus-within .msg-action,
     .msg-action:focus-visible { opacity: 1; }
     .msg-action:hover { color: var(--chat-text); border-color: var(--chat-accent); }
+    /* Touch has no hover and no keyboard, so hover-revealed actions are dead
+       controls on a tablet. Devices that cannot hover get them always on. */
+    @media (hover: none) {
+      .msg-action { opacity: 1; }
+    }
+
+    /* -- stopped turn / regenerate / jump to latest -------------------- */
+    /* A turn the user abandoned is neither an answer nor an error: it gets its
+       own muted style so the transcript reads honestly. */
+    .msg.stopped .bubble {
+      border-color: var(--chat-muted);
+      color: var(--chat-muted);
+      background: transparent;
+    }
+    .transcript { position: relative; }
+    .jump-latest {
+      position: absolute; right: 6px; bottom: 6px;
+      border-radius: 999px; font-size: .72rem; padding: 3px 10px;
+      background: var(--chat-card);
+      box-shadow: 0 6px 18px rgba(0,0,0,.4);
+    }
+    .jump-latest[hidden] { display: none; }
+    .msg-link {
+      color: var(--chat-accent);
+      text-decoration: underline;
+      text-underline-offset: 2px;
+      word-break: break-all;
+    }
+    /* Fenced code arrives in almost every agent answer. Rendered as flat text
+       it is unreadable and uncopyable on its own, so each block is its own
+       surface with its own language label and its own copy button. */
+    .code-block {
+      margin: 8px 0;
+      border: 1px solid var(--chat-border);
+      border-radius: 8px;
+      background: rgba(2, 6, 23, .55);
+      overflow: hidden;
+    }
+    .code-block figcaption {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 8px;
+      padding: 4px 8px;
+      border-bottom: 1px solid var(--chat-border);
+      font-size: .7rem;
+      color: var(--chat-muted);
+    }
+    .code-block pre { margin: 0; padding: 10px 12px; overflow-x: auto; }
+    /* The bubble wraps prose; a code block must scroll sideways instead of
+       forcing the transcript wider. */
+    .code-block code {
+      font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+      font-size: .78rem;
+      white-space: pre;
+      word-break: normal;
+      color: var(--chat-text);
+    }
+    .prose { white-space: pre-wrap; word-break: break-word; }
+    /* A running turn pulses, so a slow answer reads as "working", not "stuck".
+       prefers-reduced-motion below turns this off wholesale. */
+    .msg.pending .bubble { animation: chat-pulse 1.4s ease-in-out infinite; }
+    @keyframes chat-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
+
+    /* -- keyboard shortcuts overlay ----------------------------------- */
+    .shortcuts {
+      position: fixed; inset: 0; z-index: 90;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(2,6,23,.62);
+      padding: 20px;
+    }
+    .shortcuts[hidden] { display: none; }
+    .shortcuts-card {
+      background: var(--chat-card);
+      border: 1px solid var(--chat-border);
+      border-radius: 12px;
+      padding: 16px 18px;
+      max-width: 420px; width: 100%;
+      box-shadow: 0 24px 60px rgba(0,0,0,.5);
+    }
+    .shortcuts-card h3 { font-size: .95rem; font-weight: 500; margin: 0 0 10px; }
+    .shortcuts-card dl {
+      display: grid; grid-template-columns: auto 1fr;
+      gap: 6px 12px; margin: 0; font-size: .8rem;
+    }
+    .shortcuts-card dt { white-space: nowrap; }
+    .shortcuts-card dd { margin: 0; color: var(--chat-muted); }
+    .shortcuts-close { margin-top: 14px; }
+
+    /* -- model picker rows: the keyboard highlight --------------------- */
+    /* MUST come after the .slash-item.active rule above: that one names the
+       slash row, this one names the model row, and ``highlightModelRow()``
+       writes both classes. A generic ``.active`` rule here would also paint
+       every slash row. */
+    .model-option.active { background: var(--chat-user); }
 
     /* -- keyboard hints ---------------------------------------------- */
     kbd {
@@ -296,6 +389,27 @@
        say so in the row instead of letting the user discover it by failing. */
     .slash-item.unavailable .name { color: var(--chat-muted); }
     .slash-item.unavailable .summary { text-decoration: line-through; }
+
+    /* -- narrow screens ----------------------------------------------- */
+    /* Measured at 390px: the page scrolled sideways to 565px, and the whole
+       overflow was ONE element - the model name on the right of the toolbar.
+       The name is unbounded ("opencode-go/deepseek-v4.1-flash"), so it must be
+       allowed to shrink and ellipsise instead of pushing the page wider. */
+    @media (max-width: 560px) {
+      body { padding: 14px 12px 18px; }
+      .wrap { max-width: 100%; }
+      .card { padding: 12px; }
+      #messages { max-height: 50vh; }
+      /* Let the badge be the only shrinkable item in the row. */
+      .toolbar { flex-wrap: wrap; row-gap: 8px; }
+      .model-tag {
+        min-width: 0; max-width: 100%;
+        overflow: hidden; text-overflow: ellipsis;
+      }
+      /* Stack the header actions under the title rather than squeezing. */
+      .head-row { flex-wrap: wrap; row-gap: 8px; }
+      .shortcut-hint { display: none; }
+    }
 
     /* Respect the OS motion preference instead of always animating. */
     @media (prefers-reduced-motion: reduce) {
@@ -329,7 +443,11 @@
   <div class="card">
     <h2>Conversation</h2>
     <div class="net-notice" id="netNotice" role="alert" hidden></div>
-    <div id="messages"><div class="empty" id="emptyState">No messages yet - say hello.</div></div>
+    <div class="transcript">
+      <div id="messages"><div class="empty" id="emptyState">No messages yet - say hello.</div></div>
+      <button type="button" class="secondary jump-latest" id="jumpLatest" hidden
+        title="Scroll to the newest message">New messages below</button>
+    </div>
     <!-- Busy/status is announced to assistive tech without stealing focus. -->
     <div class="hint" id="stateLabel" role="status" aria-live="polite"></div>
   </div>
@@ -344,15 +462,35 @@
     <div class="usage-hint" id="usageHint"></div>
     <div class="toolbar">
       <button id="sendBtn">Send</button>
+      <button class="secondary" id="stopBtn" hidden title="Abandon this turn in the browser (the server keeps running it)">Stop</button>
       <button class="secondary" id="slashBtn" title="Show the REPL command list">/ Commands</button>
       <button class="secondary" id="resetBtn" title="Clear the shared conversation and this workspace's agent memory">Reset</button>
       <span class="spacer"></span>
-      <span class="model-tag" id="modelBadge" role="button" tabindex="0" title="Click to insert /model">model: unknown</span>
+      <button class="secondary shortcuts-btn" id="shortcutsBtn" title="Keyboard shortcuts (Ctrl+/)">?</button>
+      <span class="model-tag" id="modelBadge" role="button" tabindex="0" title="Click to change model">model: unknown</span>
     </div>
   </div>
 </div>
 
-<script>
+<!-- Keyboard help. Native <dialog> gives Escape-to-close and a focus trap for
+     free, so the page does not hand-roll them. -->
+<dialog class="shortcuts" id="shortcutsDialog" aria-label="Keyboard shortcuts">
+  <div class="shortcuts-card">
+    <h3>Keyboard shortcuts</h3>
+    <dl>
+      <dt><kbd>Enter</kbd></dt><dd>send the message</dd>
+      <dt><kbd>Shift</kbd>+<kbd>Enter</kbd></dt><dd>new line in the message</dd>
+      <dt><kbd>Ctrl</kbd>+<kbd>K</kbd></dt><dd>focus the message box</dd>
+      <dt><kbd>Ctrl</kbd>+<kbd>/</kbd></dt><dd>show or hide this list</dd>
+      <dt><kbd>/</kbd></dt><dd>open the REPL command list</dd>
+      <dt><kbd>Up</kbd> / <kbd>Down</kbd></dt><dd>move in the open list</dd>
+      <dt><kbd>Tab</kbd> / <kbd>Enter</kbd></dt><dd>pick the highlighted entry</dd>
+      <dt><kbd>Ctrl</kbd>+<kbd>&uarr;</kbd></dt><dd>edit your previous message</dd>
+      <dt><kbd>Escape</kbd></dt><dd>close a menu, skip reading an answer</dd>
+    </dl>
+    <button type="button" id="shortcutsClose" class="shortcuts-close">Close</button>
+  </div>
+</dialog>
 "use strict";
 const $ = (id) => document.getElementById(id);
 const api = {
@@ -404,23 +542,232 @@ function toggleTheme() {
 //  instead of truncating.
 const MAX_ROWS = 40;
 
-async function postJSON(url, body) {
+async function postJSON(url, body, signal) {
   const resp = await fetch(url, {
     method: "POST",
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify(body),
+    signal: signal,
   });
   if (!resp.ok && resp.status !== 200) throw new Error("HTTP " + resp.status);
   return await resp.json();
 }
 
-// Every piece of conversation text is written with textContent: model output is
-// untrusted, so it must never reach an innerHTML sink.
-function addMessage(role, text, cls) {
+/* ---- calling something that may not exist ------------------------------ */
+//
+// This page is a static file talking to whatever dashboard process is serving
+// it, and the two can be out of step (an older backend, a partial deploy, a
+// route that was never implemented here). The difference between "the server
+// said no" and "the server has no such route" is the difference between a bug
+// report and a stale tab, so one helper names it: 404/405/501 mean the route
+// is absent, everything else is a real error.
+
+async function optionalGET(url) {
+  const resp = await fetch(url, {method: "GET"});
+  const absent = resp.status === 404 || resp.status === 405 || resp.status === 501;
+  let data = null;
+  try {
+    data = await resp.json();
+  } catch (e) {
+    data = null;
+  }
+  if (absent || !resp.ok) {
+    return {ok: false, absent: absent || data === null, data: data, status: resp.status};
+  }
+  return {ok: true, absent: false, data: data, status: resp.status};
+}
+
+/* ---- transcript rendering ---------------------------------------------- */
+//
+// Two rules hold for everything below:
+//  1. Model output is untrusted, so it is written with textContent only. Even
+//     the linkify step creates ELEMENTS and sets their textContent - a reply
+//     that contains a script tag stays visible text, never markup.
+//  2. Scrolling follows the newest turn ONLY when the reader is already at the
+//     bottom. An earlier version snapped to the bottom on every append, which
+//     yanked the transcript away while someone was reading back through it.
+
+//: True while the reader sits at the bottom of the transcript.
+let STICK = true;
+
+function isNearBottom() {
+  const box = $("messages");
+  if (!box) return true;
+  return box.scrollHeight - box.scrollTop - box.clientHeight < 24;
+}
+
+function scrollToLatest(force) {
+  const box = $("messages");
+  if (!box) return;
+  if (force) STICK = true;
+  if (STICK) box.scrollTop = box.scrollHeight;
+  showJumpButton(!STICK);
+}
+
+//: Offer "new messages below" instead of stealing the scroll position.
+function showJumpButton(show) {
+  const btn = $("jumpLatest");
+  if (!btn) return;
+  btn.hidden = !show;
+}
+
+//: Turn bare http(s) URLs into real links. Built from DOM nodes on purpose:
+//  assigning anchor markup through innerHTML would reopen the XSS sink that
+//  this page deliberately does not have.
+const URL_RE = /https?:\/\/[^\s<>"'`]+/g;
+
+function linkify(container, text) {
+  container.textContent = "";
+  let last = 0;
+  const matches = text.match(URL_RE) || [];
+  for (const raw of matches) {
+    // Trailing sentence punctuation belongs to the prose, not to the URL.
+    const url = raw.replace(/[.,;:!?\])]+$/, "");
+    const at = text.indexOf(url, last);
+    if (at < 0) continue;
+    if (at > last) {
+      container.appendChild(document.createTextNode(text.slice(last, at)));
+    }
+    const link = document.createElement("a");
+    link.className = "msg-link";
+    link.href = url;
+    link.textContent = url;
+    link.target = "_blank";
+    // noreferrer as well as noopener: the dashboard has no business telling a
+    // third-party site where the click came from.
+    link.rel = "noopener noreferrer";
+    container.appendChild(link);
+    last = at + url.length;
+  }
+  if (last < text.length) {
+    container.appendChild(document.createTextNode(text.slice(last)));
+  }
+  return container;
+}
+
+/* ---- fenced code blocks ------------------------------------------------ */
+//
+// An agent answer is mostly prose with code in it. ``<pre>`` cannot be built by
+// ``linkify()``: a URL inside a code block must stay literal text, not become a
+// link, and the block needs its own copy button. So the reply is split at the
+// fences FIRST and each segment is rendered by the rule that fits it:
+//
+//   prose  -> linkified text node, whitespace preserved by .prose
+//   code   -> <figure class="code-block"><figcaption>lang + copy</figcaption>
+//
+// Every character still reaches the document through ``textContent``.
+
+//: An opening fence: ``` or ~~~, at most 3 spaces of indent, optional language.
+const FENCE_RE = /^ {0,3}(`{3,}|~{3,})[ \t]*([^\n`]*)$/;
+
+//: Split *text* into ordered ``{type, lang, content}`` segments.
+function splitFences(text) {
+  const lines = String(text).split("\n");
+  const segments = [];
+  let prose = [];
+  let block = null;
+  const flushProse = () => {
+    if (!prose.length) return;
+    const content = prose.join("\n");
+    // A trailing newline is whitespace, not content.
+    if (content.trim() !== "") segments.push({type: "prose", content: content});
+    else if (segments.length) segments.push({type: "prose", content: content});
+    prose = [];
+  };
+  for (const line of lines) {
+    const fence = FENCE_RE.exec(line);
+    if (block === null) {
+      if (fence) {
+        flushProse();
+        block = {fence: fence[1][0], len: fence[1].length, lang: fence[2].trim(), lines: []};
+      } else {
+        prose.push(line);
+      }
+      continue;
+    }
+    // Inside a fence: only a fence of the same character, at least as long,
+    // and with nothing after it closes the block. Anything else is content -
+    // code that itself contains ``` must survive intact.
+    if (fence && fence[1][0] === block.fence && fence[1].length >= block.len
+        && fence[2].trim() === "") {
+      segments.push({type: "code", lang: block.lang, content: block.lines.join("\n")});
+      block = null;
+      continue;
+    }
+    block.lines.push(line);
+  }
+  if (block !== null) {
+    // An unclosed fence: the model is still streaming, or it forgot to close.
+    // Render what arrived as a block and label it as unfinished rather than
+    // swallowing the rest of the reply.
+    segments.push({type: "code", lang: block.lang, content: block.lines.join("\n"), open: true});
+  }
+  flushProse();
+  return segments;
+}
+
+//: One rendered code block with its language label and copy button.
+function codeBlock(segment) {
+  const figure = document.createElement("figure");
+  figure.className = "code-block";
+  figure.dataset.lang = segment.lang || "";
+  const caption = document.createElement("figcaption");
+  const label = document.createElement("span");
+  // Name the language when the model stated one; never invent one.
+  label.textContent = segment.lang || (segment.open ? "code (unclosed)" : "code");
+  caption.appendChild(label);
+  caption.appendChild(actionButton("copy code", "Copy this block", "copy-code", () => {
+    copyText(segment.content, caption.querySelector('[data-action="copy-code"]'));
+  }));
+  const pre = document.createElement("pre");
+  const code = document.createElement("code");
+  code.textContent = segment.content;
+  pre.appendChild(code);
+  figure.appendChild(caption);
+  figure.appendChild(pre);
+  return figure;
+}
+
+//: Render *text* into *container*, honouring fenced code blocks.
+function renderRich(container, text) {
+  container.textContent = "";
+  // Keep the exact source on the node. The rendered tree is prose + <figure>
+  // siblings, so ``textContent`` would concatenate them without the newlines
+  // that separated them - the copy button must return what was actually said.
+  container.rawText = String(text);
+  for (const segment of splitFences(text)) {
+    if (segment.type === "code") {
+      container.appendChild(codeBlock(segment));
+    } else {
+      const prose = document.createElement("div");
+      prose.className = "prose";
+      linkify(prose, segment.content);
+      container.appendChild(prose);
+    }
+  }
+  return container;
+}
+
+//: One <button> in a message head. ``action`` becomes a data attribute so the
+//  available actions are inspectable (and testable) instead of anonymous.
+function actionButton(label, title, action, onClick) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "msg-action";
+  btn.dataset.action = action;
+  btn.textContent = label;
+  btn.title = title;
+  btn.addEventListener("click", onClick);
+  return btn;
+}
+
+//: Build one transcript turn and return its parts.
+function appendMessage(role, text, cls) {
   const empty = $("emptyState");
   if (empty) empty.remove();
   const wrap = document.createElement("div");
   wrap.className = "msg " + (cls || role);
+  wrap.dataset.role = role;
   const head = document.createElement("div");
   head.className = "msg-head";
   const who = document.createElement("span");
@@ -429,40 +776,75 @@ function addMessage(role, text, cls) {
   head.appendChild(who);
   const bubble = document.createElement("div");
   bubble.className = "bubble";
-  bubble.textContent = text;
+  renderRich(bubble, text);
 
-  // Copy: available on every settled bubble. Placed in the head so it never
-  // covers the text it copies.
-  const copy = document.createElement("button");
-  copy.type = "button";
-  copy.className = "msg-action";
-  copy.textContent = "copy";
-  copy.title = "Copy this message";
-  copy.addEventListener("click", () => copyText(bubble.textContent, copy));
-  head.appendChild(copy);
+  // Copy: every settled bubble. Placed in the head so it never covers the text
+  // it copies.
+  head.appendChild(actionButton("copy", "Copy this message", "copy", () => {
+    copyText(bubble.rawText !== undefined ? bubble.rawText : bubble.textContent,
+      head.querySelector('[data-action="copy"]'));
+  }));
 
-  // Resend: only a user turn can be replayed, and only when it is not pending.
   if (role === "user") {
-    const again = document.createElement("button");
-    again.type = "button";
-    again.className = "msg-action";
-    again.textContent = "resend";
-    again.title = "Put this message back in the composer";
-    again.addEventListener("click", () => {
-      const input = $("chatInput");
-      input.value = text;
-      input.focus();
-      input.setSelectionRange(input.value.length, input.value.length);
-      syncSlash();
-    });
-    head.appendChild(again);
+    // Edit: put your own text back in the composer. Renamed from "resend"
+    // because what it does is edit-then-send, and the old label promised a
+    // send that never happened.
+    head.appendChild(actionButton(
+      "edit",
+      "Put this message back in the message box (Ctrl+Up)",
+      "edit",
+      () => editMessage(text)
+    ));
+  } else {
+    // Retry: ask the same question again. It appends a new turn rather than
+    // rewriting the old one - the server owns the history, and a client-side
+    // rewrite would only desynchronise the two.
+    head.appendChild(actionButton(
+      "retry",
+      "Ask the previous question again",
+      "retry",
+      () => retryFrom(wrap)
+    ));
   }
 
   wrap.appendChild(head);
   wrap.appendChild(bubble);
   $("messages").appendChild(wrap);
-  $("messages").scrollTop = $("messages").scrollHeight;
-  return bubble;
+  scrollToLatest(false);
+  return {wrap, bubble, head};
+}
+
+//: Compat wrapper: most call sites only need the bubble to fill in later.
+function addMessage(role, text, cls) {
+  return appendMessage(role, text, cls).bubble;
+}
+
+//: Load *text* into the composer, caret at the end, menus synced.
+function editMessage(text) {
+  const input = $("chatInput");
+  input.value = text;
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+  syncSlash();
+  autosize(input);
+}
+
+//: Re-ask the question that produced *wrap* (the nearest user turn above it).
+function retryFrom(wrap) {
+  let node = wrap ? wrap.previousElementSibling : null;
+  while (node && node.dataset.role !== "user") {
+    node = node.previousElementSibling;
+  }
+  if (!node) return;
+  const bubble = node.querySelector(".bubble");
+  if (bubble) editMessage(bubble.textContent);
+}
+
+//: The last question the user asked, for Ctrl+Up.
+function lastUserText() {
+  const turns = $("messages").querySelectorAll('.msg[data-role="user"] .bubble');
+  if (!turns.length) return "";
+  return turns[turns.length - 1].textContent;
 }
 
 //: Copy *text* to the clipboard and flash the confirmation on *button*.
@@ -514,10 +896,51 @@ function setBusy(busy) {
   $("resetBtn").disabled = busy;
   $("sendBtn").textContent = busy ? "Sending..." : "Send";
   $("stateLabel").textContent = busy ? "thinking..." : "";
+  // Stop exists only while a turn is in flight. A disabled button that does
+  // nothing is worse than no button.
+  const stop = $("stopBtn");
+  if (stop) stop.hidden = !busy;
   // Screen readers get the busy state from the container, which is the same
   // information sighted users read from the disabled button.
   const messages = $("messages");
   if (messages) messages.setAttribute("aria-busy", busy ? "true" : "false");
+}
+
+/* ---- abandoning a turn ------------------------------------------------- */
+//
+// Scope matters. The server runs the turn inside a lock and only the user can
+// interrupt it, so the browser CANNOT cancel the work: the reply will still
+// land in the shared history. What the browser can honestly do is stop
+// WAITING - keep the screen usable and say plainly that the reply was skipped.
+
+let turnController = null;
+
+function abortTurn() {
+  if (turnController) turnController.abort();
+}
+
+//: Stop the turn that is marked pending, and label it as skipped.
+function stopPendingTurn() {
+  abortTurn();
+  const pending = $("messages").querySelector(".msg.pending");
+  if (!pending) return;
+  markStopped(pending);
+  setBusy(false);
+  $("chatInput").focus();
+}
+
+//: A skipped turn is neither an answer nor an error, and it must stop
+//  pretending to be in flight.
+function markStopped(wrap) {
+  wrap.classList.remove("pending");
+  wrap.className = "msg stopped";
+  const bubble = wrap.querySelector(".bubble");
+  if (bubble) {
+    bubble.textContent = "You stopped waiting for this answer. The turn keeps "
+      + "running on the server, so it still reaches the shared conversation.";
+  }
+  const state = $("stateLabel");
+  if (state) state.textContent = "stopped waiting";
 }
 
 /* ---- slash-command menu ------------------------------------------------ */
@@ -852,6 +1275,19 @@ function setModelBadge(name) {
   if (badge && name) badge.textContent = "model: " + name;
 }
 
+//: Move *container*'s scroll so *row* is fully visible, and never touch the
+//  page. ``scrollIntoView()`` is the obvious call, but on a nested scroll box
+//  it ALSO scrolls every ancestor - opening a 40-row menu would jump the page.
+function revealWithin(container, row) {
+  if (!container || !row) return;
+  const top = row.offsetTop;
+  const bottom = top + row.offsetHeight;
+  const viewTop = container.scrollTop;
+  const viewBottom = viewTop + container.clientHeight;
+  if (top < viewTop) container.scrollTop = top;
+  else if (bottom > viewBottom) container.scrollTop = bottom - container.clientHeight;
+}
+
 function highlightModelRow(index) {
   if (!modelRows.length) return;
   let next = index;
@@ -864,9 +1300,10 @@ function highlightModelRow(index) {
     if (modelOptions[i] && modelOptions[i].current) row.className += " current";
     row.setAttribute("aria-selected", on ? "true" : "false");
   });
-  if (modelRows[modelIndex] && modelRows[modelIndex].scrollIntoView) {
-    modelRows[modelIndex].scrollIntoView({ block: "nearest" });
-  }
+  // Focus stays in the composer, so the listbox must name its active row.
+  const row = modelRows[modelIndex];
+  if (row && row.id) $("chatInput").setAttribute("aria-activedescendant", row.id);
+  revealWithin($("modelPanel"), row);
 }
 
 function emptyPanelRow(text, cls) {
@@ -1083,6 +1520,9 @@ async function send() {
   const input = $("chatInput");
   const text = input.value.trim();
   if (!text) return;
+  // One turn at a time: two overlapping POSTs would interleave two answers
+  // into the shared history. Stop first if the user wants to change tacks.
+  if (turnController) return;
   closeSlash();
   // "/model" asks to SEE the models. That answer is a fact this process holds,
   // so it must never reach the LLM (which used to invent a list). Open the
@@ -1096,34 +1536,47 @@ async function send() {
   addMessage("user", text);
   input.value = "";
   autosize(input);
-  const pending = addMessage("assistant", "thinking...");
+  const turn = appendMessage("assistant", "thinking...");
+  turn.wrap.classList.add("pending");
   setBusy(true);
+  turnController = new AbortController();
+  const signal = turnController.signal;
   try {
-    const data = await postJSON(api.send, {message: text});
+    const data = await postJSON(api.send, {message: text}, signal);
     setNetNotice("");
-    if (data.model) $("modelBadge").textContent = "model: " + data.model;
+    if (data.model) setModelBadge(data.model);
     // The server answers "/model list" with structured groups. Render the
     // picker rather than the compact text fallback it also returns.
     if (data.ok && data.kind === "models" && data.catalog) {
-      pending.parentElement.remove();
+      turn.wrap.remove();
       openModelPanelFromCatalog(data.catalog, data.catalog.error);
       return;
     }
+    turn.wrap.classList.remove("pending");
     if (data.ok) {
-      pending.textContent = data.reply;
+      renderRich(turn.bubble, data.reply);
     } else {
-      pending.parentElement.className = "msg error";
-      pending.textContent = "Error: " + (data.error || "no answer");
+      turn.wrap.className = "msg error";
+      renderRich(turn.bubble, "Error: " + (data.error || "no answer"));
     }
   } catch (e) {
+    if (e && e.name === "AbortError") {
+      // The user pressed Stop: markStopped() already said what happened.
+      return;
+    }
     // A transport failure is not an answer: say the turn was not run, and put
     // the text back so the user does not have to retype it.
-    pending.parentElement.className = "msg error";
-    pending.textContent = "Error: " + e.message;
+    turn.wrap.classList.remove("pending");
+    turn.wrap.className = "msg error";
+    renderRich(turn.bubble, "Error: " + e.message);
     if (!input.value.trim()) input.value = text;
     setNetNotice("The dashboard did not answer. Is it still running? The message was not sent.");
   } finally {
-    setBusy(false);
+    turnController = null;
+    // A turn the user stopped must not be flipped back to "thinking" by the
+    // finally block of a request that was already abandoned.
+    if (!turn.wrap.classList.contains("stopped")) setBusy(false);
+    scrollToLatest(false);
     input.focus();
   }
 }
@@ -1154,23 +1607,60 @@ async function reset() {
   $("messages").appendChild(empty);
   $("usageHint").textContent = "";
   $("stateLabel").textContent = "agent memory cleared";
+  // A cleared transcript has no "below", and any in-flight turn belongs to the
+  // conversation that just went away.
+  abortTurn();
+  STICK = true;
+  showJumpButton(false);
   $("chatInput").focus();
 }
 
 async function loadHistory() {
-  try {
-    const data = await (await fetch(api.history)).json();
-    if (data.model) $("modelBadge").textContent = "model: " + data.model;
-    for (const m of data.messages || []) {
-      addMessage(m.role === "user" ? "user" : "assistant", m.content);
-    }
-  } catch (e) {
-    $("stateLabel").textContent = "history unavailable";
+  const res = await optionalGET(api.history);
+  if (!res.ok) {
+    $("stateLabel").textContent = res.absent
+      ? "this dashboard version has no chat history route"
+      : "history unavailable";
+    return;
   }
+  const data = res.data || {};
+  if (data.model) setModelBadge(data.model);
+  for (const m of data.messages || []) {
+    appendMessage(m.role === "user" ? "user" : "assistant", m.content);
+  }
+  // Opening the page lands on the newest turn, never mid-scroll.
+  scrollToLatest(true);
 }
 
 $("sendBtn").addEventListener("click", send);
 $("resetBtn").addEventListener("click", reset);
+$("stopBtn").addEventListener("click", stopPendingTurn);
+$("jumpLatest").addEventListener("click", () => scrollToLatest(true));
+// Follow the transcript only while the reader is already at the bottom.
+$("messages").addEventListener("scroll", () => {
+  STICK = isNearBottom();
+  showJumpButton(!STICK);
+}, {passive: true});
+
+/* ---- shortcuts overlay ------------------------------------------------- */
+function showShortcuts(show) {
+  const dialog = $("shortcutsDialog");
+  if (!dialog) return;
+  if (show) {
+    if (typeof dialog.showModal === "function") dialog.showModal();
+    else dialog.setAttribute("open", "");
+  } else if (typeof dialog.close === "function") {
+    dialog.close();
+  } else {
+    dialog.removeAttribute("open");
+  }
+}
+$("shortcutsBtn").addEventListener("click", () => showShortcuts(true));
+$("shortcutsClose").addEventListener("click", () => showShortcuts(false));
+// Clicking the backdrop closes it; clicking the card must not.
+$("shortcutsDialog").addEventListener("click", (ev) => {
+  if (ev.target === $("shortcutsDialog")) showShortcuts(false);
+});
 // The model badge opens the picker. It used to type "/model " into the
 // composer, which still left the user to know and spell a model name - the
 // reported bug ("cannot pick a model") started right there.
@@ -1245,6 +1735,22 @@ $("chatInput").addEventListener("keydown", (ev) => {
     closeSlash();
     return;
   }
+  // Nothing is open, so Escape means "I am done waiting for this answer".
+  if (ev.key === "Escape" && turnController) {
+    ev.preventDefault();
+    stopPendingTurn();
+    return;
+  }
+  // Ctrl+Up brings back your previous message for editing, the way a shell
+  // recalls the last command.
+  if ((ev.ctrlKey || ev.metaKey) && ev.key === "ArrowUp") {
+    const last = lastUserText();
+    if (last) {
+      ev.preventDefault();
+      editMessage(last);
+    }
+    return;
+  }
   if (ev.key === "Enter" && !ev.shiftKey) {
     ev.preventDefault();
     send();
@@ -1259,11 +1765,20 @@ window.addEventListener("storage", (ev) => {
   if (ev.key === THEME_KEY) applyTheme(ev.newValue);
 });
 
-// Ctrl+K / Cmd+K focuses the composer from anywhere on the page.
+// Ctrl+K / Cmd+K focuses the composer from anywhere on the page; Ctrl+/ opens
+// the shortcut list, the convention every web IDE and chat tool shares.
 document.addEventListener("keydown", (ev) => {
-  if ((ev.ctrlKey || ev.metaKey) && (ev.key === "k" || ev.key === "K")) {
+  if (!(ev.ctrlKey || ev.metaKey)) return;
+  if (ev.key === "k" || ev.key === "K") {
     ev.preventDefault();
     $("chatInput").focus();
+    return;
+  }
+  if (ev.key === "/") {
+    ev.preventDefault();
+    const dialog = $("shortcutsDialog");
+    const open = dialog && (dialog.open || dialog.hasAttribute("open"));
+    showShortcuts(!open);
   }
 });
 

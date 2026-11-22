@@ -85,7 +85,7 @@ SEED: dict[str, dict[str, Any]] = {
         "kg-command": (
             "kg (kg_cmd.py) adds/shows/removes _knowledge_graph entries "
             "{section: {key: {value, ts}}}; each mutation calls "
-            "_save_memory(); context_blocks.py renders it."
+            "_save_memory(); prompts/context_blocks.py renders it."
         ),
         "clear-command": (
             "clear wipes history, KG, working memory, semantic index, "
@@ -97,9 +97,9 @@ SEED: dict[str, dict[str, Any]] = {
             "SQLiteStorage; embedding cache keyed per entry TEXT."
         ),
         "semantic-memory-loop": (
-            "distill.py record_turn writes a ledger entry per turn; "
-            "scoring.rank_memories ranks it (fail-open); "
-            "types.semantic_memory_block reads it back."
+            "memory/distill.py record_turn writes a ledger entry per turn; "
+            "memory/scoring.rank_memories ranks it (fail-open); "
+            "memory/types.semantic_memory_block reads it back."
         ),
         # -- REPL & command registry ----------------------------------------
         "command-registry": (
@@ -116,9 +116,9 @@ SEED: dict[str, dict[str, Any]] = {
             "_finish_turn records it; check_stale_files tracks on-disk changes."
         ),
         "dashboard-chat": (
-            "AgentTurnRunner (chat_api.py) runs /chat on the live agent (shared "
-            "history) via chat_nlp; slash.py serves /commands offline; "
-            "agent_dashboard.py/dashboard_api.py serve chat.html."
+            "AgentTurnRunner (chat_api.py) runs /chat via chat_nlp; slash.py "
+            "serves /commands offline; monitoring/dashboard_api.py serves "
+            "chat.html, wired by agent_dashboard.py."
         ),
         "model-picker": (
             "model_catalog.py is the ONE catalogue for the REPL 'model' and the "

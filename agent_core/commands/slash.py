@@ -31,6 +31,14 @@ to the normal turn pipeline — ``None`` is returned and nothing changes.
 output, they return the SHARED catalogue from
 :mod:`agent_core.commands.model_catalog` as structured data, which is what the
 page renders as a picker.
+
+``/clear`` is special for the opposite reason.  ``ClearCommand.execute`` asks
+for confirmation with the BUILTIN ``input()``, and :func:`needs_terminal_input`
+only matches ``commands.base.read_*`` — so the stdin guard cannot see it and
+the request would park on a terminal nobody is watching.  The browser is also a
+confirmation surface of its own (see the prompt in ``static/chat.html``), so
+``clear`` is driven in its ``--force`` form here: same REPL command, same
+``agent.clear_history()``, no prompt.
 """
 
 from __future__ import annotations
@@ -58,8 +66,17 @@ OFFLINE_COMMANDS: frozenset[str] = frozenset(
         "kg",
         "memory",
         "session",
+        "clear",
     }
 )
+
+#: Commands whose terminal form BLOCKS on ``input()`` that
+#: :func:`needs_terminal_input` cannot detect, mapped to the arguments that
+#: make them non-interactive.  ``clear`` asks "Clear all memory? (y/n)"; the
+#: page has already asked, so the browser path runs its ``--force`` form and
+#: never reaches the prompt.  A bare ``/clear`` is exactly ``--force``;
+#: ``/clear stats`` stays a read-only report.
+_NON_INTERACTIVE_ARGS: Dict[str, List[str]] = {"clear": ["--force"]}
 
 #: ``/model`` subcommands that only report the catalogue (no switch).
 _READ_ONLY_MODEL_SUBS: frozenset[str] = frozenset({"", "list", "ls"})
@@ -262,9 +279,16 @@ def run_slash(
         }
 
     buffer = io.StringIO()
+    # ``clear`` confirms with a builtin input() that the stdin probe above
+    # cannot see, so it runs in the non-interactive form that skips the
+    # prompt.  Reporting subcommands ("clear stats") are left untouched.
+    call_args = list(args)
+    non_interactive = _NON_INTERACTIVE_ARGS.get(name)
+    if non_interactive and not any(a.lstrip("-") in ("stats",) for a in call_args):
+        call_args.extend(non_interactive)
     try:
         with contextlib.redirect_stdout(buffer):
-            _run_coro(command.execute(list(args), agent))
+            _run_coro(command.execute(call_args, agent))
     except Exception as exc:
         logger.debug("slash: /%s failed", name, exc_info=True)
         return {
@@ -274,12 +298,19 @@ def run_slash(
             "tools": True,
         }
     output = buffer.getvalue().strip()
+    # A clear that actually destroyed something is reported as its own kind:
+    # the transcript behind the page is now empty, which the page must reflect.
+    # "Nothing to clear" and "clear stats" stay plain text - nothing changed.
+    kind = "text"
+    if name == "clear" and "Agent memory cleared." in output:
+        kind = "clear"
     return {
         "ok": True,
         "reply": output or f"/{name} produced no output.",
-        "kind": "text",
+        "kind": kind,
         "command": name,
         "tools": True,
+        **({"cleared": True} if kind == "clear" else {}),
     }
 
 

@@ -455,6 +455,51 @@ class SeedAccuracyTests(unittest.TestCase):
                                 "gone — update the fact text in scripts/seed_kg.py"
                             )
 
+    def test_every_module_path_in_fact_prose_resolves(self):
+        """Every ``*.py`` named in fact prose must still exist.
+
+        Only SEED["files"] keys and the dotted _FACT_MODULES imports were ever
+        resolved, so a MOVED module inside fact prose drifted silently:
+        ``distill.py`` -> ``memory/distill.py`` and ``context_blocks.py`` ->
+        ``prompts/context_blocks.py`` both still read perfectly while pointing
+        at nothing.  This sweeps ALL facts, so a new fact is covered on the
+        day it is written rather than when someone remembers to list it.
+        """
+        checked = 0
+        for key in sorted(seed_kg.SEED["facts"]):
+            value = seed_kg.SEED["facts"][key]
+            for token in re.findall(r"\b[\w/]+\.py\b", value):
+                checked += 1
+                with self.subTest(fact=key, path=token):
+                    self.assertTrue(
+                        self._module_path_resolves(token),
+                        f"facts/{key} names {token}, which no longer exists — "
+                        "update the fact text in scripts/seed_kg.py",
+                    )
+        self.assertGreater(checked, 20, "fact prose should name its module files")
+
+    @staticmethod
+    def _module_path_resolves(token: str) -> bool:
+        """True when *token* names a real module file in this repository.
+
+        A token with a slash must be the path from the package root or the
+        repo root (the form a moved module breaks).  A bare filename is
+        matched by basename anywhere in the package, because fact prose also
+        refers to a module by its short name (``kg_cmd.py``).
+        """
+        package_root = os.path.join(seed_kg.REPO_ROOT, "agent_core")
+        if os.path.isfile(os.path.join(package_root, token)):
+            return True
+        if os.path.isfile(os.path.join(seed_kg.REPO_ROOT, token)):
+            return True
+        if "/" in token:
+            return False
+        return any(
+            name == token
+            for _dirpath, _dirnames, filenames in os.walk(package_root)
+            for name in filenames
+        )
+
     def test_tool_loop_fact_iteration_cap_matches_the_code(self):
         """The prose says 'max 150 iterations'; guard the literal."""
         from agent_core.llm.tool_loop import ToolLoopRunner

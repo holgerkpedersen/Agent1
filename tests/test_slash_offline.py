@@ -126,8 +126,21 @@ def test_parse_slash_survives_unbalanced_quotes() -> None:
 # -- the allowlist is what makes the browser path safe -------------------
 
 
-def test_offline_allowlist_is_exactly_the_printed_fact_commands() -> None:
-    assert OFFLINE_COMMANDS == {"model", "models", "help", "kg", "memory", "session"}
+def test_offline_allowlist_is_exactly_the_registry_backed_commands() -> None:
+    # Every name here is a command the REPL already has, answered without the
+    # model. "clear" joined the set because the page could otherwise only
+    # STAGE the request: "/clear" reached the LLM, which claimed to have
+    # cleared a conversation it had never touched. Its own regression tests
+    # (and its stdin-prompt trap) live in tests/test_slash_clear.py.
+    assert OFFLINE_COMMANDS == {
+        "model",
+        "models",
+        "help",
+        "kg",
+        "memory",
+        "session",
+        "clear",
+    }
 
 
 def test_unlisted_command_falls_through_to_the_turn_pipeline(registry) -> None:
