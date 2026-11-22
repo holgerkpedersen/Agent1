@@ -352,10 +352,10 @@ def select_model(
 class ModelsCommand(Command):
     """``/models`` — show the model catalogue and pick from it.
 
-    The REPL's ``model`` command prints its catalogue; this one is the
-    non-printing form of the same thing, so the dashboard can render it.  It
-    shares ``model_catalog`` with the dashboard endpoint, which is what keeps
-    one list instead of two.
+    The REPL's ``model`` command prints its catalogue; this one prints the
+    same thing from the SHARED ``model_catalog``, and the dashboard endpoint
+    consumes that same catalogue as structured data instead of capturing
+    text.  Sharing one collector is what keeps one list instead of two.
     """
 
     @property

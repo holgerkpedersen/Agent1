@@ -17,6 +17,7 @@ Run: `python agent.py`
 | `fix <file> --desc "..."`    | Describe an issue, LLM fixes it     |
 | `model <name>`               | Switch LLM model                    |
 | `model list`                 | List available models               |
+| `models`                     | List models per provider and pick one (same catalogue as `model list`; the dashboard renders it) |
 | `display [mode]`             | Show/set output verbosity (see below) |
 | `clear`                      | View and clear memory               |
 | `cleanup`                    | Find orphaned files                 |
@@ -889,6 +890,33 @@ Naming rules:
 - A visible name collision gets a numeric suffix (`_FOR_WHILE_RE_2`); patterns with no usable words fall back to `_RE_1`-style names.
 - Detectors and mechanical fixers skip docstring lines, so `--apply` never rewrites docstring prose that merely looks like code.
 - LLM-reviewed findings that would break real logic (e.g. `while changed:` fixed-point guards) are rejected and left untouched.
+
+## Dashboard chat page (`/chat`)
+
+The dashboard (`--dashboard` or `--serve`) also serves a browser chat surface:
+open `http://localhost:<port>/chat` (or `/chat.html`).
+
+It is a **second view of the same conversation**, not a second agent. The page
+posts to `/api/chat/send`, which runs the REPL's own turn pipeline
+(`AgentTurnRunner` -> `Agent.chat_nlp`), so tools, the tool loop, plan mode,
+history trimming and memory behave exactly as in the terminal. When the process
+already hosts a live REPL agent, the browser and the terminal share ONE
+conversation instead of forking it. `/api/chat/history` reads the transcript,
+`/api/chat/reset` clears it, and `/api/chat/models` + `/api/chat/models/select`
+back the model picker.
+
+A leading-slash message is resolved **without the model**: `/model`, `/models`,
+`/help`, `/kg`, `/memory` and `/session` are answered from the command registry
+and the shared catalogue, so a slash command never reaches the LLM and cannot be
+invented by it. Commands outside that allowlist fall through to the normal turn
+pipeline. Subcommands that change agent state - `kg add`/`remove`, `session
+new`/`use`/`rename`/`delete` - are refused from the browser, because the page is
+a convenience surface, not a second way to edit memory behind the terminal's
+back; they still work in the REPL. A command that would prompt on stdin is
+refused with an explanation rather than blocking an HTTP request.
+
+The endpoints reuse the MCP loopback-Origin/Host guard and a 64 KB body cap,
+which is why tools can run from the page at all: the server binds loopback only.
 
 ## Performance dashboard
 

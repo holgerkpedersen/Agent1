@@ -191,6 +191,12 @@ def _models_payload(
             "command": name,
             "tools": True,
         }
+    if name != "model":
+        # Only ``/model`` has catalogue subcommands.  Without this guard any
+        # allowlisted command called with no args (or with "list") fell
+        # through to the catalogue branch below, so ``/help`` and ``/memory``
+        # answered with the model list instead of running at all.
+        return None
     sub = args[0].strip().lower() if args else ""
     if sub not in _READ_ONLY_MODEL_SUBS:
         # Every other subcommand (provider/profile/jev/load/...) is handled by
