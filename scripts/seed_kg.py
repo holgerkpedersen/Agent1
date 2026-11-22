@@ -116,9 +116,9 @@ SEED: dict[str, dict[str, Any]] = {
             "_finish_turn records it; check_stale_files tracks on-disk changes."
         ),
         "dashboard-chat": (
-            "chat_api.py AgentTurnRunner runs /chat on the live agent (shared "
-            "history) via chat_nlp; slash.py answers /commands offline; "
-            "dashboard_api.py serves chat.html."
+            "AgentTurnRunner (chat_api.py) runs /chat on the live agent (shared "
+            "history) via chat_nlp; slash.py serves /commands offline; "
+            "agent_dashboard.py/dashboard_api.py serve chat.html."
         ),
         "model-picker": (
             "model_catalog.py is the ONE catalogue for the REPL 'model' and the "
@@ -295,10 +295,7 @@ def _live_repl_command_tag() -> str:
         return ""
     if not count:
         return ""
-    return (
-        f"REPL commands ({count}): all registered in one place by "
-        "interactive._register_commands; 'help' lists them."
-    )
+    return f"REPL commands ({count}); 'help' lists them all."
 
 
 def build_seed() -> dict[str, dict[str, Any]]:
