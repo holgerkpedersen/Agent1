@@ -1,0 +1,1288 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agent1 - Chat</title>
+  <link rel="icon" type="image/png" href="static/ttheme/images/logo-icon.png" sizes="16x16">
+  <style>
+    @font-face { font-family: 'Poppins'; src: url('static/ttheme/fonts/Poppins-Regular.ttf') format('truetype'); font-weight: 400; }
+    @font-face { font-family: 'Poppins'; src: url('static/ttheme/fonts/Poppins-Medium.ttf') format('truetype'); font-weight: 500; }
+    @font-face { font-family: 'Poppins'; src: url('static/ttheme/fonts/Poppins-Bold.ttf') format('truetype'); font-weight: 700; }
+  </style>
+  <link rel="stylesheet" href="static/ttheme/css/remixicon.css">
+  <link rel="stylesheet" href="static/ttheme/css/lib/bootstrap.min.css">
+  <link rel="stylesheet" href="static/ttheme/css/style.css">
+  <script>
+    // Apply the saved theme before first paint so the page cannot flash dark.
+    (function () {
+      try {
+        var t = localStorage.getItem("theme");
+        if (t === "light" || t === "dark") {
+          document.documentElement.setAttribute("data-theme", t);
+        }
+      } catch (e) { /* private mode: keep the dark default */ }
+    })();
+  </script>
+  <style>
+    :root {
+      --chat-bg: #0f172a;
+      --chat-card: #1e293b;
+      --chat-border: rgba(148,163,184,.2);
+      --chat-text: #e2e8f0;
+      --chat-muted: #94a3b8;
+      --chat-accent: #458eff;
+      --chat-ok: #10b981;
+      --chat-bad: #ef4444;
+      --chat-user: rgba(69,142,255,.14);
+      --chat-agent: rgba(148,163,184,.10);
+    }
+    [data-theme="light"] {
+      --chat-bg: #f8fafc;
+      --chat-card: #ffffff;
+      --chat-border: rgba(100,116,139,.25);
+      --chat-text: #0f172a;
+      --chat-muted: #64748b;
+      --chat-user: rgba(69,142,255,.10);
+      --chat-agent: rgba(100,116,139,.08);
+    }
+    body {
+      background: var(--chat-bg);
+      color: var(--chat-text);
+      font-family: 'Poppins', sans-serif;
+      margin: 0;
+      padding: 24px;
+    }
+    .wrap { max-width: 900px; margin: 0 auto; }
+    h1 { font-size: 1.35rem; font-weight: 700; display: flex; align-items: center; gap: 10px; }
+    .sub { color: var(--chat-muted); font-size: .85rem; margin-bottom: 20px; }
+    .sub code { color: var(--chat-accent); }
+    .card {
+      background: var(--chat-card);
+      border: 1px solid var(--chat-border);
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .card h2 { font-size: 1rem; font-weight: 500; margin: 0 0 12px; }
+    a.back { color: var(--chat-muted); text-decoration: none; font-size: .82rem; }
+    button {
+      background: var(--chat-accent); color: #fff; border: none; border-radius: 8px;
+      padding: 6px 14px; font-family: inherit; font-size: .82rem; cursor: pointer;
+    }
+    button.secondary { background: transparent; color: var(--chat-text); border: 1px solid var(--chat-border); }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    textarea {
+      background: var(--chat-bg); color: var(--chat-text);
+      border: 1px solid var(--chat-border); border-radius: 8px;
+      padding: 8px; font-family: inherit; font-size: .85rem; width: 100%;
+      min-height: 76px; resize: vertical;
+    }
+    .msg { margin-bottom: 12px; }
+    .msg .who {
+      display: block; color: var(--chat-muted); font-size: .72rem;
+      text-transform: uppercase; letter-spacing: .04em; margin-bottom: 4px;
+    }
+    .bubble {
+      border: 1px solid var(--chat-border);
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: .88rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: var(--chat-agent);
+    }
+    .msg.user .bubble { background: var(--chat-user); }
+    .msg.error .bubble {
+      border-color: var(--chat-bad);
+      color: var(--chat-bad);
+      background: transparent;
+    }
+    #messages { max-height: 58vh; overflow-y: auto; }
+    .empty { color: var(--chat-muted); font-size: .85rem; }
+    .toolbar { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
+    .toolbar .spacer { flex: 1; }
+    .model-tag {
+      font-size: .7rem; color: var(--chat-accent);
+      border: 1px solid var(--chat-accent); border-radius: 999px;
+      padding: 1px 8px; white-space: nowrap;
+    }
+    .hint { color: var(--chat-muted); font-size: .78rem; margin-top: 8px; }
+
+    /* -- slash-command menu ------------------------------------------- */
+    /* The composer is the positioning context: the menu floats ABOVE the
+       textarea, like opencode's autocomplete sits above the prompt. */
+    .composer { position: relative; }
+    .slash-menu {
+      position: absolute;
+      left: 0; right: 0; bottom: 100%;
+      margin-bottom: 6px;
+      background: var(--chat-card);
+      border: 1px solid var(--chat-border);
+      border-radius: 10px;
+      max-height: 280px;
+      overflow-y: auto;
+      box-shadow: 0 12px 32px rgba(0,0,0,.38);
+      z-index: 40;
+      display: none;
+    }
+    .slash-menu.open { display: block; }
+    .slash-item {
+      display: flex; align-items: baseline; gap: 10px;
+      padding: 6px 12px; cursor: pointer; border-radius: 6px;
+    }
+    .slash-item.active, .slash-item:hover { background: var(--chat-user); }
+    .slash-item .name {
+      color: var(--chat-accent); font-size: .82rem; font-weight: 500;
+      white-space: nowrap;
+    }
+    .slash-item .summary {
+      color: var(--chat-muted); font-size: .78rem;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .slash-item .tag {
+      margin-left: auto; font-size: .64rem; color: var(--chat-muted);
+      border: 1px solid var(--chat-border); border-radius: 999px;
+      padding: 0 6px; white-space: nowrap;
+    }
+    .slash-empty { padding: 8px 12px; color: var(--chat-muted); font-size: .78rem; }
+    .slash-item .name .hit {
+      color: var(--chat-text);
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+    /* "12 of 39" footer: says the list is truncated, never hides the fact. */
+    .slash-foot {
+      position: sticky; bottom: 0;
+      padding: 5px 12px; color: var(--chat-muted); font-size: .7rem;
+      background: var(--chat-card); border-top: 1px solid var(--chat-border);
+    }
+    .model-tag { cursor: pointer; }
+    .model-tag:hover { background: var(--chat-user); }
+
+    /* -- model picker -------------------------------------------------
+       Same floating-panel geometry as the slash menu (above the composer,
+       absolute inside .composer) so the two never invent two looks. The panel
+       scrolls; the rows are buttons, so a keyboard user can tab to a model. */
+    .model-panel {
+      position: absolute;
+      left: 0; right: 0; bottom: 100%;
+      margin-bottom: 6px;
+      background: var(--chat-card);
+      border: 1px solid var(--chat-border);
+      border-radius: 10px;
+      max-height: 320px;
+      overflow-y: auto;
+      box-shadow: 0 12px 32px rgba(0,0,0,.38);
+      z-index: 45;
+      display: none;
+    }
+    .model-panel.open { display: block; }
+    .model-head {
+      position: sticky; top: 0;
+      display: flex; align-items: baseline; gap: 10px;
+      padding: 6px 12px;
+      background: var(--chat-card);
+      border-bottom: 1px solid var(--chat-border);
+      color: var(--chat-muted); font-size: .72rem;
+    }
+    .model-head .spacer { flex: 1; }
+    .model-group {
+      padding: 6px 12px 2px;
+      color: var(--chat-accent); font-size: .7rem;
+      text-transform: uppercase; letter-spacing: .04em;
+    }
+    .model-option {
+      display: flex; align-items: baseline; gap: 10px; width: 100%;
+      padding: 6px 12px; cursor: pointer;
+      background: none; border: 0; text-align: left;
+      font: inherit; color: var(--chat-text); border-radius: 6px;
+    }
+    .model-option:hover, .model-option:focus-visible { background: var(--chat-user); }
+    .model-option.current .label { color: var(--chat-accent); font-weight: 600; }
+    .model-option .label {
+      font-size: .82rem; white-space: nowrap;
+      overflow: hidden; text-overflow: ellipsis;
+    }
+    .model-option .detail {
+      color: var(--chat-muted); font-size: .74rem;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .model-option .tag {
+      margin-left: auto; font-size: .64rem; color: var(--chat-muted);
+      border: 1px solid var(--chat-border); border-radius: 999px;
+      padding: 0 6px; white-space: nowrap;
+    }
+    .model-option .tag.current {
+      color: var(--chat-accent); border-color: var(--chat-accent);
+    }
+    .model-empty { padding: 8px 12px; color: var(--chat-muted); font-size: .78rem; }
+    .usage-hint { color: var(--chat-muted); font-size: .74rem; margin-top: 6px; min-height: 1em; }
+
+    /* -- header + theme toggle ---------------------------------------- */
+    /* The sibling pages (index.html, autonomous.html) expose the theme toggle
+       in their navbar. This page is served verbatim - it gets no @@HEAD@@
+       partials - so it carries its own copy of the SAME contract: the
+       [data-theme-toggle] attribute + aria-label pair that style.css draws
+       the glyph from, and the localStorage key app.js reads. */
+    .head-row { display: flex; align-items: center; gap: 12px; }
+    .head-row h1 { margin: 0; }
+    .head-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+    .theme-toggle {
+      width: 34px; height: 34px;
+      background: var(--chat-card);
+      border: 1px solid var(--chat-border);
+      border-radius: 50%;
+      cursor: pointer;
+      position: relative;
+      padding: 0;
+    }
+    .theme-toggle:hover { background: var(--chat-user); }
+    /* style.css positions ::after absolutely with no offsets, so centring is
+       the page's job. The colour is set here too: style.css points at a theme
+       variable this page does not define. */
+    .head-actions .theme-toggle::after {
+      inset-block-start: 50%;
+      inset-inline-start: 50%;
+      transform: translate(-50%, -50%);
+      line-height: 1;
+      font-size: 1rem;
+      color: var(--chat-text);
+    }
+
+    /* -- connectivity notice ------------------------------------------ */
+    .net-notice {
+      border: 1px solid var(--chat-bad);
+      color: var(--chat-bad);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: .78rem;
+      margin-bottom: 10px;
+    }
+    .net-notice[hidden] { display: none; }
+
+    /* -- message head: label + per-message actions -------------------- */
+    .msg-head {
+      display: flex; align-items: center; gap: 8px;
+      margin-bottom: 4px;
+    }
+    .msg-head .who { margin-bottom: 0; }
+    .msg-action {
+      background: transparent;
+      border: 1px solid var(--chat-border);
+      color: var(--chat-muted);
+      font-size: .68rem;
+      padding: 0 7px;
+      border-radius: 999px;
+      line-height: 1.6;
+      cursor: pointer;
+      opacity: 0;
+      transition: opacity .12s ease;
+    }
+    /* Keep the actions reachable by keyboard even while visually hidden. */
+    .msg:hover .msg-action, .msg:focus-within .msg-action,
+    .msg-action:focus-visible { opacity: 1; }
+    .msg-action:hover { color: var(--chat-text); border-color: var(--chat-accent); }
+
+    /* -- keyboard hints ---------------------------------------------- */
+    kbd {
+      font-family: inherit; font-size: .72rem;
+      border: 1px solid var(--chat-border); border-bottom-width: 2px;
+      border-radius: 5px; padding: 0 5px; color: var(--chat-text);
+    }
+    .shortcut-hint { color: var(--chat-muted); font-size: .72rem; }
+
+    /* A command that needs stdin cannot run from the browser: show it, but
+       say so in the row instead of letting the user discover it by failing. */
+    .slash-item.unavailable .name { color: var(--chat-muted); }
+    .slash-item.unavailable .summary { text-decoration: line-through; }
+
+    /* Respect the OS motion preference instead of always animating. */
+    @media (prefers-reduced-motion: reduce) {
+      * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+    }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head-row">
+    <h1>Chat</h1>
+    <div class="head-actions">
+      <span class="shortcut-hint" aria-hidden="true"><kbd>Ctrl</kbd>+<kbd>K</kbd> focus</span>
+      <!-- Same [data-theme-toggle] + aria-label contract as the dashboard
+           navbar, so style.css draws the identical glyph. -->
+      <button type="button" id="themeToggle" class="theme-toggle" data-theme-toggle
+        aria-label="dark" title="Toggle dark / light theme"></button>
+    </div>
+  </div>
+  <div class="sub">
+    Alternate chat surface beside the terminal REPL. It runs the
+    <strong>same turn pipeline as the REPL</strong>, so tools work here: a message
+    can read, run or change files exactly as a terminal turn can. A live REPL in
+    this process shares its conversation.
+    Type <code>/</code> for the REPL command list - all of them, fuzzy-matched,
+    so <code>/mdl</code> finds <code>model</code>. Pick one with the arrow keys
+    and Tab/Enter, and its usage line is filled in for you.
+    | <a class="back" href="/">performance dashboard</a>
+  </div>
+
+  <div class="card">
+    <h2>Conversation</h2>
+    <div class="net-notice" id="netNotice" role="alert" hidden></div>
+    <div id="messages"><div class="empty" id="emptyState">No messages yet - say hello.</div></div>
+    <!-- Busy/status is announced to assistive tech without stealing focus. -->
+    <div class="hint" id="stateLabel" role="status" aria-live="polite"></div>
+  </div>
+
+  <div class="card">
+    <h2>Message</h2>
+    <div class="composer">
+      <div class="slash-menu" id="slashMenu" role="listbox" aria-label="Commands"></div>
+      <div class="model-panel" id="modelPanel" role="listbox" aria-label="Models"></div>
+      <textarea id="chatInput" placeholder="Ask anything, or type / for the command list (fuzzy: /mdl finds model). Enter sends, Shift+Enter adds a line." spellcheck="false" aria-autocomplete="list" aria-controls="slashMenu"></textarea>
+    </div>
+    <div class="usage-hint" id="usageHint"></div>
+    <div class="toolbar">
+      <button id="sendBtn">Send</button>
+      <button class="secondary" id="slashBtn" title="Show the REPL command list">/ Commands</button>
+      <button class="secondary" id="resetBtn" title="Clear the shared conversation and this workspace's agent memory">Reset</button>
+      <span class="spacer"></span>
+      <span class="model-tag" id="modelBadge" role="button" tabindex="0" title="Click to insert /model">model: unknown</span>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const api = {
+  send: "/api/chat/send",
+  reset: "/api/chat/reset",
+  history: "/api/chat/history",
+  commands: "/api/chat/commands",
+  models: "/api/chat/models",
+  selectModel: "/api/chat/models/select",
+};
+
+/* ---- theme ------------------------------------------------------------- */
+//
+// Same contract as the dashboard navbar, not a new one: the storage key is
+// "theme", the value is "dark"/"light", and the visible glyph comes from
+// style.css via [data-theme-toggle][aria-label=dark]::after. That is why the
+// button carries no text - writing a glyph into it would push the ::after
+// glyph off-centre (see updateButton() in static/ttheme/js/app.js).
+const THEME_KEY = "theme";
+
+function currentTheme() {
+  const attr = document.documentElement.getAttribute("data-theme");
+  return attr === "light" ? "light" : "dark";
+}
+
+//: Reflect *theme* on the page and the button. aria-label is both the
+//  accessibility name and the CSS hook, so it must say "dark" when the page
+//  IS dark (the button then offers the light glyph).
+function applyTheme(theme) {
+  const next = theme === "light" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", next);
+  const btn = $("themeToggle");
+  if (btn) btn.setAttribute("aria-label", next === "dark" ? "dark" : "light");
+  return next;
+}
+
+function toggleTheme() {
+  const next = currentTheme() === "dark" ? "light" : "dark";
+  try {
+    localStorage.setItem(THEME_KEY, next);
+  } catch (e) { /* private mode: the theme still applies for this page view */ }
+  applyTheme(next);
+}
+
+//: Cap on menu rows so the popup never becomes a full-screen list. Kept large
+//  on purpose: an earlier cap of 12 hid 27 of the 39 REPL commands (``model``
+//  sat at index 19) simply because the list is alphabetical. A command the user
+//  cannot see is a command that does not exist for them, so the popup scrolls
+//  instead of truncating.
+const MAX_ROWS = 40;
+
+async function postJSON(url, body) {
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok && resp.status !== 200) throw new Error("HTTP " + resp.status);
+  return await resp.json();
+}
+
+// Every piece of conversation text is written with textContent: model output is
+// untrusted, so it must never reach an innerHTML sink.
+function addMessage(role, text, cls) {
+  const empty = $("emptyState");
+  if (empty) empty.remove();
+  const wrap = document.createElement("div");
+  wrap.className = "msg " + (cls || role);
+  const head = document.createElement("div");
+  head.className = "msg-head";
+  const who = document.createElement("span");
+  who.className = "who";
+  who.textContent = role === "user" ? "You" : "Agent1";
+  head.appendChild(who);
+  const bubble = document.createElement("div");
+  bubble.className = "bubble";
+  bubble.textContent = text;
+
+  // Copy: available on every settled bubble. Placed in the head so it never
+  // covers the text it copies.
+  const copy = document.createElement("button");
+  copy.type = "button";
+  copy.className = "msg-action";
+  copy.textContent = "copy";
+  copy.title = "Copy this message";
+  copy.addEventListener("click", () => copyText(bubble.textContent, copy));
+  head.appendChild(copy);
+
+  // Resend: only a user turn can be replayed, and only when it is not pending.
+  if (role === "user") {
+    const again = document.createElement("button");
+    again.type = "button";
+    again.className = "msg-action";
+    again.textContent = "resend";
+    again.title = "Put this message back in the composer";
+    again.addEventListener("click", () => {
+      const input = $("chatInput");
+      input.value = text;
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+      syncSlash();
+    });
+    head.appendChild(again);
+  }
+
+  wrap.appendChild(head);
+  wrap.appendChild(bubble);
+  $("messages").appendChild(wrap);
+  $("messages").scrollTop = $("messages").scrollHeight;
+  return bubble;
+}
+
+//: Copy *text* to the clipboard and flash the confirmation on *button*.
+//  navigator.clipboard needs a secure context, so fall back to execCommand
+//  (still supported, and this page is served over plain loopback HTTP).
+async function copyText(text, button) {
+  let ok = false;
+  try {
+    await navigator.clipboard.writeText(text);
+    ok = true;
+  } catch (e) {
+    ok = legacyCopy(text);
+  }
+  if (!button) return ok;
+  const label = button.textContent;
+  button.textContent = ok ? "copied" : "failed";
+  window.setTimeout(() => { button.textContent = label; }, 1200);
+  return ok;
+}
+
+function legacyCopy(text) {
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "");
+  area.style.position = "fixed";
+  area.style.top = "-1000px";
+  document.body.appendChild(area);
+  area.select();
+  let ok = false;
+  try {
+    ok = document.execCommand("copy");
+  } catch (e) {
+    ok = false;
+  }
+  area.remove();
+  return ok;
+}
+
+//: Show or clear the "cannot reach the server" notice above the transcript.
+function setNetNotice(message) {
+  const notice = $("netNotice");
+  if (!notice) return;
+  notice.textContent = message || "";
+  notice.hidden = !message;
+}
+
+function setBusy(busy) {
+  $("sendBtn").disabled = busy;
+  $("resetBtn").disabled = busy;
+  $("sendBtn").textContent = busy ? "Sending..." : "Send";
+  $("stateLabel").textContent = busy ? "thinking..." : "";
+  // Screen readers get the busy state from the container, which is the same
+  // information sighted users read from the disabled button.
+  const messages = $("messages");
+  if (messages) messages.setAttribute("aria-busy", busy ? "true" : "false");
+}
+
+/* ---- slash-command menu ------------------------------------------------ */
+//
+// The list is the REPL's own registry, served by /api/chat/commands. The menu
+// only WRITES text into the textarea: a slash command is then sent as a normal
+// message, so it goes through the same turn pipeline (and the same tool
+// allowlist / plan-mode rules) as everything else. The page gains a
+// discovery affordance, not a second execution path.
+
+let COMMANDS = [];
+let slashIndex = 0;
+let slashItems = [];
+let slashOpen = false;
+
+//: The filter text when the input is a bare slash command, else null.
+//  "/re" -> "re"; "/read a.txt" (args started) and multi-line -> null.
+function slashQuery(value) {
+  if (!value.startsWith("/")) return null;
+  if (value.indexOf("\n") >= 0) return null;
+  if (/\s/.test(value)) return null;
+  return value.slice(1).toLowerCase();
+}
+
+function filterCommands(query) {
+  // Ranked in tiers, each tier keeping alphabetical order:
+  //   0 exact name        1 name prefix      2 subsequence of the name
+  //   ("mdl" -> "model")  3 name substring   4 summary substring
+  // Tier 2 is what makes the search fuzzy; the rest keeps the obvious hits on
+  // top so "/re" still offers "read" before "reconstruct".
+  const q = (query || "").toLowerCase();
+  if (!q) return COMMANDS.slice(0, MAX_ROWS);
+  const tiers = [[], [], [], [], []];
+  const seen = new Set();
+  for (const cmd of COMMANDS) {
+    const name = cmd.name.toLowerCase();
+    let tier = -1;
+    if (name === q) tier = 0;
+    else if (name.startsWith(q)) tier = 1;
+    else if (fuzzyMatch(name, q)) tier = 2;
+    else if (name.indexOf(q) >= 0) tier = 3;
+    else if ((cmd.summary || "").toLowerCase().indexOf(q) >= 0) tier = 4;
+    if (tier >= 0 && !seen.has(cmd.name)) {
+      seen.add(cmd.name);
+      tiers[tier].push(cmd);
+    }
+  }
+  const ranked = [];
+  for (const tier of tiers) {
+    for (const cmd of tier) ranked.push(cmd);
+  }
+  return ranked.slice(0, MAX_ROWS);
+}
+
+//: True when the letters of *query* appear in *name* in order ("mdl" in
+//  "model"). Subsequence matching is the cheapest useful fuzzy search: it
+//  tolerates the missing vowels people actually type.
+function fuzzyMatch(name, query) {
+  let at = 0;
+  for (const ch of query) {
+    at = name.indexOf(ch, at);
+    if (at < 0) return false;
+    at += 1;
+  }
+  return true;
+}
+
+//: The positions of the typed letters inside *name*, for highlighting.
+function hitPositions(name, query) {
+  const hits = [];
+  let at = 0;
+  for (const ch of query) {
+    at = name.indexOf(ch, at);
+    if (at < 0) break;
+    hits.push(at);
+    at += 1;
+  }
+  return hits;
+}
+
+//: Append *text* to *parent*, underlining the letters that matched the query.
+//  Still textContent-only: the highlight is a wrapper span, never markup.
+function appendHighlighted(parent, text, query) {
+  const hits = query ? hitPositions(text.toLowerCase(), query) : [];
+  if (!hits.length) {
+    parent.textContent = text;
+    return;
+  }
+  const set = new Set(hits);
+  let run = "";
+  let emphasized = false;
+  const flush = () => {
+    if (!run) return;
+    const span = document.createElement("span");
+    if (emphasized) span.className = "hit";
+    span.textContent = run;
+    parent.appendChild(span);
+    run = "";
+  };
+  for (let i = 0; i < text.length; i += 1) {
+    const on = set.has(i);
+    if (on !== emphasized) {
+      flush();
+      emphasized = on;
+    }
+    run += text[i];
+  }
+  flush();
+}
+
+function renderSlash() {
+  const menu = $("slashMenu");
+  menu.textContent = "";
+  if (!slashOpen) {
+    menu.className = "slash-menu";
+    return;
+  }
+  menu.className = "slash-menu open";
+  if (!COMMANDS.length) {
+    const none = document.createElement("div");
+    none.className = "slash-empty";
+    none.textContent = "No commands available.";
+    menu.appendChild(none);
+    return;
+  }
+  if (!slashItems.length) {
+    const none = document.createElement("div");
+    none.className = "slash-empty";
+    none.textContent = "No command matches that filter.";
+    menu.appendChild(none);
+    return;
+  }
+  const query = (slashQuery($("chatInput").value) || "").toLowerCase();
+  slashItems.forEach((cmd, i) => {
+    const row = document.createElement("div");
+    row.className = "slash-item" + (i === slashIndex ? " active" : "");
+    // A command that prompts on stdin cannot be answered from the browser, so
+    // the row says so up front instead of letting the user find out by failing.
+    if (cmd.needs_input) row.className += " unavailable";
+    row.setAttribute("role", "option");
+    row.setAttribute("aria-selected", i === slashIndex ? "true" : "false");
+    const name = document.createElement("span");
+    name.className = "name";
+    appendHighlighted(name, cmd.name, query);
+    const summary = document.createElement("span");
+    summary.className = "summary";
+    summary.textContent = cmd.summary || cmd.usage || "";
+    row.appendChild(name);
+    row.appendChild(summary);
+    if (cmd.needs_input) {
+      // These prompt on stdin; a browser turn has no terminal to answer on.
+      const tag = document.createElement("span");
+      tag.className = "tag";
+      tag.textContent = "terminal";
+      row.appendChild(tag);
+    }
+    // mousedown, not click: it fires before the textarea loses focus.
+    row.addEventListener("mousedown", (ev) => {
+      ev.preventDefault();
+      chooseCommand(i);
+    });
+    menu.appendChild(row);
+  });
+  if (slashItems.length < COMMANDS.length) {
+    const foot = document.createElement("div");
+    foot.className = "slash-foot";
+    foot.textContent = slashItems.length + " of " + COMMANDS.length + " matching - keep typing to narrow";
+    menu.appendChild(foot);
+  }
+}
+
+//: Run *cmd* from the menu exactly as if the user had typed it and pressed
+//  Enter: put the command in the composer, then send. The composer must hold
+//  the command WHEN send() reads it - send() returns early on empty text, so
+//  clearing the box first would silently do nothing (the reported bug).
+function runCommandFromMenu(cmd) {
+  const input = $("chatInput");
+  input.value = "/" + cmd.name;
+  autosize(input);
+  closeSlash();
+  send();
+}
+
+function openSlash(query) {
+  slashOpen = true;
+  slashItems = filterCommands(query);
+  // Keep the highlight in range when the filter changes under it.
+  if (slashIndex >= slashItems.length) slashIndex = 0;
+  renderSlash();
+}
+
+function closeSlash() {
+  slashOpen = false;
+  slashItems = [];
+  slashIndex = 0;
+  renderSlash();
+}
+
+//: Put the command's real usage line in the textarea: completing, not sending.
+//  The command takes arguments, so the user sees "/read <path> " and can fill
+//  them in before pressing Enter - which never fires an accidental,
+//  argument-less command.  The cloned usage is picked up verbatim from the
+//  registry's own help text (no hand-written syntax table to drift).
+function chooseCommand(i) {
+  const cmd = slashItems[i];
+  if (!cmd) return;
+  const input = $("chatInput");
+  const fill = commandFill(cmd);
+  input.value = fill;
+  closeSlash();
+  input.focus();
+  // Leave the caret after the last character, ready for arguments.
+  input.setSelectionRange(input.value.length, input.value.length);
+  showUsage(cmd);
+}
+
+//: "/read <path> " - the usage line without argument-less placeholders like the
+//  trailing "(default timeout 900s)" prose, and without a duplicated name.
+function commandFill(cmd) {
+  const usage = stripUsageMeta(cmd.usage || "");
+  if (!usage) return "/" + cmd.name + " ";
+  // A usage line may offer several forms ("kg add|show|remove ...", "read").
+  // Take the first form so the caret lands somewhere sane.
+  const first = usage.split("|")[0].trim();
+  if (!first || first.toLowerCase() === cmd.name.toLowerCase()) {
+    return "/" + cmd.name + " ";
+  }
+  // The usage already starts with the command name; just prefix the slash.
+  return "/" + first + " ";
+}
+
+//: Drop the meta-syntax a usage line carries because it is written for the
+//  `help` card, not for a composer: optional groups ("model [pick|list|load]"),
+//  required placeholders ("read <path>") and "..." continuations.
+//
+//  Pasted verbatim they are a puzzle, not a command. THIS WAS THE BUG: choosing
+//  /model put "/model [pick|list|load|unload|reload|provider|profile|jev]" in
+//  the box, and Enter then sent that literal text as a chat message.
+function stripUsageMeta(usage) {
+  let text = (usage || "").replace(/\[[^\]]*\]/g, " ");
+  text = text.replace(/<[^>]*>/g, " ");
+  text = text.replace(/\.\.\./g, " ");
+  return text.replace(/\s+/g, " ").trim();
+}
+
+//: True when running *cmd* with NO arguments is what choosing it means.
+//  "/model" and "/models" only LIST the models, so Enter may run them straight
+//  from the menu (the picker answers). "/read" without a path would error, so
+//  the menu only completes it and the user fills in the argument.
+function runsOnSelect(cmd) {
+  if (!cmd) return false;
+  return wantsModelList("/" + cmd.name);
+}
+
+//: Show the full usage under the composer so optional arguments are visible
+//  without opening the terminal `help`.
+function showUsage(cmd) {
+  const hint = $("usageHint");
+  if (!hint) return;
+  const usage = (cmd.usage || "").trim();
+  hint.textContent = usage && usage !== cmd.name ? "/" + usage : "";
+}
+
+function syncSlash() {
+  const query = slashQuery($("chatInput").value);
+  if (query === null) {
+    if (slashOpen) closeSlash();
+    return;
+  }
+  openSlash(query);
+}
+
+/* ---- model picker ------------------------------------------------------ */
+//
+// WHY THIS EXISTS: typing "/model" used to send the word to the LLM, which then
+// guessed a model list. The list is a fact this process already holds, served
+// by /api/chat/models (the REPL's own catalog). This panel renders that answer
+// and POSTs the pick to /api/chat/models/select, which runs the REPL's switch.
+//
+// It replaced "click the badge to insert '/model '": inserting text still
+// required the user to know a model name and type it. The badge now opens the
+// list, which is the interaction the picker was asked for.
+
+let modelPanelOpen = false;
+let modelOptions = [];
+let modelRows = [];
+let modelIndex = 0;
+let modelSwitching = false;
+
+//: True when *text* only ASKS TO SEE the models, so the picker answers it.
+//  "/model", "/model list", "/model ls", "/models" -> true.
+//  "/model load x" / "/model provider ..." -> false: those CHANGE something
+//  and still belong to the REPL path on the server.
+function wantsModelList(text) {
+  const parts = (text || "").trim().toLowerCase().split(/\s+/);
+  if (parts[0] === "/models") return parts.length === 1;
+  if (parts[0] !== "/model") return false;
+  return (
+    parts.length === 1 ||
+    (parts.length === 2 && (parts[1] === "list" || parts[1] === "ls"))
+  );
+}
+
+//: Flatten a catalog payload into pickable rows. Pure (no DOM, no network),
+//  which is what lets the tests execute it directly under node.
+function catalogOptions(catalog) {
+  const options = [];
+  const groups = (catalog && catalog.groups) || [];
+  for (const group of groups) {
+    for (const entry of group.entries || []) {
+      options.push({
+        value: entry.value,
+        label: entry.label || entry.value,
+        provider: entry.provider || group.provider || "",
+        groupTitle: group.title || group.provider || "",
+        current: !!entry.current,
+        loaded: !!entry.loaded,
+        detail: entry.detail || "",
+      });
+    }
+  }
+  return options;
+}
+
+//: The catalogue's current model name, or "" (the badge shows "unknown").
+function catalogCurrent(catalog) {
+  return (catalog && (catalog.current || catalog.model)) || "";
+}
+
+function setModelBadge(name) {
+  const badge = $("modelBadge");
+  if (badge && name) badge.textContent = "model: " + name;
+}
+
+function highlightModelRow(index) {
+  if (!modelRows.length) return;
+  let next = index;
+  if (next < 0) next = modelRows.length - 1;
+  if (next >= modelRows.length) next = 0;
+  modelIndex = next;
+  modelRows.forEach((row, i) => {
+    const on = i === modelIndex;
+    row.className = "model-option" + (on ? " active active-row" : "");
+    if (modelOptions[i] && modelOptions[i].current) row.className += " current";
+    row.setAttribute("aria-selected", on ? "true" : "false");
+  });
+  if (modelRows[modelIndex] && modelRows[modelIndex].scrollIntoView) {
+    modelRows[modelIndex].scrollIntoView({ block: "nearest" });
+  }
+}
+
+function emptyPanelRow(text, cls) {
+  const row = document.createElement("div");
+  row.className = cls || "model-empty";
+  row.textContent = text;
+  return row;
+}
+
+//: Render *catalog* into the panel. Every string goes through textContent:
+//  model names come from a provider, so they are untrusted input here.
+function renderModelPanel(catalog, error) {
+  const panel = $("modelPanel");
+  if (!panel) return;
+  panel.textContent = "";
+  modelOptions = catalogOptions(catalog);
+  modelRows = [];
+
+  const head = document.createElement("div");
+  head.className = "model-head";
+  const current = catalogCurrent(catalog);
+  const title = document.createElement("span");
+  title.textContent = current ? "current: " + current : "no model selected";
+  const spacer = document.createElement("span");
+  spacer.className = "spacer";
+  const count = document.createElement("span");
+  count.textContent = modelOptions.length
+    ? modelOptions.length + " model(s)"
+    : "";
+  head.appendChild(title);
+  head.appendChild(spacer);
+  head.appendChild(count);
+  panel.appendChild(head);
+
+  if (error) {
+    panel.appendChild(emptyPanelRow("Could not read the model list: " + error));
+    return;
+  }
+  if (!modelOptions.length) {
+    // An empty group carries the hint that explains why (no server, no key).
+    const hints = ((catalog && catalog.groups) || [])
+      .map((group) => group.hint)
+      .filter(Boolean);
+    panel.appendChild(
+      emptyPanelRow(
+        hints.length
+          ? hints.join(" — ")
+          : "No model found: no provider is reachable."
+      )
+    );
+    return;
+  }
+
+  let index = 0;
+  let lastGroup = null;
+  for (const group of (catalog && catalog.groups) || []) {
+    const entries = group.entries || [];
+    if (!entries.length) continue;
+    const heading = group.title || group.provider || "";
+    if (heading && heading !== lastGroup) {
+      const label = document.createElement("div");
+      label.className = "model-group";
+      label.textContent = heading;
+      panel.appendChild(label);
+      lastGroup = heading;
+    }
+    for (const entry of entries) {
+      const option = modelOptions[index];
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "model-option" + (option.current ? " current" : "");
+      row.setAttribute("role", "option");
+      row.setAttribute("aria-selected", "false");
+      const label = document.createElement("span");
+      label.className = "label";
+      label.textContent = option.label;
+      row.appendChild(label);
+      if (option.detail) {
+        const detail = document.createElement("span");
+        detail.className = "detail";
+        detail.textContent = option.detail;
+        row.appendChild(detail);
+      }
+      if (option.current || option.loaded) {
+        const tag = document.createElement("span");
+        tag.className = "tag" + (option.current ? " current" : "");
+        tag.textContent = option.current ? "current" : "loaded";
+        row.appendChild(tag);
+      }
+      const at = index;
+      // mousedown, not click: it fires before the textarea can act on blur.
+      row.addEventListener("mousedown", (ev) => {
+        ev.preventDefault();
+        chooseModel(at);
+      });
+      panel.appendChild(row);
+      modelRows.push(row);
+      index += 1;
+    }
+  }
+
+  const currentIndex = modelOptions.findIndex((option) => option.current);
+  highlightModelRow(currentIndex >= 0 ? currentIndex : 0);
+}
+
+function closeModelPanel() {
+  modelPanelOpen = false;
+  modelOptions = [];
+  modelRows = [];
+  modelIndex = 0;
+  const panel = $("modelPanel");
+  if (panel) {
+    panel.className = "model-panel";
+    panel.textContent = "";
+  }
+  const badge = $("modelBadge");
+  if (badge) badge.setAttribute("aria-expanded", "false");
+}
+
+//: Open the panel shell (badge state + a loading line); returns the panel.
+function showModelPanel(message) {
+  const panel = $("modelPanel");
+  if (!panel) return null;
+  closeSlash();
+  modelPanelOpen = true;
+  panel.className = "model-panel open";
+  panel.textContent = "";
+  panel.appendChild(emptyPanelRow(message || "Loading models..."));
+  const badge = $("modelBadge");
+  if (badge) badge.setAttribute("aria-expanded", "true");
+  return panel;
+}
+
+//: Show a catalog the page ALREADY holds (the answer to "/model list").
+function openModelPanelFromCatalog(catalog, error) {
+  if (!showModelPanel("Loading models...")) return;
+  renderModelPanel(catalog, error);
+  setModelBadge(catalogCurrent(catalog));
+}
+
+//: Fetch the catalog and open the panel. ``fresh=1`` bypasses the short server
+//  cache: the user just asked, so a model loaded a moment ago must show up.
+async function openModelPanel() {
+  if (!showModelPanel("Loading models...")) return;
+  try {
+    const resp = await fetch(api.models + "?fresh=1");
+    const data = await resp.json();
+    if (!modelPanelOpen) return;
+    renderModelPanel(data, data && data.error);
+    setModelBadge(catalogCurrent(data));
+  } catch (e) {
+    if (!modelPanelOpen) return;
+    renderModelPanel({ groups: [] }, e.message);
+  }
+}
+
+function toggleModelPanel() {
+  if (modelPanelOpen) closeModelPanel();
+  else openModelPanel();
+}
+
+//: POST the highlighted/clicked row and report what happened IN the transcript,
+//  so the switch is visible and not just a badge change.
+async function chooseModel(index) {
+  const option = modelOptions[index];
+  if (!option || modelSwitching) return;
+  modelSwitching = true;
+  $("stateLabel").textContent = "switching to " + option.value + "...";
+  try {
+    const data = await postJSON(api.selectModel, {
+      model: option.value,
+      provider: option.provider,
+    });
+    if (data && data.ok) {
+      const name = data.model || option.value;
+      setModelBadge(name);
+      closeModelPanel();
+      addMessage(
+        "assistant",
+        data.reply || "Switched to " + name,
+        "system"
+      );
+    } else {
+      addMessage(
+        "assistant",
+        "Could not switch model: " + ((data && data.error) || "unknown error"),
+        "error"
+      );
+    }
+  } catch (e) {
+    addMessage("assistant", "Could not switch model: " + e.message, "error");
+  } finally {
+    modelSwitching = false;
+    $("stateLabel").textContent = "";
+    $("chatInput").focus();
+  }
+}
+
+
+async function loadCommands() {
+  try {
+    const data = await (await fetch(api.commands)).json();
+    COMMANDS = data.commands || [];
+  } catch (e) {
+    COMMANDS = [];
+  }
+  // A menu opened before the catalog arrived is now stale: re-render it.
+  if (slashOpen) openSlash(slashQuery($("chatInput").value) || "");
+}
+
+/* ---- send / reset------------------------------------------------------- */
+
+async function send() {
+  const input = $("chatInput");
+  const text = input.value.trim();
+  if (!text) return;
+  closeSlash();
+  // "/model" asks to SEE the models. That answer is a fact this process holds,
+  // so it must never reach the LLM (which used to invent a list). Open the
+  // picker instead of sending a turn.
+  if (wantsModelList(text)) {
+    input.value = "";
+    autosize(input);
+    openModelPanel();
+    return;
+  }
+  addMessage("user", text);
+  input.value = "";
+  autosize(input);
+  const pending = addMessage("assistant", "thinking...");
+  setBusy(true);
+  try {
+    const data = await postJSON(api.send, {message: text});
+    setNetNotice("");
+    if (data.model) $("modelBadge").textContent = "model: " + data.model;
+    // The server answers "/model list" with structured groups. Render the
+    // picker rather than the compact text fallback it also returns.
+    if (data.ok && data.kind === "models" && data.catalog) {
+      pending.parentElement.remove();
+      openModelPanelFromCatalog(data.catalog, data.catalog.error);
+      return;
+    }
+    if (data.ok) {
+      pending.textContent = data.reply;
+    } else {
+      pending.parentElement.className = "msg error";
+      pending.textContent = "Error: " + (data.error || "no answer");
+    }
+  } catch (e) {
+    // A transport failure is not an answer: say the turn was not run, and put
+    // the text back so the user does not have to retype it.
+    pending.parentElement.className = "msg error";
+    pending.textContent = "Error: " + e.message;
+    if (!input.value.trim()) input.value = text;
+    setNetNotice("The dashboard did not answer. Is it still running? The message was not sent.");
+  } finally {
+    setBusy(false);
+    input.focus();
+  }
+}
+
+async function reset() {
+  // This is NOT just "clear the transcript": /api/chat/reset calls the REPL's
+  // own clear_history, which wipes the whole agent state of this workspace -
+  // files read, knowledge graph, working memory, semantic index - and deletes
+  // the persisted memory files. Ask before destroying that.
+  const sure = window.confirm(
+    "Reset clears MORE than this transcript.\n\n" +
+    "It runs the REPL's clear_history for this workspace:\n" +
+    "  - the conversation (browser and terminal)\n" +
+    "  - files-read tracking and the knowledge graph\n" +
+    "  - working memory and the semantic index\n" +
+    "  - the saved memory files (agent_memory.json, chat history)\n\n" +
+    "Files on disk are NOT touched. Continue?"
+  );
+  if (!sure) return;
+  try {
+    await postJSON(api.reset, {});
+  } catch (e) { /* reset is best effort */ }
+  $("messages").textContent = "";
+  const empty = document.createElement("div");
+  empty.className = "empty";
+  empty.id = "emptyState";
+  empty.textContent = "No messages yet - say hello.";
+  $("messages").appendChild(empty);
+  $("usageHint").textContent = "";
+  $("stateLabel").textContent = "agent memory cleared";
+  $("chatInput").focus();
+}
+
+async function loadHistory() {
+  try {
+    const data = await (await fetch(api.history)).json();
+    if (data.model) $("modelBadge").textContent = "model: " + data.model;
+    for (const m of data.messages || []) {
+      addMessage(m.role === "user" ? "user" : "assistant", m.content);
+    }
+  } catch (e) {
+    $("stateLabel").textContent = "history unavailable";
+  }
+}
+
+$("sendBtn").addEventListener("click", send);
+$("resetBtn").addEventListener("click", reset);
+// The model badge opens the picker. It used to type "/model " into the
+// composer, which still left the user to know and spell a model name - the
+// reported bug ("cannot pick a model") started right there.
+$("modelBadge").addEventListener("click", toggleModelPanel);
+$("modelBadge").addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter" || ev.key === " ") {
+    ev.preventDefault();
+    toggleModelPanel();
+  }
+});
+$("slashBtn").addEventListener("click", () => {
+  const input = $("chatInput");
+  if (slashQuery(input.value) === null) input.value = "/";
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+  syncSlash();
+});
+$("chatInput").addEventListener("input", syncSlash);
+$("chatInput").addEventListener("keydown", (ev) => {
+  // The picker owns the arrow keys while it is open, so a keyboard user can
+  // walk the list and pick without a mouse.
+  if (modelPanelOpen && modelRows.length) {
+    if (ev.key === "ArrowDown") {
+      ev.preventDefault();
+      highlightModelRow(modelIndex + 1);
+      return;
+    }
+    if (ev.key === "ArrowUp") {
+      ev.preventDefault();
+      highlightModelRow(modelIndex - 1);
+      return;
+    }
+    if (ev.key === "Enter" || ev.key === "Tab") {
+      ev.preventDefault();
+      chooseModel(modelIndex);
+      return;
+    }
+  }
+  if (ev.key === "Escape" && modelPanelOpen) {
+    ev.preventDefault();
+    closeModelPanel();
+    return;
+  }
+  if (slashOpen && slashItems.length) {
+    if (ev.key === "ArrowDown") {
+      ev.preventDefault();
+      slashIndex = (slashIndex + 1) % slashItems.length;
+      renderSlash();
+      return;
+    }
+    if (ev.key === "ArrowUp") {
+      ev.preventDefault();
+      slashIndex = (slashIndex - 1 + slashItems.length) % slashItems.length;
+      renderSlash();
+      return;
+    }
+    if (ev.key === "Tab" || ev.key === "Enter") {
+      ev.preventDefault();
+      const cmd = slashItems[slashIndex];
+      if (ev.key === "Enter" && runsOnSelect(cmd)) {
+        // "/model" with no arguments IS the request ("show me the models"),
+        // so Enter answers it instead of parking the synopsis in the composer.
+        runCommandFromMenu(cmd);
+        return;
+      }
+      chooseCommand(slashIndex);
+      return;
+    }
+  }
+  if (ev.key === "Escape" && slashOpen) {
+    ev.preventDefault();
+    closeSlash();
+    return;
+  }
+  if (ev.key === "Enter" && !ev.shiftKey) {
+    ev.preventDefault();
+    send();
+  }
+});
+
+$("themeToggle").addEventListener("click", toggleTheme);
+
+// Keep a second tab in step. The storage event fires only in OTHER tabs, which
+// is exactly right: the tab that made the change already applied it.
+window.addEventListener("storage", (ev) => {
+  if (ev.key === THEME_KEY) applyTheme(ev.newValue);
+});
+
+// Ctrl+K / Cmd+K focuses the composer from anywhere on the page.
+document.addEventListener("keydown", (ev) => {
+  if ((ev.ctrlKey || ev.metaKey) && (ev.key === "k" || ev.key === "K")) {
+    ev.preventDefault();
+    $("chatInput").focus();
+  }
+});
+
+//: Grow the composer with its content, up to a cap, so a long message stays
+//  readable instead of scrolling inside a two-line box.
+function autosize(input) {
+  input.style.height = "auto";
+  input.style.height = Math.min(input.scrollHeight, 240) + "px";
+}
+$("chatInput").addEventListener("input", (ev) => autosize(ev.target));
+
+// Sync the button's aria-label with the theme the inline head script already
+// applied, so the glyph matches the page on first paint.
+applyTheme(currentTheme());
+
+loadHistory();
+loadCommands();
+autosize($("chatInput"));
+$("chatInput").focus();
+</script>
+</body>
+</html>

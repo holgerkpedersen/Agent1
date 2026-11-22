@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import difflib
 import re
+import sys
+from dataclasses import dataclass
 
-from .base import Command
+from .base import Command, read_input
 from agent_core.config import lmstudio_base_url, load_agent_settings
 from agent_core.constants import (
     DEFAULT_LEMONADE_API_BASE,
@@ -79,8 +81,25 @@ def _live_provider_name(agent: Any) -> str:
     return name if isinstance(name, str) else ""
 
 
+@dataclass
+class _PickerEntry:
+    """One selectable row in the interactive ``/model`` picker."""
+
+    number: int
+    label: str
+    provider: str
+    value: str
+    current: bool = False
+    loaded: bool = False
+
+
 class ModelCommand(Command):
     """Manage LLM models via the LM Studio REST API."""
+
+    #: ``/model`` with no arguments shows a numbered picker, but ``_handle_bare``
+    #: skips it when there is no TTY and just lists — so the dashboard can still
+    #: run it.  Without this the source probe marks the command terminal-only.
+    declared_needs_terminal_input = False
 
     @property
     def name(self) -> str:
@@ -89,8 +108,9 @@ class ModelCommand(Command):
     @property
     def help_text(self) -> str:
         return (
-            "model [list|load|unload|reload|provider|profile|jev] - Manage "
-            "LLM models and providers (jev = the dedicated Jev decision model)"
+            "model [pick|list|load|unload|reload|provider|profile|jev] - Show "
+            "and pick LLM models / manage providers ('model' alone = picker; "
+            "jev = the dedicated Jev decision model)"
         )
 
     async def execute(self, args: list[str], agent: "Agent") -> bool:
@@ -98,7 +118,11 @@ class ModelCommand(Command):
         rest = args[1:] if len(args) > 1 else []
 
         if not args:
-            self._list_models(agent, interactive=True)
+            await self._handle_bare(agent)
+            return True
+
+        if sub in ("pick", "choose", "select"):
+            await self._handle_bare(agent, force_interactive=True)
             return True
 
         if sub in ("list", "ls"):
@@ -371,6 +395,85 @@ class ModelCommand(Command):
             )
         except Exception:
             return []
+
+    async def _handle_bare(
+        self, agent: "Agent", force_interactive: bool = False
+    ) -> None:
+        """``/model`` with no arguments — list, then let the user pick.
+
+        Mirrors the opencode chat's ``/model`` UX: the catalog is printed and a
+        numbered prompt accepts a selection.  Piped/Batch input (no TTY) skips
+        the prompt and only lists, so non-interactive callers and tests never
+        block waiting for stdin.  ``model pick`` forces the prompt.
+        """
+        interactive = force_interactive
+        if not interactive:
+            try:
+                interactive = sys.stdin is not None and sys.stdin.isatty()
+            except Exception:
+                interactive = False
+
+        if not interactive:
+            self._list_models(agent)
+            return
+
+        self._list_models(agent, interactive=True)
+        choice = await self._prompt_model_choice(agent)
+        if choice:
+            await self._switch_model([choice], agent)
+
+    def _lmstudio_picker_entries(
+        self, agent: "Agent", start: int = 1
+    ) -> list[_PickerEntry]:
+        """Numbered rows for the LM Studio catalog (the ``/model`` listing order)."""
+        models, _loaded = self._fetch_models()
+        current = agent.llm.model_name
+        entries: list[_PickerEntry] = []
+        for offset, m in enumerate(models, start):
+            entries.append(
+                _PickerEntry(
+                    number=offset,
+                    label=str(m["display_name"]),
+                    provider="lmstudio",
+                    value=str(m["key"]),
+                    current=str(m["key"]) == current,
+                    loaded=bool(m["loaded"]),
+                )
+            )
+        return entries
+
+    async def _prompt_model_choice(self, agent: "Agent") -> str | None:
+        """Ask for a model number; return the query to hand to ``_switch_model``.
+
+        Accepts a number from the shown LM Studio listing, a bare name, or a
+        ``provider/name`` key.  Empty input, ``q``/``quit``, EOF and Ctrl+C all
+        cancel without switching anything (listing stays read-only).
+        """
+        entries = self._lmstudio_picker_entries(agent)
+        hint = "  Pick a model number"
+        if entries:
+            hint += f" (1-{entries[-1].number})"
+        hint += ", or type a name / provider/name  [Enter=keep, q=cancel]: "
+
+        answer = read_input(hint).strip()
+        if not answer:
+            print("  No change — keeping the current model.")
+            return None
+        if answer.lower() in ("q", "quit", "exit", "cancel"):
+            print("  Cancelled — keeping the current model.")
+            return None
+
+        m = re.match(r"^(\d+)\.?$", answer)
+        if not m:
+            return answer
+
+        idx = int(m.group(1))
+        by_number = {e.number: e for e in entries}
+        entry = by_number.get(idx)
+        if entry is None:
+            print(f"  No model number {idx} in the LM Studio listing.")
+            return None
+        return entry.value
 
     def _list_models(
         self,

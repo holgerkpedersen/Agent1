@@ -303,6 +303,7 @@ agent_core/
 │   ├── __init__.py           # Re-exports MetricsCollector, DashboardAPIServer, AlertSystem
 │   ├── metrics_collector.py  # Counters, gauges, histograms, timers (thread-safe)
 │   ├── dashboard_api.py      # TTTHEME web dashboard served by agent.py --serve / --dashboard
+│   ├── chat_api.py           # Alternate dashboard chat (/chat), runs Agent.chat_nlp (tools)
 │   ├── alert_system.py       # Alert rules with threshold checking + cooldown
 │   └── types.py              # MetricType, MetricData, AlertRule, AlertEvent
 ├── swarm_orchestrator.py     # Thread-pool swarm coordinator (up to 20 workers)

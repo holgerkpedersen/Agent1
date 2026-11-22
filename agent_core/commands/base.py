@@ -424,6 +424,14 @@ class Command(ABC):
     All commands must implement execute() and provide a help text.
     """
 
+    #: Explicit answer to "does this command need a terminal?".
+    #:
+    #: ``None`` (the default) means "infer it from the class source" — see
+    #: :func:`agent_core.commands.catalog.needs_terminal_input`.  A command sets
+    #: it to ``False`` when it prompts on stdin ONLY for an optional picker and
+    #: still does useful work without a TTY (it degrades to a plain listing).
+    declared_needs_terminal_input: bool | None = None
+
     @property
     @abstractmethod
     def name(self) -> str:

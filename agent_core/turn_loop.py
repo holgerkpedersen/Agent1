@@ -725,6 +725,11 @@ def _finish_turn(
     getattr(agent, "_save_memory")()
     clean = re.sub("</?tool_call>", "", final_text)
     clean = re.sub("</?function_call>", "", clean)
+    # Expose the turn outcome on the instance: a caller that does not read this
+    # terminal (the dashboard chat runs the SAME pipeline) needs the answer and
+    # the error as data instead of scraping stdout.
+    agent._last_turn_answer = clean.strip()
+    agent._last_turn_error = llm_error
     if llm_error:
         err = llm_error.strip()
         print(yellow("\n  [llm-error] The model did not produce a usable response:"))

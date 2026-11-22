@@ -737,8 +737,29 @@ Knowledge-graph entries are stored in `agent_memory.json` under the
 the four sections are `facts`, `files`, `tags`, and `symbols`. Every `kg`
 mutation saves memory immediately, so entries survive the session and show
 up in `clear`'s count. The graph is curated by hand; a starter set of
-Agent1 facts ships in `scripts/seed_kg.py` (`python scripts/seed_kg.py`
-merges missing entries, `--dry-run` previews, `--force` overwrites).
+Agent1 facts ships in `scripts/seed_kg.py`:
+
+```
+python scripts/seed_kg.py                   # add missing curated entries
+python scripts/seed_kg.py --dry-run         # preview, write nothing
+python scripts/seed_kg.py --force           # overwrite edited entries
+python scripts/seed_kg.py --force --prune   # also drop keys the seed dropped
+python scripts/seed_kg.py --budget          # check the prompt budget
+```
+
+The rendered graph is pasted into the system prompt on every turn, so it is
+capped at 40 entries / 6000 chars (200 chars per entry). `--budget` exits
+non-zero when the seed no longer fits, and a value past 200 chars is cut off
+mid-sentence — keep entries short. Merging never deletes, so a renamed key
+leaves an orphan behind that still costs a prompt line; `--prune` drops every
+key in the four seeded sections that the seed does not define, hand-added ones
+included, which is why it is opt-in.
+
+Seeding rewrites `agent_memory.json`, so run it while Agent1 is NOT running:
+the agent keeps the graph in memory and writes the whole `knowledge_graph`
+key back at the end of every turn, overwriting an external seed. A running
+REPL picks the new graph up when it switches session (`session <name>` and
+back), because switching a session reloads memory from disk.
 
 ---
 

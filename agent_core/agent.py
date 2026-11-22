@@ -6,6 +6,8 @@ re-exports this module (plus the CLI layer) so ``import agent``,
 working unchanged.
 """
 
+import functools
+
 from agent_core.bootstrap import (  # explicit names (was: import *)
     AGENT_MEMORY_JSON_PATH,
     AGENT_MEMORY_TMP_PATH,
@@ -425,6 +427,35 @@ def _has_image_block(message: dict[str, Any]) -> bool:
     return any(isinstance(b, dict) and b.get("type") == "image_url" for b in content)
 
 
+def _single_turn_guard(method: Any) -> Any:
+    """Refuse a second concurrent turn on the same Agent.
+
+    Two surfaces can drive ONE agent: the terminal REPL and the dashboard chat
+    (which reuses the live REPL agent, see ``agent._shared_agent``).  A racing
+    turn would interleave ``_chat_history`` and the tool loop, corrupting both,
+    so the loser is refused instead of silently racing.  The winner's answer is
+    already on its way to whoever asked first.
+
+    ``functools.wraps`` keeps ``Agent.chat_nlp`` introspectable as the real
+    pipeline (``inspect.getsource`` follows ``__wrapped__``), so structural
+    guards and docstrings still see the undecorated body.
+    """
+
+    @functools.wraps(method)
+    async def wrapper(self: Any, user_input: str, *args: Any, **kwargs: Any) -> Any:
+        if self._turn_in_progress:
+            raise RuntimeError(
+                "a turn is already running on this agent; wait for it to finish"
+            )
+        self._turn_in_progress = True
+        try:
+            return await method(self, user_input, *args, **kwargs)
+        finally:
+            self._turn_in_progress = False
+
+    return wrapper
+
+
 class AgentCore:
     """Main agent class with workspace management and tool execution."""
 
@@ -491,6 +522,15 @@ class AgentCore:
         self._decision_collector: Any = None
         #: Decisions found by the last completed turn (newest-last).
         self._last_turn_decisions: list[dict[str, Any]] = []
+        #: Outcome of the last completed turn, written by ``_finish_turn``.
+        #: The REPL ignores them (it already printed the answer); a NON-terminal
+        #: caller of the same pipeline (the dashboard chat) reads them.
+        self._last_turn_answer: str = ""
+        self._last_turn_error: str | None = None
+        #: True while :meth:`chat_nlp` runs.  The terminal and the dashboard
+        #: chat can drive ONE shared agent, so a second concurrent turn is
+        #: refused (see ``chat_nlp``) rather than interleaving its history.
+        self._turn_in_progress: bool = False
         self._active_trace_writer: Any = None
         self._read_streak: int = 0
         self._delegating: bool = False
@@ -1278,6 +1318,7 @@ class AgentCore:
     ) -> None:
         _finish_turn(self, final_text, llm_error, loop, display_mode)
 
+    @_single_turn_guard
     async def chat_nlp(self, user_input: str, images: list[str] | None = None) -> None:
         """Process natural language input through a structured tool-calling loop.
 

@@ -267,6 +267,19 @@ is being extended to audit its own file effects (self-improvement).
   enforce exact-loopback Origin+Host checks. LLM bridge tools
   `mcp_tools`/`mcp_call` fire only for servers with `expose_to_llm: true`
   (default false), re-checked under the manager lock at call time.
+- `agent_core/monitoring/chat_api.py` — the dashboard's **alternate chat**
+  (`/chat`, sidebar "Chat"): a second conversation surface beside the terminal
+  REPL, wired by `agent_dashboard._build_dashboard` so `--serve` and
+  `--dashboard` both get it. It runs the REPL's own turn pipeline
+  (`AgentTurnRunner` -> `Agent.chat_nlp`), so tools, plan mode and history are
+  shared; a live REPL agent is reused instead of forking a second conversation.
+  `ChatService` is the LLM-only fallback (no tools) for embedders. The agent /
+  LLM client is built lazily on the first message (a down backend cannot break
+  dashboard boot), history is capped in memory, one lock serialises a whole
+  turn, and every failure returns `{"ok": false, "error"}` instead of raising.
+  `/api/chat/send` and `/api/chat/reset` reuse the MCP loopback-Origin/Host
+  guard and 64 KB body cap; `/api/chat/history` is GET-only. The page renders
+  model output with `textContent` only (never `innerHTML`).
 - `harnessfix/` — self-improvement consumers: `tracing.py` (`TraceWriter`, ON by
   default, opt-OUT via `AGENT_NO_TRACE=1`; `agent.py` already wires it into the
   live tool loop so every run leaves a trace under `reports/traces/`),

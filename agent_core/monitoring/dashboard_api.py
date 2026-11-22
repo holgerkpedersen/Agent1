@@ -39,6 +39,14 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
             self._send_mcp_page()
         elif path == "/autonomous" or path == "/autonomous.html":
             self._send_autonomous_page()
+        elif path == "/chat" or path == "/chat.html":
+            self._send_chat_page()
+        elif path == "/api/chat/history":
+            self._send_json(self._chat_history())
+        elif path == "/api/chat/commands":
+            self._send_json(self._chat_commands())
+        elif path == "/api/chat/models":
+            self._send_json(self._chat_models(params))
         elif path == "/api/autonomous/status":
             self._send_json(self._autonomous_status())
         elif path == "/api/snapshot":
@@ -76,17 +84,21 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
     # - cross-origin POSTs are rejected (CSRF guard) before any work.
 
     _MCP_POST_PATHS = ("/api/mcp/connect", "/api/mcp/disconnect", "/api/mcp/call")
+    #: Alternate-chat endpoints.  The service behind them runs the REPL's own
+    #: turn pipeline, so a message CAN execute tools — see chat_api.
+    _CHAT_POST_PATHS = ("/api/chat/send", "/api/chat/reset", "/api/chat/models/select")
     _MCP_MAX_BODY = 64 * 1024
+    #: Wired by DashboardAPIServer.configure(chat=...).  Unset (None) means the
+    #: dashboard was started metrics-only, and the chat endpoints answer 503.
+    _chat: Optional[Any] = None
 
-    def do_POST(self) -> None:
-        path = urlparse(self.path).path
-        if path not in self._MCP_POST_PATHS:
-            self.send_error(404, "Not found")
-            return
-        # CSRF / DNS-rebinding guards: the dashboard binds localhost only,
-        # so both the Origin (browser requests) and the Host header must
-        # name a loopback host EXACTLY - "http://localhost.evil.com" must
-        # not slip through a prefix match.
+    def _post_guard_ok(self, label: str) -> bool:
+        """CSRF / DNS-rebinding guard shared by every POST endpoint.
+
+        The dashboard binds localhost only, so both the Origin (browser
+        requests) and the Host header must name a loopback host EXACTLY -
+        "http://localhost.evil.com" must not slip through a prefix match.
+        """
         origin = self.headers.get("Origin", "")
         if origin:
             try:
@@ -94,12 +106,16 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
             except ValueError:
                 ohost = ""
             if ohost not in ("localhost", "127.0.0.1", "::1"):
-                self.send_error(403, "Cross-origin MCP calls are not allowed")
-                return
+                self.send_error(403, f"Cross-origin {label} calls are not allowed")
+                return False
         host = (self.headers.get("Host") or "").split(":")[0].strip("[]")
         if host and host not in ("localhost", "127.0.0.1", "::1"):
             self.send_error(403, "Host header is not loopback")
-            return
+            return False
+        return True
+
+    def _read_json_body(self) -> Optional[Dict[str, Any]]:
+        """Parse the request body, or answer the client and return ``None``."""
         try:
             length = int(self.headers.get("Content-Length", 0))
         except ValueError:
@@ -114,13 +130,28 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
             self.close_connection = True
             self._drain_request_body(length)
             self.send_error(413, "Body too large")
-            return
+            return None
         try:
             payload = json.loads(self.rfile.read(length) or b"{}")
             if not isinstance(payload, dict):
                 raise ValueError("body must be a JSON object")
         except (json.JSONDecodeError, ValueError) as exc:
             self._send_json({"ok": False, "error": f"bad request body: {exc}"})
+            return None
+        return payload
+
+    def do_POST(self) -> None:
+        path = urlparse(self.path).path
+        if path in self._CHAT_POST_PATHS:
+            self._chat_post(path)
+            return
+        if path not in self._MCP_POST_PATHS:
+            self.send_error(404, "Not found")
+            return
+        if not self._post_guard_ok("MCP"):
+            return
+        payload = self._read_json_body()
+        if payload is None:
             return
         name = str(payload.get("name", ""))
         try:
@@ -178,6 +209,109 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _send_chat_page(self) -> None:
+        """Serve static/chat.html verbatim (alternate chat surface)."""
+        page_path = os.path.join(self._base_dir, "static", "chat.html")
+        if not os.path.isfile(page_path):
+            self.send_error(404, "chat.html not found")
+            return
+        with open(page_path, "rb") as f:
+            body = f.read()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    # -- Alternate chat endpoints ------------------------------------------
+    #
+    # Same CSRF/Host guard and body cap as MCP.  The wired service runs the
+    # REPL's own turn pipeline (see chat_api.AgentTurnRunner), so these
+    # endpoints can execute tools exactly as a terminal turn can — which is
+    # why the loopback-only bind and the POST guard above are mandatory.
+
+    def _chat_service(self) -> Optional[Any]:
+        return DashboardAPIHandler._chat
+
+    def _chat_history(self) -> Dict[str, Any]:
+        service = self._chat_service()
+        if service is None:
+            return {"error": "chat not configured", "messages": [], "model": "unloaded"}
+        return {
+            "messages": service.history(),
+            "model": service.model_name,
+        }
+
+    def _chat_commands(self) -> Dict[str, Any]:
+        """The REPL's slash-command catalog for the chat page (read-only GET)."""
+        service = self._chat_service()
+        if service is None:
+            return {"commands": [], "error": "chat not configured"}
+        try:
+            commands = service.commands()
+        except Exception as exc:  # never 500 a read-only listing
+            return {"commands": [], "error": f"{type(exc).__name__}: {exc}"}
+        return {"commands": commands, "count": len(commands)}
+
+    def _chat_models(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """The model catalogue for the page's picker (read-only GET).
+
+        ``?fresh=1`` bypasses the short cache: the page asks for a fresh read
+        when the user reopens the picker, because a model may have just been
+        loaded or unloaded in the provider.
+        """
+        service = self._chat_service()
+        if service is None:
+            return {"groups": [], "count": 0, "error": "chat not configured"}
+        raw_fresh = str((params or {}).get("fresh", [""])[0]).strip()
+        fresh = raw_fresh in ("1", "true", "yes")
+        try:
+            return service.models(fresh=fresh)
+        except Exception as exc:  # never 500 a read-only listing
+            return {
+                "groups": [],
+                "count": 0,
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+
+    def _chat_post(self, path: str) -> None:
+        if not self._post_guard_ok("chat"):
+            return
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        service = self._chat_service()
+        if service is None:
+            # Metrics-only dashboard (no chat wired): say so instead of 500.
+            self._send_json(
+                {"ok": False, "error": "chat not configured on this dashboard"}
+            )
+            return
+        if path == "/api/chat/reset":
+            service.reset()
+            self._send_json({"ok": True})
+            return
+        if path == "/api/chat/models/select":
+            # The picker's action.  Listed in _CHAT_POST_PATHS but dispatched
+            # HERE: without this branch the request fell through to send(""),
+            # so a pick answered "message is required" and select_model was
+            # never called - "nothing happens" from the page.
+            model = str(payload.get("model") or payload.get("value") or "").strip()
+            provider = payload.get("provider")
+            provider = str(provider).strip() if provider else None
+            if not model:
+                self._send_json({"ok": False, "error": "a model name is required"})
+                return
+            try:
+                self._send_json(service.select_model(model, provider))
+            except Exception as exc:  # never 500 a user action
+                self._send_json(
+                    {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+                )
+            return
+        # send() serialises the turn internally and never raises.
+        self._send_json(service.send(str(payload.get("message", ""))))
 
     def _send_autonomous_page(self) -> None:
         """Serve static/autonomous.html verbatim (real-time autonomous view)."""
@@ -641,21 +775,31 @@ class DashboardAPIServer:
         alert_rules: List[AlertRule],
         evaluate_alerts: Optional[Callable[[List[AlertRule]], List[AlertEvent]]] = None,
         refresh: Optional[Callable[[MetricsCollector], None]] = None,
+        chat: Optional[Any] = None,
     ) -> None:
         DashboardAPIHandler._collector = self._collector
         DashboardAPIHandler._alert_rules = list(alert_rules)
         DashboardAPIHandler._evaluate_alerts = evaluate_alerts
         DashboardAPIHandler._refresh = refresh if refresh is not None else self._refresh
+        # ``chat=None`` keeps a previously wired service (an explicit disconnect
+        # is not a use case) but leaves a metrics-only dashboard with 503s.
+        if chat is not None:
+            DashboardAPIHandler._chat = chat
+
+    def set_chat(self, chat: Optional[Any]) -> None:
+        """Wire (or clear) the alternate-chat service."""
+        DashboardAPIHandler._chat = chat
 
     def start(
         self,
         alert_rules: Optional[List[AlertRule]] = None,
         evaluate_alerts: Optional[Callable[[List[AlertRule]], List[AlertEvent]]] = None,
         refresh: Optional[Callable[[MetricsCollector], None]] = None,
+        chat: Optional[Any] = None,
     ) -> ThreadingHTTPServer:
         if refresh is not None:
             self.set_refresh(refresh)
-        self.configure(alert_rules or [], evaluate_alerts, self._refresh)
+        self.configure(alert_rules or [], evaluate_alerts, self._refresh, chat)
         server = ThreadingHTTPServer(("localhost", self._port), DashboardAPIHandler)
         self._server = server
         return server
@@ -665,8 +809,9 @@ class DashboardAPIServer:
         alert_rules: Optional[List[AlertRule]] = None,
         evaluate_alerts: Optional[Callable[[List[AlertRule]], List[AlertEvent]]] = None,
         refresh: Optional[Callable[[MetricsCollector], None]] = None,
+        chat: Optional[Any] = None,
     ) -> None:
-        server = self.start(alert_rules or [], evaluate_alerts, refresh)
+        server = self.start(alert_rules or [], evaluate_alerts, refresh, chat)
         try:
             server.serve_forever()
         except KeyboardInterrupt:

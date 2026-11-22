@@ -92,12 +92,20 @@ def _build_dashboard(collector: "MetricsCollector", port: int) -> tuple[Any, Any
     identical rules and evaluator wiring.
     """
     from agent_core.monitoring import AlertSystem, DashboardAPIServer
+    from agent_core.monitoring.chat_api import AgentTurnRunner
     from agent_core.monitoring.metrics_file import make_event_tailer
 
     alert_system = AlertSystem(collector)
     for rule in _default_alert_rules():
         alert_system.add_rule(rule)
     server_holder = DashboardAPIServer(collector, port=port)
+    # Alternate chat (/chat): runs the REPL's own turn pipeline (tools, tool
+    # loop, plan mode, persistence) through Agent.chat_nlp — see chat_api.
+    # Built here so both entrypoints get it; the agent and its LLM client stay
+    # unloaded until the first message, so a down backend cannot block
+    # dashboard startup.  A live REPL in this process is reused, so browser and
+    # terminal share ONE conversation.
+    server_holder.set_chat(AgentTurnRunner())
     # Tail the shared event file on every request so cross-process activity
     # (REPL sessions running beside a --serve dashboard) shows up.  Own-pid
     # events are skipped inside the tailer, so combined mode can't double-count.

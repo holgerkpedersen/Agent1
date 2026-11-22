@@ -245,6 +245,9 @@ def _register_commands(registry: CommandRegistry) -> None:
     from agent_core.commands.session_cmd import SessionCommand
 
     registry.register(SessionCommand())
+    from agent_core.commands.model_catalog import ModelsCommand
+
+    registry.register(ModelsCommand())
 
 
 def _build_registry() -> CommandRegistry:
@@ -337,12 +340,29 @@ def _build_chat_prompt(agent: "Agent", branch: str, now: datetime) -> str:
 _STARTUP_WORKSPACE: str = ""
 
 
+def publish_shared_agent(agent: Any) -> None:
+    """Expose *agent* as this process's live session on the ``agent`` module.
+
+    ``agent_core.signal_handlers`` already reads ``agent._shared_agent`` at
+    shutdown.  The dashboard chat resolves the same binding, so a browser turn
+    runs on THIS live agent instead of building a second one with its own
+    history — terminal and dashboard share one conversation.
+    """
+    try:
+        import agent as agent_module
+
+        agent_module._shared_agent = agent
+    except Exception:  # a broken root import must not kill the REPL
+        pass
+
+
 async def run_interactive() -> None:
     """Interactive mode - allows user to input commands."""
     from agent import Agent
 
     workspace = _STARTUP_WORKSPACE or Agent.DEFAULT_WORKSPACE
     agent = Agent(workspace=workspace)
+    publish_shared_agent(agent)
     banner = blue("=" * 50)
     print(banner)
     print(blue("Agent Interactive Mode with LM Studio"))
