@@ -24,7 +24,28 @@ Usage::
     python scripts/seed_kg.py            # add missing curated entries
     python scripts/seed_kg.py --dry-run  # show what would be added
     python scripts/seed_kg.py --force    # overwrite existing keys
+    python scripts/seed_kg.py --force --prune  # also drop orphaned keys
     python scripts/seed_kg.py --budget   # report prompt-budget usage
+
+Merge never deletes by default, so a renamed or merged seed key leaves an
+orphan behind that still costs a prompt line and can push the graph over its
+cap.  ``--prune`` removes those; it deletes EVERY key in the four canonical
+sections that the seed does not define, hand-added ones included, so it is
+opt-in and reports what it removed.
+
+Re-run the seed while Agent1 is NOT running.  ``persistence._save_memory``
+rewrites the whole ``knowledge_graph`` key from the live agent's in-memory
+dict at the end of every turn (``turn_loop``), so a running agent overwrites
+an externally seeded graph on its next turn.  A live REPL reads the seeded
+graph back when it switches session (``session <name>`` and back), because a
+session switch calls ``_load_memory``.
+
+Because that overwrite is silent, the write path WARNS on stderr when a live
+Agent1 session owns the memory file, naming the session and PID so the operator
+can judge whether to exit first and re-run.  It does not refuse: seeding from
+inside a running REPL is the common way this script is invoked, and an
+unverified verdict would block that flow.  ``--budget`` and ``--dry-run`` write
+nothing and never warn.
 """
 
 from __future__ import annotations
@@ -62,34 +83,28 @@ SEED: dict[str, dict[str, Any]] = {
     "facts": {
         # -- the knowledge graph itself -----------------------------------
         "kg-command": (
-            "kg (commands/kg_cmd.py) adds/shows/removes "
-            "agent._knowledge_graph entries; each mutation calls _save_memory()."
+            "kg (kg_cmd.py) adds/shows/removes _knowledge_graph entries "
+            "{section: {key: {value, ts}}}; each mutation calls "
+            "_save_memory(); context_blocks.py renders it."
         ),
         "clear-command": (
-            "clear wipes history, knowledge graph, working memory, semantic "
-            "index, files-read set and goal; it leaves session metadata alone "
-            "(use 'session')."
-        ),
-        "kg-schema": (
-            "Schema {section: {key: {value, ts}}}; sections are "
-            "facts/files/tags/symbols; an emptied section is dropped."
+            "clear wipes history, KG, working memory, semantic index, "
+            "files-read and goal; session metadata survives (use 'session')."
         ),
         # -- memory & persistence ------------------------------------------
         "memory-store": (
             "MemoryStore (memory/memory_store.py) is a thread-safe cache over "
-            "SQLiteStorage; its embedding cache is keyed per entry TEXT, so an "
-            "append costs one embedding."
+            "SQLiteStorage; embedding cache keyed per entry TEXT."
         ),
         "semantic-memory-loop": (
-            "memory/distill.py record_turn writes one ledger entry per turn; "
-            "types.semantic_memory_block reads it back ranked, fail-open to "
-            "unranked when the embedder is down."
+            "distill.py record_turn writes a ledger entry per turn; "
+            "scoring.rank_memories ranks it (fail-open); "
+            "types.semantic_memory_block reads it back."
         ),
         # -- REPL & command registry ----------------------------------------
         "command-registry": (
-            "CommandRegistry (commands/registry.py) does register/get/names/"
-            "execute/print_help; interactive._register_commands is the single "
-            "registration point for banner and dispatch."
+            "CommandRegistry (commands/registry.py) is the dispatch core; "
+            "interactive._register_commands is the single registration point."
         ),
         # -- tool loop & turn loop -------------------------------------------
         "tool-loop": (
@@ -100,6 +115,15 @@ SEED: dict[str, dict[str, Any]] = {
             "turn_loop.py _run_chained_tool_loop runs one REPL turn; "
             "_finish_turn records it; check_stale_files tracks on-disk changes."
         ),
+        "dashboard-chat": (
+            "chat_api.py AgentTurnRunner runs /chat on the live agent (shared "
+            "history) via chat_nlp; slash.py answers /commands offline; "
+            "dashboard_api.py serves chat.html."
+        ),
+        "model-picker": (
+            "model_catalog.py is the ONE catalogue for the REPL 'model' and the "
+            "dashboard /model; a blank '/' is the no-LLM command menu."
+        ),
         # -- modes -------------------------------------------------------------
         "plan-mode": (
             "modes.py is_plan_mode/filter_tool_schemas/check_tool_allowed gate "
@@ -107,14 +131,14 @@ SEED: dict[str, dict[str, Any]] = {
         ),
         # -- parallel & subagents -----------------------------------------------
         "parallel-delegate": (
-            "llm/parallel.py + llm/tool_reply.py handle parallel delegation; "
-            "subagent.py and subagent_roles.py hold the sub-agent machinery."
+            "llm/parallel.py + llm/tool_reply.py do parallel delegation; "
+            "subagent.py + subagent_roles.py hold the sub-agent machinery."
         ),
         # -- autonomous decisions -----------------------------------------------
         "decision-ledger": (
             "decisions.py records/searches/resolves .decisions.json; "
-            "decision_improvement.py flags drift and writes accepted proposals "
-            "back to the ledger."
+            "discrepancy.py checks compliance; decision_improvement.py proposes; "
+            "decisions_index.py reads."
         ),
         # -- jev decision engine -------------------------------------------------
         "jev-engine": (
@@ -125,8 +149,7 @@ SEED: dict[str, dict[str, Any]] = {
         # -- sessions ------------------------------------------------------------
         "session-isolation": (
             "session/ holds identities, the metadata store, workspace locks and "
-            "parse_and_activate; each session owns its memory and chat-history "
-            "paths."
+            "parse_and_activate; each session owns its memory and history paths."
         ),
         # -- skills --------------------------------------------------------------
         "skills": (
@@ -140,64 +163,73 @@ SEED: dict[str, dict[str, Any]] = {
         ),
         # -- reply-language policy ------------------------------------------------
         "reply-language": (
-            "language.py solely owns answer-language selection: "
-            "detect_language/language_directive/language_block build the "
-            "instruction; override_language honours a setting."
+            "language.py owns answer-language selection via "
+            "detect_language/language_directive/language_block; "
+            "override_language honours a setting."
         ),
         # -- implement filename safety ---------------------------------------------
         "implement-safety": (
             "commands/implement_safety.py _is_dangerous_filename/"
-            "_shadowing_stdlib_dir/_find_safe_subpackage stop a write that "
-            "shadows stdlib or escapes the package."
+            "_shadowing_stdlib_dir/_find_safe_subpackage stop writes that "
+            "shadow stdlib or escape the package."
+        ),
+        # -- real-change detection ------------------------------------------------
+        "pytest-gate": (
+            "pytest_gate.py is_scratch_path + FullRunGate + "
+            "full_suite_timeout decide real changes, scale the budget."
         ),
     },
     "files": {
         "agent_core/agent.py": (
-            "AgentCore (~428): state stores (~471), tool-call execution, "
-            "chat_nlp; Agent = AgentCore (~1767)."
+            "AgentCore (~459): state stores (~502: _knowledge_graph, "
+            "_working_memory), tool-call execution, chat_nlp (~1322); "
+            "Agent = AgentCore (~1808)."
+        ),
+        "agent_core/decision_collector.py": (
+            "DecisionCollector.collect_turn_decisions re-reads a turn's "
+            "choices (read-only); aggregate_periodic folds the ledgers into "
+            "counts."
+        ),
+        "agent_core/rich_render.py": (
+            "render_markdown() previews LLM markdown via rich; falls back to "
+            "plain print when rich is missing (HAS_RICH)."
+        ),
+        "agent_core/file_searcher.py": (
+            "FileSearcher.search(query, path, include) backs the search tool: "
+            "include is an fnmatch glob, path scopes the walk."
         ),
         "agent_core/cli/interactive.py": (
             "REPL registry + dispatch; registers kg (~241); run_interactive "
-            "(~340) is a module function, not an Agent method."
+            "(~359) is a module function, not an Agent method."
         ),
         "agent_core/commands/kg_cmd.py": (
             "kg command: add/show/remove over agent._knowledge_graph."
         ),
-        "agent_core/commands/registry.py": (
-            "CommandRegistry: register/get/names/execute/print_help — the "
-            "dispatch core."
-        ),
         "agent_core/memory/persistence.py": (
             "Memory JSON load/save, clear_history, memory_stats."
         ),
-        "agent_core/memory/memory_store.py": (
-            "MemoryStore: thread-safe cache-over-backend store with optional "
-            "semantic search."
-        ),
-        "agent_core/llm/tool_loop.py": (
-            "ToolLoopRunner: the LLM<->tool loop with compaction and forced "
-            "final answer."
-        ),
         "agent_core/turn_loop.py": (
-            "One REPL turn: chained tool loop, failover reporting, _finish_turn, "
-            "stale files."
+            "One REPL turn: chained tool loop, failover reporting, _finish_turn "
+            "outcome, stale files."
+        ),
+        "agent_core/monitoring/chat_api.py": (
+            "Dashboard chat: AgentTurnRunner -> Agent.chat_nlp; ChatService "
+            "is the LLM-only fallback."
+        ),
+        "agent_core/commands/catalog.py": (
+            "command_catalog(registry) turns the live registry into JSON for "
+            "the dashboard slash menu; needs_terminal_input marks "
+            "terminal-only ones."
         ),
     },
     "symbols": {
         "run_interactive": (
-            "interactive.py (~340): module-level REPL entry point; NOT an Agent "
-            "method (the class is AgentCore)."
+            "interactive.py (~359): module-level REPL entry point; NOT an "
+            "Agent method (the class is AgentCore)."
         ),
         "CommandRegistry.register": (
             "Registers REPL commands; KGCommand is registered from "
             "interactive.py (~241)."
-        ),
-        "add_entry": (
-            "kg_cmd.add_entry(agent, section, key, value): creates the section, "
-            "stores {value, ts}."
-        ),
-        "remove_entry": (
-            "kg_cmd.remove_entry(agent, section, key): prunes empty sections."
         ),
         "_save_memory": (
             "persistence.py (~216): persists all memory stores atomically to "
@@ -208,9 +240,8 @@ SEED: dict[str, dict[str, Any]] = {
             "graph, working memory, semantic index; removes state files."
         ),
         "memory_stats": (
-            "persistence.py (~62): counts chat_history, files_read, "
-            "stale_files, history, working_memory, semantic_index, "
-            "knowledge_graph."
+            "persistence.py (~62): counts every store, "
+            "knowledge_graph_entries and stale_files."
         ),
         "ToolLoopRunner.run": (
             "tool_loop.py (~949; class ~813): drives messages through "
@@ -339,14 +370,23 @@ def load_graph(memory_path: str | None = None) -> dict[str, dict[str, Any]]:
 
 
 def merge(seed: dict[str, dict[str, Any]], graph: dict[str, dict[str, Any]],
-          force: bool = False) -> tuple[dict[str, dict[str, Any]], list[str]]:
-    """Merge seed entries into *graph*; return (merged_graph, added_keys)."""
+          force: bool = False,
+          prune: bool = False) -> tuple[dict[str, dict[str, Any]], list[str]]:
+    """Merge seed entries into *graph*; return (merged_graph, added_keys).
+
+    Keys already present keep their stored value unless *force* is given.
+    With *prune*, any key in a canonical section that the seed does not define
+    is dropped first, so renamed or merged seed keys stop costing prompt lines.
+    Section order and non-dict sections are preserved untouched.
+    """
     added: list[str] = []
     merged = dict(graph)
     for section in SECTIONS:
         seed_items = seed.get(section, {})
         existing = merged.get(section)
         items: dict[str, Any] = existing if isinstance(existing, dict) else {}
+        if prune:
+            items = {k: v for k, v in items.items() if k in seed_items}
         for key, value in seed_items.items():
             if key in items and not force:
                 continue
@@ -355,6 +395,27 @@ def merge(seed: dict[str, dict[str, Any]], graph: dict[str, dict[str, Any]],
         if items:
             merged[section] = items
     return merged, added
+
+
+def orphans(
+    seed: dict[str, dict[str, Any]] | None = None,
+    graph: dict[str, dict[str, Any]] | None = None,
+) -> list[str]:
+    """Return ``section/key`` labels present in *graph* but absent from *seed*.
+
+    These are the entries ``--prune`` would remove: keys renamed or merged in
+    :data:`SEED` leave their old entry behind, still costing a prompt line.
+    """
+    seed = build_seed() if seed is None else seed
+    graph = load_graph() if graph is None else graph
+    out: list[str] = []
+    for section in SECTIONS:
+        live = graph.get(section)
+        if not isinstance(live, dict):
+            continue
+        seeded = seed.get(section, {})
+        out.extend(f"{section}/{k}" for k in live if k not in seeded)
+    return sorted(out)
 
 
 def save_graph(
@@ -402,10 +463,56 @@ def budget_report(seed: dict[str, dict[str, Any]] | None = None) -> tuple[int, b
     return total, fits
 
 
+def live_agent_owners(memory_path: str | None = None) -> list[dict[str, Any]]:
+    """Owners of live sessions whose agent memory file is *memory_path*.
+
+    This is the condition behind the silent-revert hazard: a session that holds
+    the workspace lock rewrites the whole ``knowledge_graph`` key from its
+    in-memory dict at the end of every turn, so a seed written underneath it is
+    discarded on that session's next turn.
+
+    Fail-open by design — an unimportable ``agent_core`` (bare checkout) or any
+    session-layer error returns ``[]`` so this stays a standalone script.
+    """
+    if memory_path is None:
+        memory_path = MEMORY_PATH
+    try:  # local import: the script must stay importable without the package
+        from agent_core.session.lock import probe_owner
+        from agent_core.session.store import list_sessions, paths_for
+    except Exception:
+        return []
+    target = os.path.normcase(os.path.abspath(memory_path))
+    owners: list[dict[str, Any]] = []
+    try:
+        sessions = list_sessions()
+    except Exception:
+        return []
+    for meta in sessions:
+        try:
+            paths = paths_for(meta.id)
+            if os.path.normcase(
+                os.path.abspath(paths.agent_memory_path)
+            ) != target:
+                continue
+            owner = probe_owner(paths)
+        except Exception:
+            continue
+        if not owner or owner.get("pid") == os.getpid():
+            continue
+        owner.setdefault("session", meta.id)
+        owners.append(owner)
+    return owners
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--dry-run", action="store_true", help="report, write nothing")
     parser.add_argument("--force", action="store_true", help="overwrite existing keys")
+    parser.add_argument(
+        "--prune",
+        action="store_true",
+        help="drop keys the seed no longer defines (hand-added ones included)",
+    )
     parser.add_argument(
         "--budget",
         action="store_true",
@@ -430,15 +537,34 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if fits else 1
 
     graph = load_graph()
-    merged, added = merge(seed, graph, force=args.force)
+    stale = orphans(seed, graph) if args.prune else []
+    merged, added = merge(seed, graph, force=args.force, prune=args.prune)
     if args.dry_run:
+        removed = f"; {len(stale)} would be pruned: " + ", ".join(stale) \
+            if stale else ""
         print(f"dry run: {len(added)} entries would be added: "
-              + (", ".join(added) if added else "(none)"))
+              + (", ".join(added) if added else "(none)") + removed)
         return 0
     save_graph(merged)
+    owners = live_agent_owners()
+    if owners:
+        detail = ", ".join(
+            f"session '{o.get('session')}' pid {o.get('pid')}" for o in owners
+        )
+        print(
+            f"warning: {len(owners)} live Agent1 session(s) own this memory "
+            f"file ({detail}).\n"
+            "  _save_memory rewrites the whole knowledge_graph key from the "
+            "agent's in-memory dict at the end of every turn, so if that "
+            "session never reloads, this seed is lost on its next turn.\n"
+            "  A running REPL picks it up on 'session <name>' (that path calls "
+            "_load_memory).",
+            file=sys.stderr,
+        )
     total = sum(len(v) for v in merged.values() if isinstance(v, dict))
-    print(f"knowledge graph seeded: {len(added)} added, {total} entries total "
-          f"({len(merged)} sections)")
+    pruned = f", {len(stale)} pruned ({', '.join(stale)})" if stale else ""
+    print(f"knowledge graph seeded: {len(added)} added{pruned}, "
+          f"{total} entries total ({len(merged)} sections)")
     return 0
 
 
