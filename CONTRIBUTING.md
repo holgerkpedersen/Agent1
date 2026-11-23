@@ -67,11 +67,13 @@ Agent1 uses **pytest** with coverage and integration markers.
 | `pytest -m integration` | Integration tests only (require a local LLM server) |
 | `pytest --testmon` | Smart mode — only tests affected by your changes |
 | `pytest tests/test_agent.py` | Single file |
+| `pytest -m browser` | Browser page tests (need playwright + chromium; auto-skipped when absent) |
 
 ### Test markers
 
 - `integration` — end-to-end tests that need a real `llama-server` binary on `PATH`; auto-skipped when none is found
 - `harnessfix_self_test` — loop/repair self-tests that mutate tool internals; excluded from the autonomous test gate
+- `browser` — drives a real page in headless chromium via playwright; auto-skipped when playwright or its browser is missing
 
 ### Coverage
 

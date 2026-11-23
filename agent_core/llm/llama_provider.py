@@ -30,6 +30,12 @@ import urllib.error
 
 from .provider import ResponseMetrics, StreamClock, estimate_tokens_from_text
 from .pricing import estimate_cost
+# The reasoning-budget recovery (detect the exhaustion error, then retry with
+# thinking disabled AND a larger budget) lives in the LM Studio provider; the
+# llama-server backend speaks the same OpenAI-compatible protocol and fails the
+# same way, so the helpers are reused instead of duplicated.  ``lmstudio`` does
+# not import this module, so the import cannot cycle.
+from .lmstudio import _escalated_max_tokens, _is_thinking_budget_error
 from .retry import RetryPolicy, TRANSIENT_HTTP_STATUSES, TransientHTTPError
 from agent_core.constants import DEFAULT_LLAMA_BASE_URL, KNOWN_MODELS, resolve_model
 from agent_core.timeout import DEFAULT_CHAT_TIMEOUT, MODEL_REFRESH_TIMEOUT
@@ -462,131 +468,89 @@ class LlamaProvider:
             print(f"  {label}", end="", flush=True)
             self._last_label = label
 
-        async def _do_request() -> Any:
-            start_time = _time.monotonic()
-            result = await asyncio.to_thread(self._make_request, payload)
-            elapsed_ms = (_time.monotonic() - start_time) * 1000.0
-            if "choices" in result and len(result["choices"]) > 0:
-                choice = result["choices"][0]
-                message = choice.get("message", {})
-                content = message.get("content") or ""
-                reasoning = message.get("reasoning_content") or ""
-                usage = result.get("usage") if isinstance(result, dict) else None
-                prompt_tokens = (
-                    int(usage.get("prompt_tokens") or 0)
-                    if isinstance(usage, dict)
-                    else 0
-                )
-                completion_tokens = (
-                    int(usage.get("completion_tokens") or 0)
-                    if isinstance(usage, dict)
-                    else 0
-                )
-                self.last_response_metrics = ResponseMetrics(
-                    prompt_tokens=prompt_tokens,
-                    completion_tokens=completion_tokens,
-                    latency_ms=elapsed_ms,
-                    cost=estimate_cost(
-                        prompt_tokens, completion_tokens, self.model_name, "llama"
-                    ),
-                )
-                if tools and message.get("tool_calls"):
-                    return json.dumps(message)
-                thinking_err = self._check_thinking_error(
-                    content, reasoning, finish_reason=choice.get("finish_reason")
-                )
-                if thinking_err:
-                    return thinking_err
-                return content or reasoning
-            return ""
-
         def _on_retry(attempt: int, error_msg: str, wait_time: float) -> None:
             print(
                 f"  [retry {attempt}/{self.retry_policy.max_retries}] "
                 f"{error_msg}, waiting {wait_time}s..."
             )
 
-        try:
-            return await self.retry_policy.execute_with_retry(
-                _do_request, on_retry=_on_retry
+        async def _run(active_payload: dict[str, Any]) -> str:
+            """POST one payload through the retry policy; never raises."""
+
+            async def _do_request() -> Any:
+                start_time = _time.monotonic()
+                result = await asyncio.to_thread(self._make_request, active_payload)
+                elapsed_ms = (_time.monotonic() - start_time) * 1000.0
+                if "choices" in result and len(result["choices"]) > 0:
+                    choice = result["choices"][0]
+                    message = choice.get("message", {})
+                    content = message.get("content") or ""
+                    reasoning = message.get("reasoning_content") or ""
+                    usage = result.get("usage") if isinstance(result, dict) else None
+                    prompt_tokens = (
+                        int(usage.get("prompt_tokens") or 0)
+                        if isinstance(usage, dict)
+                        else 0
+                    )
+                    completion_tokens = (
+                        int(usage.get("completion_tokens") or 0)
+                        if isinstance(usage, dict)
+                        else 0
+                    )
+                    self.last_response_metrics = ResponseMetrics(
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        latency_ms=elapsed_ms,
+                        cost=estimate_cost(
+                            prompt_tokens, completion_tokens, self.model_name, "llama"
+                        ),
+                    )
+                    if tools and message.get("tool_calls"):
+                        return json.dumps(message)
+                    thinking_err = self._check_thinking_error(
+                        content, reasoning, finish_reason=choice.get("finish_reason")
+                    )
+                    if thinking_err:
+                        return thinking_err
+                    return content or reasoning
+                return ""
+
+            try:
+                return await self.retry_policy.execute_with_retry(
+                    _do_request, on_retry=_on_retry
+                )
+            except Exception as e:  # noqa: BLE001 - never raise to callers
+                return f"[Error: {e}]"
+
+        result_text = await _run(payload)
+        # Reasoning-budget recovery: a thinking model that spends the whole
+        # output budget before emitting an answer used to end the turn with
+        # "[llm-error] The model did not produce a usable response" and leave
+        # the user to switch models by hand.  llama-server honours
+        # "reasoning": "off" plus chat_template_kwargs.enable_thinking=False
+        # (see _build_payload), so retry ONCE with thinking disabled and a
+        # larger budget — same one-shot recovery LMStudioProvider performs.
+        if not disable_thinking and _is_thinking_budget_error(result_text):
+            requested = max_tokens if max_tokens is not None else self.max_tokens
+            retry_max = _escalated_max_tokens(requested)
+            print(
+                "  [llama] reasoning budget exhausted — retrying with "
+                f"thinking disabled and max_tokens={retry_max}",
+                flush=True,
             )
-        except Exception as e:  # noqa: BLE001 - never raise to callers
-            return f"[Error: {e}]"
+            retry_payload = self._build_payload(
+                messages,
+                tools,
+                override_max_tokens=retry_max,
+                disable_thinking=True,
+            )
+            result_text = await _run(retry_payload)
+        return result_text
 
     async def chat_stream(self, messages: list[dict[str, Any]]) -> str:
         """Streaming chat completion.  Prints tokens inline; returns the full
         assembled content (or ``[llama-server stream error: ...]``)."""
         payload = self._build_payload(messages, stream=True)
-        # Final chunk carries totals so TPS uses real completion-token counts
-        # rather than an estimate (servers that ignore this fall back below).
-        payload["stream_options"] = {"include_usage": True}
-
-        async def _do_stream() -> Any:
-            data = json.dumps(payload).encode("utf-8")
-            req = urllib.request.Request(
-                f"{self.api_url}/chat/completions",
-                data=data,
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {self.api_key}",
-                },
-                method="POST",
-            )
-            full_content = ""
-            reasoning_content = ""
-            finish_reason: str | None = None
-            completion_tokens = 0
-            prompt_tokens = 0
-            clock = StreamClock()
-            clock.start()
-            with self._open_chat(req, timeout=_chat_timeout()) as response:
-                for line_bytes in response:
-                    line = line_bytes.decode("utf-8").strip()
-                    if not line.startswith("data: "):
-                        continue
-                    data_str = line[6:]
-                    if data_str == "[DONE]":
-                        break
-                    try:
-                        chunk = json.loads(data_str)
-                        usage = chunk.get("usage")
-                        if isinstance(usage, dict):
-                            if usage.get("prompt_tokens"):
-                                prompt_tokens = int(usage["prompt_tokens"])
-                            if usage.get("completion_tokens"):
-                                completion_tokens = int(usage["completion_tokens"])
-                        choice = chunk.get("choices", [{}])[0]
-                        delta = choice.get("delta", {})
-                        token = delta.get("content", "")
-                        reasoning = delta.get("reasoning_content", "")
-                        if choice.get("finish_reason"):
-                            finish_reason = choice["finish_reason"]
-                        if reasoning:
-                            reasoning_content += reasoning
-                        if token:
-                            clock.mark_first_token()
-                            print(token, end="", flush=True)
-                            full_content += token
-                    except json.JSONDecodeError as e:
-                        logger.warning("llama-server stream JSON decode error: %s", e)
-            print()
-            # Publish TTFT/TPS for this streamed call (same contract as the
-            # LM Studio provider, so benchmark.py can compare both).
-            if not completion_tokens:
-                completion_tokens = estimate_tokens_from_text(full_content)
-            self.last_response_metrics = clock.metrics(
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                cost=estimate_cost(
-                    prompt_tokens, completion_tokens, self.model_name, "llama"
-                ),
-            )
-            thinking_err = self._check_thinking_error(
-                full_content, reasoning_content, finish_reason=finish_reason
-            )
-            if thinking_err:
-                return thinking_err
-            return full_content
 
         def _on_retry(attempt: int, error_msg: str, wait_time: float) -> None:
             print(
@@ -594,12 +558,109 @@ class LlamaProvider:
                 f"{error_msg}, waiting {wait_time}s..."
             )
 
-        try:
-            return await self.retry_policy.execute_with_retry(
-                _do_stream, on_retry=_on_retry
+        async def _run_stream(stream_payload: dict[str, Any]) -> str:
+            """Stream one payload through the retry policy; never raises."""
+            # Final chunk carries totals so TPS uses real completion-token
+            # counts rather than an estimate (servers that ignore this fall
+            # back to the local estimate below).
+            stream_payload["stream_options"] = {"include_usage": True}
+
+            async def _do_stream() -> Any:
+                data = json.dumps(stream_payload).encode("utf-8")
+                req = urllib.request.Request(
+                    f"{self.api_url}/chat/completions",
+                    data=data,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {self.api_key}",
+                    },
+                    method="POST",
+                )
+                full_content = ""
+                reasoning_content = ""
+                finish_reason: str | None = None
+                completion_tokens = 0
+                prompt_tokens = 0
+                clock = StreamClock()
+                clock.start()
+                with self._open_chat(req, timeout=_chat_timeout()) as response:
+                    for line_bytes in response:
+                        line = line_bytes.decode("utf-8").strip()
+                        if not line.startswith("data: "):
+                            continue
+                        data_str = line[6:]
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data_str)
+                            usage = chunk.get("usage")
+                            if isinstance(usage, dict):
+                                if usage.get("prompt_tokens"):
+                                    prompt_tokens = int(usage["prompt_tokens"])
+                                if usage.get("completion_tokens"):
+                                    completion_tokens = int(usage["completion_tokens"])
+                            choice = chunk.get("choices", [{}])[0]
+                            delta = choice.get("delta", {})
+                            token = delta.get("content", "")
+                            reasoning = delta.get("reasoning_content", "")
+                            if choice.get("finish_reason"):
+                                finish_reason = choice["finish_reason"]
+                            if reasoning:
+                                reasoning_content += reasoning
+                            if token:
+                                clock.mark_first_token()
+                                print(token, end="", flush=True)
+                                full_content += token
+                        except json.JSONDecodeError as e:
+                            logger.warning(
+                                "llama-server stream JSON decode error: %s", e
+                            )
+                print()
+                # Publish TTFT/TPS for this streamed call (same contract as the
+                # LM Studio provider, so benchmark.py can compare both).
+                if not completion_tokens:
+                    completion_tokens = estimate_tokens_from_text(full_content)
+                self.last_response_metrics = clock.metrics(
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    cost=estimate_cost(
+                        prompt_tokens, completion_tokens, self.model_name, "llama"
+                    ),
+                )
+                thinking_err = self._check_thinking_error(
+                    full_content, reasoning_content, finish_reason=finish_reason
+                )
+                if thinking_err:
+                    return thinking_err
+                return full_content
+
+            try:
+                return await self.retry_policy.execute_with_retry(
+                    _do_stream, on_retry=_on_retry
+                )
+            except Exception as e:  # noqa: BLE001 - never raise to callers
+                return f"[llama-server stream error: {e}]"
+
+        result_text = await _run_stream(payload)
+        # Same reasoning-budget recovery as chat(): a streamed answer that never
+        # leaves the thinking phase produced no visible output at all, so retry
+        # once with thinking disabled and a larger budget instead of returning
+        # the bare exhaustion error to the user.
+        if _is_thinking_budget_error(result_text):
+            retry_max = _escalated_max_tokens(self.max_tokens)
+            print(
+                "\n  [llama] reasoning budget exhausted — retrying with "
+                f"thinking disabled and max_tokens={retry_max}",
+                flush=True,
             )
-        except Exception as e:  # noqa: BLE001 - never raise to callers
-            return f"[llama-server stream error: {e}]"
+            retry_payload = self._build_payload(
+                messages,
+                stream=True,
+                override_max_tokens=retry_max,
+                disable_thinking=True,
+            )
+            return await _run_stream(retry_payload)
+        return result_text
 
     async def analyze_code(self, code: str) -> str:
         """Analyze Python code using LLM (one-shot review)."""
