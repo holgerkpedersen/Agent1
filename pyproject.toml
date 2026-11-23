@@ -179,6 +179,7 @@ markers = [
     "harnessfix_self_test: HarnessFix loop/repair self-tests that mutate agent_core/llm/tool_loop.py; excluded from the autonomous test gate so they cannot revert an applied repair mid-run",
     "slow: latency benchmarks with timing loops and assertions; collect-only skips them via -m 'not slow'",
     "network: live checks against the Hugging Face Hub; set SKIP_NETWORK_TESTS=1 to skip them",
+    "browser: tests that drive a real page in headless chromium via playwright; skipped automatically when playwright or its browser is missing",
 ]
 
 [tool.ruff]
