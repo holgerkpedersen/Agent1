@@ -19,6 +19,7 @@ import json
 import sys
 import threading
 import typing
+import urllib.error
 import urllib.request
 
 import pytest
@@ -127,3 +128,62 @@ def test_dashboard_port_flag_parsing(monkeypatch: pytest.MonkeyPatch) -> None:
     ):
         monkeypatch.setattr(sys, "argv", argv)
         assert agent._dashboard_port() == expected
+
+
+def test_dashboard_swallows_client_disconnect(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A browser tab closing mid-response must not log a spurious exception.
+
+    Regression: every ``ConnectionAbortedError`` / ``BrokenPipeError`` /
+    ``ConnectionResetError`` from ``wfile.write`` propagated up through
+    ``do_GET``/``do_POST`` and printed a traceback to stderr, cluttering the
+    server log with noise for a normal client lifecycle event.
+    """
+    from agent_core.monitoring import DashboardAPIServer
+
+    agent.record_command_metrics("read", 0.1)
+    holder = DashboardAPIServer(agent.get_metrics_collector(), port=0)
+    httpd = holder.start()
+    serve = threading.Thread(target=httpd.serve_forever, daemon=True)
+    serve.start()
+    try:
+        port = httpd.server_address[1]
+        url = f"http://127.0.0.1:{port}/api/snapshot"
+
+        # Simulate a client that disconnects mid-response by patching the
+        # handler's wfile.write to raise ConnectionAbortedError.
+        real_handler_cls = type(httpd.RequestHandlerClass)
+
+        class _DisconnectingHandler(real_handler_cls):
+            def _send_json(self, data):  # type: ignore[override]
+                import json as _json
+
+                body = _json.dumps(data).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                raise ConnectionAbortedError("client disconnected")
+
+            def do_GET(self) -> None:  # type: ignore[override]
+                try:
+                    self._do_get()
+                except (ConnectionAbortedError, BrokenPipeError, ConnectionResetError):
+                    pass
+
+            def _do_get(self) -> None:
+                self._maybe_refresh()
+                self._send_json(self._snapshot())
+
+        httpd.RequestHandlerClass = _DisconnectingHandler  # type: ignore[assignment]
+
+        # The server must swallow the disconnect; the client sees a normal
+        # connection-closed error (not a server traceback).
+        with pytest.raises((urllib.error.URLError, ConnectionError, OSError)):
+            with urllib.request.urlopen(url, timeout=10):
+                pass
+    finally:
+        shutdown = threading.Thread(target=httpd.shutdown, daemon=True)
+        shutdown.start()
+        shutdown.join(timeout=5)
+        httpd.server_close()
+        typing.cast(typing.Any, serve).join(timeout=5)

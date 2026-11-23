@@ -29,6 +29,12 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
     )
 
     def do_GET(self) -> None:
+        try:
+            self._do_get()
+        except (ConnectionAbortedError, BrokenPipeError, ConnectionResetError):
+            pass
+
+    def _do_get(self) -> None:
         self._maybe_refresh()
         parsed_path = urlparse(self.path)
         path = parsed_path.path
@@ -141,6 +147,12 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
         return payload
 
     def do_POST(self) -> None:
+        try:
+            self._do_post()
+        except (ConnectionAbortedError, BrokenPipeError, ConnectionResetError):
+            pass
+
+    def _do_post(self) -> None:
         path = urlparse(self.path).path
         if path in self._CHAT_POST_PATHS:
             self._chat_post(path)
@@ -208,7 +220,10 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except (ConnectionAbortedError, BrokenPipeError, ConnectionResetError):
+            pass
 
     def _send_chat_page(self) -> None:
         """Serve static/chat.html verbatim (alternate chat surface)."""
@@ -222,7 +237,10 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except (ConnectionAbortedError, BrokenPipeError, ConnectionResetError):
+            pass
 
     # -- Alternate chat endpoints ------------------------------------------
     #
@@ -325,7 +343,10 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except (ConnectionAbortedError, BrokenPipeError, ConnectionResetError):
+            pass
 
     #: A run-status heartbeat older than this (seconds) means the process is
     #: assumed dead even if it left ``running=true`` (e.g. it was killed).
@@ -439,7 +460,14 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except (ConnectionAbortedError, BrokenPipeError, ConnectionResetError):
+            # Client disconnected mid-response (browser tab closed, timeout,
+            # or the polling loop aborted the request).  Nothing to send back;
+            # swallowing here keeps the server thread alive instead of logging
+            # a spurious exception for every such client.
+            pass
 
     def _send_static(self, path: str) -> None:
         """Serve files from the repository static/ directory."""
@@ -458,7 +486,10 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except (ConnectionAbortedError, BrokenPipeError, ConnectionResetError):
+            pass
 
     def _send_html_page(self) -> None:
         """Assemble partials into the TTTHEME dashboard page and serve it."""
@@ -481,7 +512,10 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except (ConnectionAbortedError, BrokenPipeError, ConnectionResetError):
+            pass
 
     @staticmethod
     def _read_partial(name: str) -> str:
