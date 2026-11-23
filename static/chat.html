@@ -353,6 +353,7 @@
       padding: 20px;
     }
     .shortcuts[hidden] { display: none; }
+    .shortcuts:not([open]) { display: none; }
     .shortcuts-card {
       background: var(--chat-card);
       border: 1px solid var(--chat-border);
@@ -491,6 +492,7 @@
     <button type="button" id="shortcutsClose" class="shortcuts-close">Close</button>
   </div>
 </dialog>
+<script>
 "use strict";
 const $ = (id) => document.getElementById(id);
 const api = {
