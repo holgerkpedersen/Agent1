@@ -120,6 +120,27 @@ def test_chat_page_is_served(server, path: str) -> None:
     assert "/api/chat/send" in html
 
 
+@pytest.mark.parametrize("path", ["/chat", "/chat.html"])
+def test_chat_page_is_served_uncached(server, path: str) -> None:
+    """The page must never be served from the browser cache.
+
+    Regression: the page is a single local file that gets edited in place.  With
+    no cache header the browser kept rendering the OLD copy after a fix, so the
+    repaired page still showed the symptoms the user reported (the shortcuts
+    dialog painted over the page on Ctrl-F5, and the whole inline script visible
+    as text under the Send button, leaving the Close button dead).  ``no-store``
+    guarantees the running page is the file on disk.
+    """
+    base, _, _ = server
+    with urllib.request.urlopen(base + path, timeout=10) as resp:
+        assert resp.status == 200
+        cache_control = resp.headers.get("Cache-Control", "")
+    assert "no-store" in cache_control.lower(), (
+        f"/chat served without Cache-Control: no-store (got {cache_control!r}); "
+        "a browser may render a stale page after an edit"
+    )
+
+
 def test_chat_page_never_uses_innerhtml_for_model_output() -> None:
     """Model output is untrusted: every DOM sink must be textContent."""
     html = (STATIC / "chat.html").read_text(encoding="utf-8")

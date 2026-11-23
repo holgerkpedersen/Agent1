@@ -226,7 +226,15 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
             pass
 
     def _send_chat_page(self) -> None:
-        """Serve static/chat.html verbatim (alternate chat surface)."""
+        """Serve static/chat.html verbatim (alternate chat surface).
+
+        ``no-store`` is deliberate: without a cache header a browser may keep
+        rendering an OLD copy of this page, so a fixed page still looked broken
+        after a hard refresh (reported as "Ctrl-F5 shows the shortcuts dialog
+        and the raw script under Send").  The page is one small local file, so
+        re-fetching it per load costs nothing and guarantees the code the user
+        runs is the code on disk.
+        """
         page_path = os.path.join(self._base_dir, "static", "chat.html")
         if not os.path.isfile(page_path):
             self.send_error(404, "chat.html not found")
@@ -235,6 +243,7 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
             body = f.read()
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-store, must-revalidate")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         try:
