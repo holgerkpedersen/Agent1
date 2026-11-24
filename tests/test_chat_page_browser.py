@@ -117,6 +117,20 @@ def _stub_apis(page) -> None:
             },
         ),
     )
+    # The page now drives turns through the SSE stream endpoint, so stub it
+    # with the same event shape the server emits (answer + done).
+    def _stream(route):
+        body = (
+            'event: answer\\ndata: "pong from stub"\\n\\n'
+            'event: done\\ndata: "stub/model"\\n\\n'
+        )
+        route.fulfill(
+            status=200,
+            content_type="text/event-stream",
+            body=body,
+        )
+
+    page.route("**/api/chat/stream", _stream)
     page.route("**/api/chat/reset", lambda r: _json(r, {"ok": True}))
 
 

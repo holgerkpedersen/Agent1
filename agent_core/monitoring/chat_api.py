@@ -163,10 +163,15 @@ class ChatService:
             del self._history[:overflow]
 
     # -- send -----------------------------------------------------------
-    def send(self, text: str) -> Dict[str, Any]:
+    def send(
+        self, text: str, reasoning_effort: Optional[str] = None
+    ) -> Dict[str, Any]:
         """Send one user message and return ``{ok, reply, model}``.
 
         Never raises: provider failures come back as ``{"ok": False, "error"}``.
+
+        ``reasoning_effort`` is accepted for API parity with ``AgentTurnRunner``
+        but this LLM-only service has no agent to toggle it on, so it is ignored.
         """
         message = (text or "").strip()
         if not message:
@@ -408,10 +413,15 @@ class AgentTurnRunner:
         return result
 
     # -- send -----------------------------------------------------------
-    def send(self, text: str) -> Dict[str, Any]:
+    def send(
+        self, text: str, reasoning_effort: Optional[str] = None
+    ) -> Dict[str, Any]:
         """Run one turn and return ``{ok, reply, model, tools}``.
 
         Never raises: failures come back as ``{"ok": False, "error"}``.
+
+        ``reasoning_effort`` (off/low/medium/high) controls whether and how
+        much the model may spend on chain-of-thought this turn.
         """
         message = (text or "").strip()
         if not message:
@@ -426,6 +436,10 @@ class AgentTurnRunner:
             agent = None
             try:
                 agent = self._resolve_agent()
+                if reasoning_effort is not None:
+                    effort = str(reasoning_effort).lower()
+                    setattr(agent, "_reasoning_effort", effort)
+                    setattr(agent, "_thinking_enabled", effort != "off")
                 # A leading "/name" whose answer is a fact we already hold
                 # (model list, help, kg show) is answered HERE, without the
                 # model: asking an LLM to describe the model list made it
@@ -442,6 +456,14 @@ class AgentTurnRunner:
                 # _finish_turn must not return the PREVIOUS answer as its own.
                 agent._last_turn_answer = ""
                 agent._last_turn_error = None
+                # Reset captured reasoning so a stale chain-of-thought from a
+                # previous turn cannot leak into this one's response.
+                try:
+                    provider = getattr(getattr(agent, "llm", None), "_provider", None)
+                    if provider is not None:
+                        provider.last_reasoning_content = ""
+                except Exception:
+                    pass
                 _run_coro(agent.chat_nlp(message))
             except Exception as exc:  # surface any failure to the UI
                 logger.debug("dashboard agent turn failed", exc_info=True)
@@ -453,12 +475,29 @@ class AgentTurnRunner:
                 }
             answer = str(getattr(agent, "_last_turn_answer", "") or "")
             error = getattr(agent, "_last_turn_error", None)
+            # Surface any captured chain-of-thought so the dashboard chat can
+            # show a model's thinking instead of only its final answer.
+            thinking = ""
+            tokens = ""
+            try:
+                provider = getattr(getattr(agent, "llm", None), "_provider", None)
+                thinking = str(getattr(provider, "last_reasoning_content", "") or "")
+                metrics = getattr(provider, "last_response_metrics", None)
+                if metrics is not None:
+                    pt = getattr(metrics, "prompt_tokens", 0)
+                    ct = getattr(metrics, "completion_tokens", 0)
+                    tokens = f"{pt} in / {ct} out"
+            except Exception:
+                thinking = ""
+                tokens = ""
             if error:
                 return {
                     "ok": False,
                     "error": str(error),
                     "model": self.model_name,
                     "tools": True,
+                    "thinking": thinking,
+                    "tokens": tokens,
                 }
             if not answer:
                 # The pipeline finished without text (e.g. an empty final
@@ -468,13 +507,136 @@ class AgentTurnRunner:
                     "error": "the turn produced no answer",
                     "model": self.model_name,
                     "tools": True,
+                    "thinking": thinking,
+                    "tokens": tokens,
                 }
             return {
                 "ok": True,
                 "reply": answer,
                 "model": self.model_name,
                 "tools": True,
+                "thinking": thinking,
+                "tokens": tokens,
             }
+
+    def stream(self, text: str, reasoning_effort: Optional[str] = None):
+        """Run one turn, yielding SSE-formatted events as they arrive.
+
+        Events: ``thinking`` (per-round note), ``answer`` (final text),
+        ``tokens``, ``done``.  Never raises out of the generator.
+        """
+        import json as _json
+        import queue as _q
+        message = (text or "").strip()
+        if not message:
+            yield (
+                "event: error\\ndata: "
+                + _json.dumps("message is required")
+                + "\\n\\n"
+            )
+            return
+        # A slash command whose answer is a fact we already hold is answered
+        # offline, exactly as the non-streaming path does.
+        try:
+            agent = self._resolve_agent()
+            from agent_core.commands.slash import run_slash
+
+            offline = run_slash(agent, message)
+        except Exception:
+            offline = None
+        if offline is not None:
+            if offline.get("ok"):
+                yield "event: answer\\ndata: " + _json.dumps(
+                    str(offline.get("reply", ""))
+                ) + "\\n\\n"
+            else:
+                yield "event: error\\ndata: " + _json.dumps(
+                    str(offline.get("error", "command failed"))
+                ) + "\\n\\n"
+            yield "event: done\\ndata: " + _json.dumps(self.model_name) + "\\n\\n"
+            return
+        q: "_q.Queue[Any]" = _q.Queue()
+        result_holder: Dict[str, Any] = {}
+
+        def _worker() -> None:
+            with self._lock:
+                agent = None
+                try:
+                    agent = self._resolve_agent()
+                    if reasoning_effort is not None:
+                        effort = str(reasoning_effort).lower()
+                        setattr(agent, "_reasoning_effort", effort)
+                        setattr(agent, "_thinking_enabled", effort != "off")
+                    agent._last_turn_answer = ""
+                    agent._last_turn_error = None
+                    def _emit(note):
+                        q.put(("thinking", note))
+
+                    setattr(agent, "_emit_thinking", _emit)
+                    _run_coro(agent.chat_nlp(message))
+                    answer = str(getattr(agent, "_last_turn_answer", "") or "")
+                    error = getattr(agent, "_last_turn_error", None)
+                    thinking = ""
+                    tokens = ""
+                    try:
+                        llm = getattr(agent, "llm", None)
+                        provider = getattr(llm, "_provider", None)
+                        thinking = str(
+                            getattr(provider, "last_reasoning_content", "") or ""
+                        )
+                        metrics = getattr(provider, "last_response_metrics", None)
+                        if metrics is not None:
+                            pt = getattr(metrics, "prompt_tokens", 0)
+                            ct = getattr(metrics, "completion_tokens", 0)
+                            tokens = f"{pt} in / {ct} out"
+                    except Exception:
+                        pass
+                    result_holder["answer"] = answer
+                    result_holder["error"] = str(error) if error else None
+                    result_holder["thinking"] = thinking
+                    result_holder["tokens"] = tokens
+                    result_holder["model"] = self.model_name
+                except Exception as exc:
+                    result_holder["error"] = f"{type(exc).__name__}: {exc}"
+                finally:
+                    try:
+                        if agent is not None:
+                            setattr(agent, "_emit_thinking", None)
+                    except Exception:
+                        pass
+                    q.put(("done", None))
+
+        thread = threading.Thread(
+            target=_worker, name="dashboard-chat-stream", daemon=True
+        )
+        thread.start()
+        # Drain the queue until the worker signals completion.
+        while True:
+            try:
+                kind, payload = q.get(timeout=0.5)
+            except Exception:
+                if not thread.is_alive():
+                    break
+                continue
+            if kind == "thinking":
+                yield f"event: thinking\\ndata: {_json.dumps(payload)}\\n\\n"
+            elif kind == "done":
+                break
+        thread.join(timeout=5)
+        answer = result_holder.get("answer", "")
+        error = result_holder.get("error")
+        thinking = result_holder.get("thinking", "")
+        tokens = result_holder.get("tokens", "")
+        model = result_holder.get("model", self.model_name)
+        if error:
+            yield "event: error\\ndata: " + _json.dumps(error) + "\\n\\n"
+        else:
+            if thinking:
+                yield "event: thinking\\ndata: " + _json.dumps(thinking) + "\\n\\n"
+            yield "event: answer\\ndata: " + _json.dumps(answer) + "\\n\\n"
+            if tokens:
+                yield "event: tokens\\ndata: " + _json.dumps(tokens) + "\\n\\n"
+        yield "event: done\\ndata: " + _json.dumps(model) + "\\n\\n"
 
 
 def _shared_agent() -> Optional[Any]:

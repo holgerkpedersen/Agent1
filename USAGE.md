@@ -906,14 +906,22 @@ conversation instead of forking it. `/api/chat/history` reads the transcript,
 back the model picker.
 
 A leading-slash message is resolved **without the model**: `/model`, `/models`,
-`/help`, `/kg`, `/memory` and `/session` are answered from the command registry
-and the shared catalogue, so a slash command never reaches the LLM and cannot be
-invented by it. Commands outside that allowlist fall through to the normal turn
-pipeline. Subcommands that change agent state - `kg add`/`remove`, `session
-new`/`use`/`rename`/`delete` - are refused from the browser, because the page is
-a convenience surface, not a second way to edit memory behind the terminal's
-back; they still work in the REPL. A command that would prompt on stdin is
-refused with an explanation rather than blocking an HTTP request.
+`/help`, `/kg`, `/memory`, `/session`, `/clear` and the read-only reports —
+`/display` (show current verbosity), `/perf` (summary / `--detail`), `/read`,
+`/search`, `/habits list`, `/subagent roles|list|summary|route`, bare `/cleanup`
+(unreferenced-files report), `/issue list|show|autonomy` and bare `/mode` — are
+answered from the command registry and the shared catalogue, so a slash command
+never reaches the LLM and cannot be invented by it. Commands outside that
+allowlist fall through to the normal turn pipeline. Subcommands or flags that
+change agent state - `kg add`/`remove`, `session new`/`use`/`rename`/`delete`,
+setting display verbosity, `perf --reset`/`--html`, habits pinning/forgetting/
+mining/toggling, subagent create/run/reset, switching plan/build mode, deleting
+unreferenced files (`cleanup --delete`) and writing to the issue ledger
+(`issue add`/`resolve`/`note`/`update`/`promote`) - are
+refused from the browser, because the page is a convenience surface, not a second
+way to edit memory behind the terminal's back; they still work in the REPL. A
+command that would prompt on stdin is refused with an explanation rather than
+blocking an HTTP request.
 
 The endpoints reuse the MCP loopback-Origin/Host guard and a 64 KB body cap,
 which is why tools can run from the page at all: the server binds loopback only.

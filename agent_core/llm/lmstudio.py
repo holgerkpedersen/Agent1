@@ -534,6 +534,10 @@ class LMStudioProvider:
         self._profile_name: str | None = None
         #: Per-turn token/latency/cost of the last chat call (plan ARCH 17).
         self.last_response_metrics: ResponseMetrics | None = None
+        #: Reasoning/thinking content captured from the last chat call, so the
+        #: dashboard chat can surface a model's chain-of-thought instead of
+        #: hiding it behind the final answer.
+        self.last_reasoning_content: str = ""
         #: Last printed status label — printed once per session and only
         #: re-printed when it changes (model/profile/temperature/tokens).
         self._last_label: str | None = None
@@ -906,6 +910,9 @@ class LMStudioProvider:
                     message = choice.get("message", {})
                     content = message.get("content") or ""
                     reasoning = message.get("reasoning_content") or ""
+                    self.last_reasoning_content = (
+                        reasoning or self.last_reasoning_content
+                    )
 
                     # Per-turn token/latency/cost accounting (plan ARCH item 17).
                     usage = result.get("usage") if isinstance(result, dict) else None

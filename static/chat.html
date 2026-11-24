@@ -340,6 +340,10 @@
       color: var(--chat-text);
     }
     .prose { white-space: pre-wrap; word-break: break-word; }
+    .thinking-block { margin: 6px 0; border: 1px solid var(--chat-border); border-radius: 8px; padding: 6px 10px; background: var(--chat-agent); font-size: .8rem; }
+    .thinking-block summary { cursor: pointer; color: var(--chat-muted); }
+    .thinking-text { white-space: pre-wrap; word-break: break-word; margin: 6px 0 0; color: var(--chat-muted); }
+    .token-usage { font-size: .72rem; color: var(--chat-muted); margin: 4px 0; }
     /* A running turn pulses, so a slow answer reads as "working", not "stuck".
        prefers-reduced-motion below turns this off wholesale. */
     .msg.pending .bubble { animation: chat-pulse 1.4s ease-in-out infinite; }
@@ -464,6 +468,7 @@
     <div class="toolbar">
       <button id="sendBtn">Send</button>
       <button class="secondary" id="stopBtn" hidden title="Abandon this turn in the browser (the server keeps running it)">Stop</button>
+      <button class="secondary" id="thinkingBtn" title="Toggle model thinking for the next turn">thinking: off</button>
       <button class="secondary" id="slashBtn" title="Show the REPL command list">/ Commands</button>
       <button class="secondary" id="resetBtn" title="Clear the shared conversation and this workspace's agent memory">Reset</button>
       <span class="spacer"></span>
@@ -916,6 +921,15 @@ function setBusy(busy) {
 // WAITING - keep the screen usable and say plainly that the reply was skipped.
 
 let turnController = null;
+// 0=off, 1=low, 2=medium, 3=high
+let reasoningEffort = 2;
+const EFFORT_LABELS = ["off", "low", "medium", "high"];
+function syncThinkingBtn() {
+  const btn = $("thinkingBtn");
+  if (btn) btn.textContent = "reasoning: " + EFFORT_LABELS[reasoningEffort];
+}
+// initialize
+setTimeout(syncThinkingBtn, 0);
 
 function abortTurn() {
   if (turnController) turnController.abort();
@@ -1538,13 +1552,75 @@ async function send() {
   addMessage("user", text);
   input.value = "";
   autosize(input);
-  const turn = appendMessage("assistant", "thinking...");
+  const turn = appendMessage("assistant", "");
   turn.wrap.classList.add("pending");
   setBusy(true);
   turnController = new AbortController();
   const signal = turnController.signal;
   try {
-    const data = await postJSON(api.send, {message: text}, signal);
+    const resp = await fetch("/api/chat/stream", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({message: text, reasoning_effort: EFFORT_LABELS[reasoningEffort]}),
+    signal: signal,
+  });
+  if (!resp.ok) throw new Error("HTTP " + resp.status);
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let finalAnswer = "";
+  let finalTokens = "";
+  let finalThinking = "";
+  let finalModel = "";
+  let finalError = "";
+  while (true) {
+    const {value, done} = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, {stream: true});
+    const parts = buffer.split("\\n\\n");
+    buffer = parts.pop();
+    for (const part of parts) {
+      const lines = part.split("\\n");
+      let evt = "message", data = "";
+      for (const line of lines) {
+        if (line.startsWith("event:")) evt = line.slice(6).trim();
+        else if (line.startsWith("data:")) {
+          const raw = line.slice(5).trim();
+          try { data = JSON.parse(raw); } catch (e) { data = raw; }
+        }
+      }
+      if (evt === "thinking") {
+        finalThinking += (finalThinking ? "\\n" : "") + data;
+        // live update the thinking block
+        let det = turn.wrap.querySelector(".thinking-block");
+        if (!det) {
+          det = document.createElement("details");
+          det.className = "thinking-block";
+          det.open = true;
+          const sum = document.createElement("summary");
+          sum.textContent = "thinking";
+          det.appendChild(sum);
+          const pre = document.createElement("pre");
+          pre.className = "thinking-text";
+          det.appendChild(pre);
+          turn.bubble.parentNode.insertBefore(det, turn.bubble);
+        }
+        const pre = det.querySelector(".thinking-text");
+        if (pre) pre.textContent = finalThinking;
+      } else if (evt === "answer") {
+        finalAnswer = data;
+      } else if (evt === "tokens") {
+        finalTokens = data;
+      } else if (evt === "error") {
+        finalError = data;
+      } else if (evt === "done") {
+        finalModel = data;
+      }
+    }
+  }
+  const data = finalError
+    ? {ok: false, error: finalError, model: finalModel}
+    : {ok: true, reply: finalAnswer, model: finalModel, thinking: finalThinking, tokens: finalTokens};
     setNetNotice("");
     if (data.model) setModelBadge(data.model);
     // The server answers "/model list" with structured groups. Render the
@@ -1557,6 +1633,27 @@ async function send() {
     turn.wrap.classList.remove("pending");
     if (data.ok) {
       renderRich(turn.bubble, data.reply);
+      // Surface the model's chain-of-thought (when captured) as a collapsed
+      // block above the answer, so thinking is visible instead of hidden.
+      if (data.thinking && String(data.thinking).trim()) {
+        const details = document.createElement("details");
+        details.className = "thinking-block";
+        details.open = true;
+        const summary = document.createElement("summary");
+        summary.textContent = "thinking";
+        details.appendChild(summary);
+        const pre = document.createElement("pre");
+        pre.className = "thinking-text";
+        pre.textContent = String(data.thinking);
+        details.appendChild(pre);
+        turn.bubble.parentNode.insertBefore(details, turn.bubble);
+      }
+      if (data.tokens) {
+        const t = document.createElement("div");
+        t.className = "token-usage";
+        t.textContent = "tokens: " + data.tokens;
+        turn.bubble.parentNode.insertBefore(t, turn.bubble);
+      }
     } else {
       turn.wrap.className = "msg error";
       renderRich(turn.bubble, "Error: " + (data.error || "no answer"));
@@ -1626,7 +1723,7 @@ async function loadHistory() {
     return;
   }
   const data = res.data || {};
-  if (data.model) setModelBadge(data.model);
+  if (data.model && data.model !== "unloaded") setModelBadge(data.model);
   for (const m of data.messages || []) {
     appendMessage(m.role === "user" ? "user" : "assistant", m.content);
   }
@@ -1638,6 +1735,13 @@ $("sendBtn").addEventListener("click", send);
 $("resetBtn").addEventListener("click", reset);
 $("stopBtn").addEventListener("click", stopPendingTurn);
 $("jumpLatest").addEventListener("click", () => scrollToLatest(true));
+const thinkingBtn = $("thinkingBtn");
+if (thinkingBtn) {
+  thinkingBtn.addEventListener("click", () => {
+    reasoningEffort = (reasoningEffort + 1) % EFFORT_LABELS.length;
+    syncThinkingBtn();
+  });
+}
 // Follow the transcript only while the reader is already at the bottom.
 $("messages").addEventListener("scroll", () => {
   STICK = isNearBottom();

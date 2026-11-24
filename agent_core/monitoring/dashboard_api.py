@@ -92,7 +92,10 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
     _MCP_POST_PATHS = ("/api/mcp/connect", "/api/mcp/disconnect", "/api/mcp/call")
     #: Alternate-chat endpoints.  The service behind them runs the REPL's own
     #: turn pipeline, so a message CAN execute tools — see chat_api.
-    _CHAT_POST_PATHS = ("/api/chat/send", "/api/chat/reset", "/api/chat/models/select")
+    _CHAT_POST_PATHS = (
+        "/api/chat/send", "/api/chat/reset", "/api/chat/models/select",
+        "/api/chat/stream",
+    )
     _MCP_MAX_BODY = 64 * 1024
     #: Wired by DashboardAPIServer.configure(chat=...).  Unset (None) means the
     #: dashboard was started metrics-only, and the chat endpoints answer 503.
@@ -225,6 +228,22 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
         except (ConnectionAbortedError, BrokenPipeError, ConnectionResetError):
             pass
 
+    def _send_sse_stream(
+        self, service: Any, message: str, reasoning_effort: Any
+    ) -> None:
+        """Stream one turn as Server-Sent Events."""
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.end_headers()
+        try:
+            for event in service.stream(message, reasoning_effort=reasoning_effort):
+                self.wfile.write(event.encode("utf-8"))
+                self.wfile.flush()
+        except (ConnectionAbortedError, BrokenPipeError, ConnectionResetError):
+            pass
+
     def _send_chat_page(self) -> None:
         """Serve static/chat.html verbatim (alternate chat surface).
 
@@ -265,9 +284,22 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
         service = self._chat_service()
         if service is None:
             return {"error": "chat not configured", "messages": [], "model": "unloaded"}
+        # Resolve the agent on a page load so the badge can show the real model
+        # instead of "unloaded"/"unknown" before the first message is sent.
+        # This is the one place a badge read is allowed to boot the backend.
+        model = service.model_name
+        resolver = getattr(service, "_resolve_agent", None)
+        if callable(resolver):
+            try:
+                agent = resolver()
+                name = getattr(agent, "model_name", None)
+                if name:
+                    model = str(name)
+            except Exception:
+                pass
         return {
             "messages": service.history(),
-            "model": service.model_name,
+            "model": model,
         }
 
     def _chat_commands(self) -> Dict[str, Any]:
@@ -337,8 +369,20 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
                     {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
                 )
             return
+        if path == "/api/chat/stream":
+            self._send_sse_stream(
+                service,
+                str(payload.get("message", "")),
+                payload.get("reasoning_effort"),
+            )
+            return
         # send() serialises the turn internally and never raises.
-        self._send_json(service.send(str(payload.get("message", ""))))
+        self._send_json(
+            service.send(
+                str(payload.get("message", "")),
+                reasoning_effort=payload.get("reasoning_effort"),
+            )
+        )
 
     def _send_autonomous_page(self) -> None:
         """Serve static/autonomous.html verbatim (real-time autonomous view)."""
@@ -493,6 +537,13 @@ class DashboardAPIHandler(BaseHTTPRequestHandler):
         ctype = self._content_type(full)
         self.send_response(200)
         self.send_header("Content-Type", ctype)
+        # HTML pages get the same no-store treatment as /chat: this route is a
+        # SECOND way to reach the very same file (``/static/chat.html``), and
+        # without a cache header a browser could keep rendering the old copy
+        # after an edit - the reported "Ctrl-F5 still shows the shortcuts
+        # dialog and the raw script under Send".  Assets keep default caching.
+        if ctype.startswith("text/html"):
+            self.send_header("Cache-Control", "no-store, must-revalidate")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         try:

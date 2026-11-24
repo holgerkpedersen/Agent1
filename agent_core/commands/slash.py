@@ -57,7 +57,12 @@ from .model_catalog import model_catalog, select_model
 logger = logging.getLogger(__name__)
 
 #: Commands whose answer is a fact we already hold, so the model is not asked.
-#: Ordered only for documentation; membership is what matters.
+#: Ordered only for documentation; membership is what matters.  Every entry is
+#: non-interactive (``needs_terminal_input`` is False) and read-only in its
+#: default form — anything that executes shell commands, mutates external
+#: systems or spawns agents stays out of this set and falls through to the
+#: normal turn pipeline unchanged.  Subcommand-level mutations are refused by
+#: :data:`_MUTATING_SUBS` below.
 OFFLINE_COMMANDS: frozenset[str] = frozenset(
     {
         "model",
@@ -67,6 +72,47 @@ OFFLINE_COMMANDS: frozenset[str] = frozenset(
         "memory",
         "session",
         "clear",
+        # Read-only reports / lookups.  Each is verified below against its
+        # command source: bare or flagged forms only print; the forms that
+        # write files, clear stats or switch modes are refused via
+        # ``_MUTATING_SUBS`` (or simply absent from the set).
+        "display",   # show current verbosity (setting persists to .env -> blocked)
+        "perf",      # summary / --detail report
+        # (--reset clears stats, --html writes a file -> blocked)
+        "read",      # prints one file's content
+        "search",    # searches files for a string
+        "habits",    # list only (pin/forget/mine/off/on mutate ledger -> blocked)
+        "subagent",  # roles|list|summary|route read-only
+        # (create|run|reset spawn children -> blocked)
+        "mode",      # bare shows current mode (plan|build switch state -> blocked)
+        # cleanup: bare prints unreferenced-file report;
+        # --delete removes files and prompts via auto_choice -> blocked.
+        "cleanup",
+        # issue: list/show/autonomy are read-only reports (bare prints help);
+        # add/resolve/note/update/promote write .issues.json -> blocked.
+        "issue",
+        # git: read-only subcommands only (see _GIT_READ_ONLY); a mutating
+        # subcommand is refused rather than sent to the model.
+        "git",
+    }
+)
+
+#: Git subcommands safe to run from the browser.  Mutating verbs (commit,
+#: push, checkout, reset, merge, rebase, branch -d, ...) are deliberately
+#: absent, so ``/git status`` runs the CLI while ``/git push`` is refused.
+_GIT_READ_ONLY: frozenset[str] = frozenset(
+    {
+        "status",
+        "log",
+        "diff",
+        "show",
+        "branch",
+        "remote",
+        "rev-parse",
+        "describe",
+        "ls-files",
+        "shortlog",
+        "blame",
     }
 )
 
@@ -100,19 +146,61 @@ _MUTATING_SUBS: Dict[str, frozenset[str]] = {
             "create",
         }
     ),
+    # display: bare shows the current verbosity; setting it persists to .env.
+    "display": frozenset({"verbose", "normal", "clean", "quiet", "intent"}),
+    # perf: --reset wipes stats and --html writes performance_dashboard.html;
+    # bare /perf and /perf --detail are read-only reports.
+    "perf": frozenset({"reset", "html"}),
+    # habits: list only; pin/forget edit the ledger, mine rewrites it from
+    # history and off/on toggles a preference — all state changes.
+    "habits": frozenset({"pin", "forget", "mine", "off", "on"}),
+    # subagent: roles|list|summary only; create/run spawn children, reset wipes them.
+    "subagent": frozenset({"create", "run", "reset"}),
+    # mode: bare shows the current mode; plan/build switch the session state.
+    "mode": frozenset({"plan", "build"}),
+    # cleanup: --delete removes files and prompts via auto_choice — never
+    # from the browser.
+    "cleanup": frozenset({"delete"}),
+    # issue: add/resolve/note/update/promote write .issues.json;
+    # list/show/autonomy are reads.
+    "issue": frozenset({"add", "resolve", "note", "update", "promote"}),
 }
 
 
 def _refusal(name: str, args: List[str]) -> Optional[str]:
-    """Reason to refuse ``/{name} {args}``, or ``None`` when it is read-only."""
-    verb = (args[0].strip().lower() if args else "").lstrip("-")
+    """Reason to refuse ``/{name} {args}``, or ``None`` when it is read-only.
+
+    The FIRST argument is the subcommand — how execute dispatches; any flag
+    anywhere in the arguments is also checked, because a mutating flag does not
+    have to sit in position one for execute to act on it (e.g. ``/perf --detail
+    --reset`` still reaches the reset branch). Free text after a subcommand is
+    never inspected: routing an issue whose text mentions "reset" must stay
+    readable.
+    """
     blocked = _MUTATING_SUBS.get(name, frozenset())
-    if verb in blocked:
-        return (
-            f"/{name} {verb} changes agent state, so it is not run from the "
-            f"browser. Use the REPL, or the dashboard's own controls."
-        )
+    if not args or not blocked:
+        return None
+
+    def _verb_of(token: str) -> str:
+        return token.strip().lower().lstrip("-")
+
+    # The subcommand verb — how execute dispatches (first argument only).
+    first = _verb_of(args[0])
+    if first in blocked:
+        return _refusal_message(name, first)
+    # Flags anywhere in the arguments are always control flags, never free text.
+    for token in args[1:]:
+        if token.lstrip().startswith("--") and _verb_of(token) in blocked:
+            return _refusal_message(name, _verb_of(token))
     return None
+
+
+def _refusal_message(name: str, verb: str) -> str:
+    """The browser-surface refusal message for a mutating subcommand/flag."""
+    return (
+        f"/{name} {verb} changes agent state, so it is not run from the "
+        f"browser. Use the REPL, or the dashboard's own controls."
+    )
 
 
 def parse_slash(text: str) -> Optional[Tuple[str, List[str]]]:
@@ -248,6 +336,20 @@ def run_slash(
     special = _models_payload(agent, name, args, fresh)
     if special is not None:
         return special
+
+    if name == "git":
+        sub = args[0].strip().lower() if args else ""
+        if sub not in _GIT_READ_ONLY:
+            return {
+                "ok": False,
+                "error": (
+                    f"/git {sub or '<subcommand>'} is not a read-only git "
+                    f"command, so it is not run from the browser. "
+                    f"Allowed: {', '.join(sorted(_GIT_READ_ONLY))}."
+                ),
+                "command": name,
+                "tools": True,
+            }
 
     refusal = _refusal(name, args)
     if refusal:

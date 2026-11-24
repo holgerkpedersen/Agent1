@@ -832,7 +832,9 @@ class ToolLoopRunner:
         compact_char_budget: int | None = None,
         context_limit_tokens: int | None = None,
         usage_provider: Any = None,
+        emit_thinking: Callable[[str], None] | None = None,
     ):
+        self._emit_thinking = emit_thinking
         self.max_iterations = max_iterations
         #: In-run context compaction (decision #B-5-compact): drop the oldest
         #: closed tool-exchange prefix once the live message list grows past a
@@ -1377,9 +1379,23 @@ class ToolLoopRunner:
                     # No arguments, no [tool]/[result] echoes: the calls and
                     # their results stay invisible.
                     _print_intent_quiet(iteration, display_text, tool_calls)
+                    try:
+                        _emit = getattr(self, "_emit_thinking", None)
+                        if callable(_emit):
+                            _emit(str(display_text or ""))
+                    except Exception:
+                        pass
                 else:
                     # NORMAL: thinking note + human action rows, no tool names.
                     _print_normal_round(display_text, tool_calls)
+                    # Stream the condensed thinking note to any live consumer
+                    # (e.g. the dashboard chat) so the buildup is visible.
+                    try:
+                        _emit = getattr(self, "_emit_thinking", None)
+                        if callable(_emit):
+                            _emit(str(display_text or ""))
+                    except Exception:
+                        pass
 
             # Seed this batch's duplicate detection with the FULL key set of
             # the previous batch: any key re-issued in consecutive batches is

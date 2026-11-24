@@ -131,7 +131,10 @@ def test_offline_allowlist_is_exactly_the_registry_backed_commands() -> None:
     # model. "clear" joined the set because the page could otherwise only
     # STAGE the request: "/clear" reached the LLM, which claimed to have
     # cleared a conversation it had never touched. Its own regression tests
-    # (and its stdin-prompt trap) live in tests/test_slash_clear.py.
+    # (and its stdin-prompt trap) live in tests/test_slash_clear.py.  The
+    # rest of the set is read-only reports and lookups; forms that write files,
+    # clear stats or switch modes are refused via ``_MUTATING_SUBS`` (see
+    # tests below) rather than by dropping the command from this list.
     assert OFFLINE_COMMANDS == {
         "model",
         "models",
@@ -140,7 +143,30 @@ def test_offline_allowlist_is_exactly_the_registry_backed_commands() -> None:
         "memory",
         "session",
         "clear",
+        "display",
+        "perf",
+        "read",
+        "search",
+        "habits",
+        "subagent",
+        "mode",
+        "cleanup",
+        "issue",
+        "git",
     }
+
+    # The contract behind the set: every name must resolve to a real REPL
+    # command that does not prompt on stdin (a browser request would block).
+    from agent_core.cli.interactive import _build_registry
+    from agent_core.commands.catalog import needs_terminal_input
+
+    registry = _build_registry()
+    for name in sorted(OFFLINE_COMMANDS):
+        command = registry.get(name)
+        assert command is not None, f"/{name} must be a real REPL command"
+        assert not needs_terminal_input(command), (
+            f"/{name} prompts on stdin and cannot run from the browser"
+        )
 
 
 def test_unlisted_command_falls_through_to_the_turn_pipeline(registry) -> None:
@@ -330,3 +356,103 @@ def test_empty_command_output_says_so(registry) -> None:
 
     assert result is not None and result["ok"] is True
     assert "produced no output" in result["reply"]
+
+
+# -- new read-only commands added to the offline path -------------------
+
+
+@pytest.mark.parametrize(
+    "message,expected_args",
+    [
+        ("/display", []),           # bare shows current verbosity
+        ("/perf", []),              # summary report
+        ("/perf --detail", ["--detail"]),  # read-only detail log
+        ("/read README.md", ["README.md"]),
+        ("/search needle", ["needle"]),
+        ("/habits list", ["list"]),  # bare /habits also lists
+        ("/subagent roles", ["roles"]),
+        ("/subagent list", ["list"]),
+        ("/subagent route", ["route"]),  # bare prints routing table;
+        # with an issue it only suggests a role — no state change
+        ("/mode", []),               # bare shows current mode
+        ("/cleanup", []),            # bare prints the unreferenced-file report
+        ("/issue list", ["list"]),   # read-only issue listing
+        ("/issue show abc-123", ["show", "abc-123"]),
+        # free text after a verb is not inspected
+    ],
+)
+def test_simple_read_only_commands_run_offline(
+    message, expected_args, registry
+) -> None:
+    name = message.split()[0].lstrip("/")
+    command = _FakeCommand(name, output=f"real output for {name}")
+    registry(name, command)
+
+    result = run_slash(_FakeAgent(), message)
+
+    assert result is not None and result["ok"] is True
+    assert result["reply"] == f"real output for {name}"
+    assert command.calls == [expected_args]
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "/display normal",          # persists to .env — a config change
+        "/perf --reset",            # wipes stats
+        "/perf --html",             # writes performance_dashboard.html
+        "/habits pin do the thing", # edits the habit ledger
+        "/habits mine",             # rewrites the ledger from history
+        "/habits off",              # toggles a preference
+        "/subagent create helper --role planner",  # spawns a child agent
+        "/subagent run helper do x",                   # runs a child agent
+        "/mode build",              # switches the session state
+        "/cleanup --delete",  # deletes files and prompts —
+        # blocked flag anywhere in args
+        "/issue add investigate the flaky test",   # writes .issues.json
+    ],
+)
+def test_state_changing_forms_of_simple_commands_are_refused(message, registry) -> None:
+    name = message.split()[0].lstrip("/")
+    command = _FakeCommand(name)
+    registry(name, command)
+
+    result = run_slash(_FakeAgent(), message)
+
+    assert result is not None and result["ok"] is False
+    assert "not run from the browser" in result["error"]
+    assert command.calls == [], f"{message} must not execute in the browser"
+
+
+# -- flags are refused anywhere in the arguments, not just position one ----
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "/perf --detail --reset",   # flag not in position one must still be refused
+        "/cleanup foo --delete",  # cleanup ignores non-flag args;
+        # the delete flag is what matters
+    ],
+)
+def test_mutating_flags_are_refused_anywhere_in_args(message, registry) -> None:
+    name = message.split()[0].lstrip("/")
+    command = _FakeCommand(name)
+    registry(name, command)
+
+    result = run_slash(_FakeAgent(), message)
+
+    assert result is not None and result["ok"] is False
+    assert "not run from the browser" in result["error"]
+    assert command.calls == []
+
+
+def test_free_text_after_a_read_only_verb_is_not_refused(registry) -> None:
+    # A read-only subcommand whose free text mentions a blocked word must still run.
+    command = _FakeCommand("subagent", output="routed ok")
+    registry("subagent", command)
+
+    result = run_slash(_FakeAgent(), "/subagent route fix the reset bug")
+
+    assert result is not None and result["ok"] is True
+    assert command.calls == [["route", "fix", "the", "reset", "bug"]]

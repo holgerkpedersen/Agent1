@@ -705,6 +705,7 @@ class FailoverProvider:
         self._profile_name: str | None = getattr(providers[0], "_profile_name", None)
         #: Metrics of whichever provider actually answered (for reporting).
         self.last_response_metrics: ResponseMetrics | None = None
+        self.last_reasoning_content: str = ""
         #: Set whenever a failover ACTUALLY happened — a non-first provider
         #: answered after earlier ones were unreachable.  The agent reads this
         #: to tell the user which model answered; a log-only warning is
@@ -759,6 +760,9 @@ class FailoverProvider:
                 self.last_response_metrics = getattr(
                     provider, "last_response_metrics", None
                 )
+                self.last_reasoning_content = getattr(
+                    provider, "last_reasoning_content", ""
+                ) or ""
                 if index != 0:
                     logger.warning(
                         "LLM failover: provider %d/%d answered after %d failed",

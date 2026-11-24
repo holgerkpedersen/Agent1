@@ -141,6 +141,48 @@ def test_chat_page_is_served_uncached(server, path: str) -> None:
     )
 
 
+def test_static_chat_page_is_served_uncached(server) -> None:
+    """``/static/chat.html`` is a second route to the SAME page: also uncached.
+
+    Regression: only ``/chat`` emitted ``no-store``.  ``/static/chat.html``
+    serves the identical file through the generic static handler, so a browser
+    that reached the page by that URL could still render the OLD copy after a
+    fix - which is exactly the reported symptom (Ctrl-F5 showing the shortcuts
+    dialog and the raw script under the Send button).  Both routes to the page
+    must agree, or the fix depends on which URL the user happened to open.
+    """
+    base, _, _ = server
+    with urllib.request.urlopen(base + "/static/chat.html", timeout=10) as resp:
+        assert resp.status == 200
+        body = resp.read().decode("utf-8")
+        cache_control = resp.headers.get("Cache-Control", "")
+    # Pin that it really is the chat page, not some other html file.
+    assert 'id="chatInput"' in body
+    assert "no-store" in cache_control.lower(), (
+        "/static/chat.html served without Cache-Control: no-store "
+        f"(got {cache_control!r}); a browser may render a stale page"
+    )
+
+
+def test_static_assets_keep_normal_caching(server) -> None:
+    """Guard the boundary: only HTML is forced revalidating, not every asset.
+
+    Disabling the cache for css/js/images would make every dashboard load
+    refetch them; the no-store gate must stay scoped to HTML.
+    """
+    base, _, _ = server
+    with urllib.request.urlopen(
+        base + "/static/ttheme/css/style.css", timeout=10
+    ) as resp:
+        assert resp.status == 200
+        ctype = resp.headers.get("Content-Type", "")
+        cache_control = resp.headers.get("Cache-Control", "")
+    assert "css" in ctype
+    assert "no-store" not in cache_control.lower(), (
+        "a static asset was forced uncached; only HTML should be no-store"
+    )
+
+
 def test_chat_page_never_uses_innerhtml_for_model_output() -> None:
     """Model output is untrusted: every DOM sink must be textContent."""
     html = (STATIC / "chat.html").read_text(encoding="utf-8")
@@ -739,7 +781,7 @@ def test_chat_page_slash_menu_never_uses_chat_send_directly() -> None:
     code = re.sub(r"<!--.*?-->", "", html, flags=re.S)
     code = re.sub(r"/\*.*?\*/", "", code, flags=re.S)
     code = re.sub(r"//[^\n]*", "", code)
-    assert code.count("postJSON(api.send") == 1
+    assert code.count('fetch("/api/chat/stream"') == 1
     # The menu builder must not reach for the network at all.
     choose = code.split("function chooseCommand")[1].split("function syncSlash")[0]
     assert "postJSON" not in choose

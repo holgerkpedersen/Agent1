@@ -495,6 +495,7 @@ class OpencodeProvider:
         self.max_tokens: int = 50000
         self._profile_name: str | None = profile_name
         self.last_response_metrics: ResponseMetrics | None = None
+        self.last_reasoning_content: str = ""
         self._session_id: str | None = None
         self._last_label: str | None = None
         self._server_timeout = float(
@@ -684,6 +685,7 @@ class OpencodeProvider:
         message = first.get("message") or {}
         content = message.get("content") or ""
         reasoning = message.get("reasoning_content") or ""
+        self.last_reasoning_content = reasoning or self.last_reasoning_content
         finish_reason = first.get("finish_reason")
         tool_calls = message.get("tool_calls")
         # Per-turn token/latency/cost accounting (plan ARCH item 17).

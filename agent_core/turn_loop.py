@@ -268,7 +268,10 @@ async def _run_chained_tool_loop(
         """Call the LLM with tools; normalize the reply into an assistant
         message (structured ``tool_calls`` or recovered text-form calls) so
         ToolLoopRunner can execute them."""
-        raw = await agent.llm.chat(msgs, tools=tools, disable_thinking=True)
+        raw = await agent.llm.chat(
+            msgs, tools=tools,
+            disable_thinking=not getattr(agent, "_thinking_enabled", False),
+        )
         if raw.startswith("[Error") or raw.startswith("[LM Studio"):
             if not llm_error:
                 llm_error.append(raw)
@@ -330,6 +333,7 @@ async def _run_chained_tool_loop(
                 display_mode=display_mode,
                 trace=trace_writer,
                 context_limit_tokens=_ctx_tokens,
+                emit_thinking=getattr(agent, "_emit_thinking", None),
             )
             final_text, final_messages = await loop.run(
                 messages=final_messages,
