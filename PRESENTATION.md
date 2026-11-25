@@ -83,7 +83,7 @@ Most agent demos stop at "the LLM called a tool." Agent1 is built around what ha
                  ▼                 ▼                   ▼
         ┌─────────────────┐ ┌─────────────────┐ ┌──────────────────┐
         │ LMStudioProvider│ │ OpencodeProvider│ │ run_parallel()   │
-        │ localhost:1234  │ │ hosted API      │ │ N providers,     │
+        │ localhost:1235  │ │ hosted API      │ │ N providers,     │
         │ OpenAI-compat   │ │ native tools    │ │ asyncio.gather   │
         └─────────────────┘ └─────────────────┘ └──────────────────┘
 ```
@@ -318,7 +318,7 @@ Environment variables (or `.env` — see `.env.example`):
 ```env
 AGENT_MODEL=laguna-s-2.1
 AGENT_LLM_PROVIDER=lmstudio        # or opencode ("opencode-go/..." model prefix wins)
-LMSTUDIO_URL=http://localhost:1234/v1
+LMSTUDIO_URL=http://localhost:1235/v1
 OPENCODE_API_KEY=sk-...            # hosted opencode-go API (also read from OS keyring)
 OPENCODE_TIMEOUT=600
 AGENT1_SECRETS_DIR=                # redirect encrypted-secret store (tests/portable)

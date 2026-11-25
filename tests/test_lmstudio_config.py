@@ -2,9 +2,8 @@
 
 Regression tests for the centralized resolver in ``agent_core.config``:
 ``LMSTUDIO_PORT`` (port-only override), ``LMSTUDIO_URL`` (full-URL override,
-backward compatible) and the ``1234`` default.  Before this, every consumer
-hardcoded its own URL (and ``module_similarity`` even defaulted to the wrong
-port, 1235).
+backward compatible) and the ``1235`` default.  Before this, every consumer
+hardcoded its own URL, so the port could not be changed in one place.
 """
 
 from __future__ import annotations

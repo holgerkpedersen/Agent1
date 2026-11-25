@@ -188,6 +188,45 @@ class TestEngineRecordsAutomatically:
         assert records[0]["source"] == "tool"
         assert records[0]["mechanism"] == "vote"
 
+    def test_a_cached_decision_is_still_recorded(self, tmp_path, monkeypatch):
+        """A cache hit must still append a record — only the model call is saved.
+
+        Regression: the decision cache returned before ``_record``, so a
+        repeated question left NO trace in the ledger while the docs promise
+        "every ``decide`` appends one record".  ``jev stats`` counts those
+        records, so the cache made repeat decisions invisible instead of free.
+        """
+        monkeypatch.delenv("AGENT_NO_JEV_LOG", raising=False)
+
+        class _Counting:
+            model_name = "fake-small"
+
+            def __init__(self):
+                self.chat_calls = 0
+
+            def apply_profile(self, *args):
+                pass
+
+            async def chat(self, messages, **kwargs):
+                self.chat_calls += 1
+                return "yes"
+
+        provider = _Counting()
+        engine = JevEngine(
+            provider,
+            model_name="fake-small",
+            samples=1,
+            mechanism="vote",
+            log_workspace=str(tmp_path),
+            source="tool",
+        )
+        first = asyncio.run(engine.decide(_question()))
+        second = asyncio.run(engine.decide(_question()))
+
+        assert provider.chat_calls == 1  # the model was asked exactly once
+        assert second is first  # the cached result is served as-is
+        assert len(load_decisions(workspace=str(tmp_path))) == 2  # both recorded
+
     def test_telemetry_failure_never_breaks_decide(self, monkeypatch):
         """A broken telemetry import/write must not fail the decision."""
         import harnessfix.jev_telemetry as telemetry

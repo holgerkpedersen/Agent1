@@ -4371,9 +4371,7 @@
     "context": "Written C:\\Dev\\Agent1\\mcp.json (696 bytes)",
     "decision": "write modified mcp.json without that path being named in the request.",
     "rationale": "Chosen during execution to advance the task.",
-    "affected_files": [
-      "mcp.json"
-    ],
+    "affected_files": [],
     "tags": [
       "autonomous",
       "write"
@@ -5614,6 +5612,186 @@
     "rationale": "Chosen during execution to advance the task.",
     "affected_files": [
       "agent_core/llm/lmstudio.py"
+    ],
+    "tags": [
+      "autonomous",
+      "edit"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "265",
+    "date": "2026-11-24T18:11:48+00:00",
+    "title": "Change tests/test_lmstudio_config.py",
+    "context": "============================= test session starts ============================= platform win32 -- Python 3.14.0, pytest-9.1.1, pluggy-1.6.0 -- D:\\Python314\\python.exe cachedir: .pytest_cache rootdir:",
+    "decision": "tests modified tests/test_lmstudio_config.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "tests/test_lmstudio_config.py"
+    ],
+    "tags": [
+      "autonomous",
+      "tests"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "266",
+    "date": "2026-11-24T21:21:49+00:00",
+    "title": "Change agent_core/config.py",
+    "context": "Edited D:\\Dev\\Agent1\\agent_core\\config.py [verify] py_compile ✓ [verify] ruff ✓",
+    "decision": "edit modified agent_core/config.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "agent_core/config.py"
+    ],
+    "tags": [
+      "autonomous",
+      "edit"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "267",
+    "date": "2026-11-24T22:06:30+00:00",
+    "title": "Change README.md",
+    "context": "Edited D:\\Dev\\Agent1\\README.md",
+    "decision": "edit modified README.md without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "README.md"
+    ],
+    "tags": [
+      "autonomous",
+      "edit"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "268",
+    "date": "2026-11-24T22:37:29+00:00",
+    "title": "Change PRESENTATION.md",
+    "context": "Edited D:\\Dev\\Agent1\\PRESENTATION.md",
+    "decision": "edit modified PRESENTATION.md without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "PRESENTATION.md"
+    ],
+    "tags": [
+      "autonomous",
+      "edit"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "269",
+    "date": "2026-11-24T23:00:22+00:00",
+    "title": "Change .env.example",
+    "context": "Text not found in D:\\Dev\\Agent1\\.env.example.",
+    "decision": "edit modified .env.example without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      ".env.example"
+    ],
+    "tags": [
+      "autonomous",
+      "edit"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "270",
+    "date": "2026-11-25T08:10:59+00:00",
+    "title": "Change agent_core/jev_engine.py",
+    "context": "Edited D:\\Dev\\Agent1\\agent_core\\jev_engine.py [verify] py_compile ✓ [verify] ruff ✓",
+    "decision": "edit modified agent_core/jev_engine.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "agent_core/jev_engine.py"
+    ],
+    "tags": [
+      "autonomous",
+      "edit"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "271",
+    "date": "2026-11-25T08:14:25+00:00",
+    "title": "Change tests/test_jev_engine.py",
+    "context": "Edited D:\\Dev\\Agent1\\tests\\test_jev_engine.py [verify] py_compile ✓ [verify] ruff style 3 (advisory - do not edit again just for formatting): test_jev_engine.py:635: E501 Line too long (94 > 88); test",
+    "decision": "edit modified tests/test_jev_engine.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "tests/test_jev_engine.py"
+    ],
+    "tags": [
+      "autonomous",
+      "edit"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "272",
+    "date": "2026-11-25T08:27:46+00:00",
+    "title": "Change tests/test_kanban_status_contract.py",
+    "context": "Edited D:\\Dev\\Agent1\\tests\\test_kanban_status_contract.py [verify] py_compile ✓ [verify] ruff ✓",
+    "decision": "edit modified tests/test_kanban_status_contract.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "tests/test_kanban_status_contract.py"
+    ],
+    "tags": [
+      "autonomous",
+      "edit"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "273",
+    "date": "2026-11-25T10:02:19+00:00",
+    "title": "Change tests/test_jev_telemetry.py",
+    "context": "Edited D:\\Dev\\Agent1\\tests\\test_jev_telemetry.py [verify] py_compile ✓ [verify] ruff ✓",
+    "decision": "edit modified tests/test_jev_telemetry.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "tests/test_jev_telemetry.py"
     ],
     "tags": [
       "autonomous",

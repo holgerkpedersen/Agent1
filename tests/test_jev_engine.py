@@ -569,3 +569,105 @@ class TestSettings:
 
         with pytest.raises(ConfigurationError):
             AgentSettings(jev_samples=0)
+
+
+# ---------------------------------------------------------------------------
+#  Decision cache — memoisation must be per engine, never process-global
+# ---------------------------------------------------------------------------
+
+
+class CountingProvider:
+    """Fixed answer, counts how many times the model was actually asked."""
+
+    model_name = "google/gemma-4-e4b"
+
+    def __init__(self, answer="yes"):
+        self._answer = answer
+        self.chat_calls = 0
+
+    async def chat(self, messages, tools=None, max_tokens=None, disable_thinking=False):
+        self.chat_calls += 1
+        return self._answer
+
+
+class TestDecisionCache:
+    """A repeated identical decision is free, but only within ONE engine.
+
+    Regression: the memo was a module-level dict, so a second engine asked the
+    same question got the FIRST engine's answer — even when the model,
+    mechanism, sample count or threshold differed. Every call site builds a
+    fresh engine, so that dict mostly leaked answers across tests and configs.
+    """
+
+    def test_repeat_decision_is_served_from_the_cache(self):
+        provider = CountingProvider("yes")
+        engine = _engine(provider, samples=1, mechanism="vote")
+        question = JevQuestion(kind=KIND_YESNO, text="is it true?")
+
+        first = _decide(engine, question)
+        second = _decide(engine, question)
+
+        assert provider.chat_calls == 1  # the model was asked exactly once
+        assert second.decision == first.decision == "TRUE"
+        assert second is first  # the cached result is returned as-is
+
+    def test_distinct_engines_do_not_share_answers(self):
+        question = JevQuestion(kind=KIND_YESNO, text="is it true?")
+        yes_engine = _engine(CountingProvider("yes"), samples=1, mechanism="vote")
+        no_engine = _engine(CountingProvider("no"), samples=1, mechanism="vote")
+
+        assert _decide(yes_engine, question).decision == "TRUE"
+        # A different engine asks its own provider; it must NOT reuse "TRUE".
+        assert _decide(no_engine, question).decision == "FALSE"
+        assert no_engine.provider.chat_calls == 1
+
+    def test_state_and_options_are_part_of_the_key(self):
+        provider = CountingProvider("yes")
+        engine = _engine(provider, samples=1, mechanism="vote")
+        question = JevQuestion(kind=KIND_YESNO, text="is it true?")
+
+        _decide(engine, question, state="first state")
+        _decide(engine, question, state="second state")
+        assert provider.chat_calls == 2  # different state -> different decision
+
+        provider.chat_calls = 0
+        choice_engine = _engine(provider, samples=1, mechanism="vote", threshold=0.5)
+        ab = JevQuestion(kind=KIND_CHOICE, text="pick", options=("a", "b"))
+        ac = JevQuestion(kind=KIND_CHOICE, text="pick", options=("a", "c"))
+        _decide(choice_engine, ab)
+        _decide(choice_engine, ac)
+        assert provider.chat_calls == 2  # different options -> different decision
+
+    def test_expired_entry_is_recomputed(self, monkeypatch):
+        import agent_core.jev_engine as jev
+
+        # Patch BEFORE the first decide: the TTL is applied when the entry is
+        # stored, so a negative value makes every entry stale from birth.
+        monkeypatch.setattr(jev, "DECISION_CACHE_TTL_S", -1.0)
+        provider = CountingProvider("yes")
+        engine = _engine(provider, samples=1, mechanism="vote")
+        question = JevQuestion(kind=KIND_YESNO, text="is it true?")
+
+        _decide(engine, question)
+        _decide(engine, question)
+        assert provider.chat_calls == 2  # stale entry was not served
+
+    def test_cache_is_bounded(self, monkeypatch):
+        import agent_core.jev_engine as jev
+
+        monkeypatch.setattr(jev, "DECISION_CACHE_MAX", 2)
+        engine = _engine(CountingProvider("yes"), samples=1, mechanism="vote")
+
+        for i in range(5):
+            _decide(engine, JevQuestion(kind=KIND_YESNO, text=f"question {i}"))
+        assert len(engine._memo) <= 2  # the oldest entries are dropped
+
+    def test_an_abstention_is_not_cached_as_a_wrong_answer(self):
+        """Each engine caches only what it actually computed for its own text."""
+        provider = CountingProvider("??")  # unparseable -> abstention
+        engine = _engine(provider, samples=1, mechanism="vote")
+        first = _decide(engine, JevQuestion(kind=KIND_YESNO, text="is it true?"))
+        assert first.decision == "UNKNOWN"
+        assert engine._memo  # memoised, so a repeat costs nothing
+        repeat = _decide(engine, JevQuestion(kind=KIND_YESNO, text="is it true?"))
+        assert repeat is first

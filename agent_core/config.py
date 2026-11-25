@@ -24,7 +24,7 @@ from .timeout import COMPILATION_CHECK_TIMEOUT, SEARCH_COMMAND_TIMEOUT
 logger = logging.getLogger(__name__)
 
 #: Default LM Studio server port (OpenAI-compatible + management REST API).
-DEFAULT_LMSTUDIO_PORT: Final[int] = 1234
+DEFAULT_LMSTUDIO_PORT: Final[int] = 1235
 
 
 def lmstudio_port() -> int:
@@ -47,7 +47,7 @@ def lmstudio_port() -> int:
 
 
 def lmstudio_base_url() -> str:
-    """LM Studio OpenAI-compatible base URL (e.g. ``http://localhost:1234/v1``).
+    """LM Studio OpenAI-compatible base URL (e.g. ``http://localhost:1235/v1``).
 
     Resolution order:
       1. ``LMSTUDIO_URL`` — explicit full-URL override (backward compatible).

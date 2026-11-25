@@ -72,6 +72,54 @@ _NUMBER_RE = re.compile(r"[-+]?\d*\.?\d+")
 _WORD_RE = re.compile(r"[A-Za-z]+")
 
 
+#: Maximum number of decisions kept in ONE engine's decision cache.
+DECISION_CACHE_MAX: int = 1024
+#: Seconds before a cached decision is stale.
+DECISION_CACHE_TTL_S: float = 300.0
+
+#: One engine's decision memo: key -> (expires_at, JevResult).
+#: The memo belongs to an engine, never to the module: two engines can use a
+#: different model, threshold, sample count or mechanism, so sharing answers
+#: between them would return a result computed under another configuration.
+_DecisionMemo = dict[tuple[str, ...], tuple[float, Any]]
+
+
+def _decision_key(question: "JevQuestion", state: str = "") -> tuple[str, ...]:
+    """Return the cache key: every field that can change the answer."""
+    return (
+        str(question.kind),
+        str(question.text),
+        "|".join(str(o) for o in question.options),
+        str(question.rubric or ""),
+        str(state or ""),
+    )
+
+
+def _decision_cache_get(
+    memo: "_DecisionMemo", question: "JevQuestion", state: str = ""
+) -> "Any | None":
+    """Return a fresh cached decision, or ``None`` on a miss or an expired entry."""
+    key = _decision_key(question, state)
+    entry = memo.get(key)
+    if entry is None:
+        return None
+    expires_at, result = entry
+    if datetime.now().timestamp() > expires_at:  # expired -> treat as a miss
+        memo.pop(key, None)
+        return None
+    return result
+
+
+def _decision_cache_put(
+    memo: "_DecisionMemo", question: "JevQuestion", state: str, result: Any
+) -> None:
+    """Store *result* in one engine's memo so a repeated decision is free."""
+    key = _decision_key(question, state)
+    memo[key] = (datetime.now().timestamp() + DECISION_CACHE_TTL_S, result)
+    while len(memo) > DECISION_CACHE_MAX:  # bound the memory, drop the oldest
+        memo.pop(next(iter(memo)), None)
+
+
 @dataclass(frozen=True)
 class JevQuestion:
     """A typed question for the Jev engine.
@@ -399,6 +447,10 @@ class JevEngine:
         #: One-shot auto-select guard: the dedicated model is ensured loaded
         #: before the first request (see :meth:`_ensure_ready`).
         self._ready = False
+        #: Per-engine decision memo: repeated identical decisions are free.
+        #: Engine-local on purpose — the answer depends on this engine's model,
+        #: samples, mechanism and threshold, so it must never be shared.
+        self._memo: _DecisionMemo = {}
         # Dedicated provider: safe to set sampling via the sanctioned hook.
         apply_profile = getattr(provider, "apply_profile", None)
         if callable(apply_profile):
@@ -480,15 +532,26 @@ class JevEngine:
         """
         if not isinstance(question, JevQuestion):
             raise TypeError("decide() expects a JevQuestion")
+        cached = _decision_cache_get(self._memo, question, state)
+        if cached is not None:
+            # A cache hit still counts as one decision: telemetry documents
+            # "every decide appends one record", and `jev stats` counts THESE
+            # records, so skipping the ledger here would make the cache
+            # invisible (repeat decisions would simply disappear from the
+            # counts) instead of cheap.  The model is not asked again.
+            self._record(question, cached)
+            return cached
         await self._ensure_ready()
         messages = _build_messages(question, state)
         if self.mechanism in (MECHANISM_AUTO, MECHANISM_LOGPROBS):
             result = await self._via_logprobs(question, messages)
             if result is not None:
                 self._record(question, result)
+                _decision_cache_put(self._memo, question, state, result)
                 return result
         result = await self._via_vote(question, messages)
         self._record(question, result)
+        _decision_cache_put(self._memo, question, state, result)
         return result
 
     def _record(self, question: JevQuestion, result: JevResult) -> None:

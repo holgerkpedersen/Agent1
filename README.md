@@ -34,7 +34,7 @@ You need one LLM backend. Pick whichever is convenient:
 |---|---|---|
 | **Cloud (zero-install)** | Get a free API key from [opencode.ai](https://opencode.ai) — no server needed | Fastest start, no local GPU |
 | **OpenRouter** | Get a key from [openrouter.ai](https://openrouter.ai) — choose from hundreds of models | Model variety |
-| **LM Studio (local)** | Install [LM Studio](https://lmstudio.ai), download a model, start the server on port 1234 | Privacy, offline use |
+| **LM Studio (local)** | Install [LM Studio](https://lmstudio.ai), download a model, start the server on port 1235 | Privacy, offline use |
 
 ### 3. Configure
 
@@ -50,7 +50,7 @@ For the **cloud option** (easiest), edit `.env` and set just one key:
 OPENCODE_API_KEY=sk-your-key-here
 ```
 
-For **LM Studio**, no `.env` changes are needed — just start LM Studio with a model loaded on `http://localhost:1234`.
+For **LM Studio**, no `.env` changes are needed — just start LM Studio with a model loaded on `http://localhost:1235`.
 
 ### 4. Run
 
@@ -130,7 +130,7 @@ Use any model: `openrouter/anthropic/claude-3.5-haiku`, `openrouter/meta-llama/l
 
 ### LM Studio (local)
 
-Start LM Studio, load any model, and ensure the local server runs on `http://localhost:1234`. Default model: `laguna-s-2.1`.
+Start LM Studio, load any model, and ensure the local server runs on `http://localhost:1235`. Default model: `laguna-s-2.1`.
 
 ### llama.cpp (local)
 

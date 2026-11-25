@@ -179,7 +179,14 @@ is being extended to audit its own file effects (self-improvement).
   `LMStudioProvider.chat_logprobs`) and `vote` (N samples;
   agreement IS the probability), `auto` = logprobs then vote. Provider errors,
   timeouts, empty output, unparseable tokens and leaked tool calls are
-  ABSTENTIONS (majority -> UNKNOWN), never fabricated votes. Consumers: REPL
+  ABSTENTIONS (majority -> UNKNOWN), never fabricated votes. Decisions are
+  memoised PER ENGINE (`JevEngine._memo`; key = kind/text/options/rubric/state,
+  TTL `DECISION_CACHE_TTL_S` = 300s, bound `DECISION_CACHE_MAX` = 1024,
+  oldest-dropped) and NEVER module-global: two engines can differ in model,
+  sample count, mechanism or threshold, so a shared memo answered under the
+  wrong config. A hit skips the model call but STILL appends its telemetry
+  record — the ledger counts decisions, so a repeat is cheap, not invisible.
+  Consumers: REPL
   `jev` (`agent_core/commands/jev_cmd.py`) and the read-only NLP tool
   `jev_decide` (`PLAN_MODE_TOOLS`). Configured with `model jev [<name>]`
   (shows the resolved provider + LM Studio status; `model jev <name>` persists
