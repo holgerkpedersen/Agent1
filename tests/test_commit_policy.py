@@ -326,3 +326,80 @@ class TestCommitMsgHookEndToEnd:
             "pathlib",
             "sys",
         }, imported
+
+
+class TestCommitMsgHookPortability:
+    """The hook must run on Windows too, where the interpreter is ``python``.
+
+    Regression: the hook began with ``#!/usr/bin/env python3``.  On a Windows
+    checkout there is no ``python3``, so git fell back to sh, sh tried to parse
+    the file as shell script and EVERY commit died with
+    ``/usr/bin/env: 'python3': No such file or directory``.  CI is ubuntu-only,
+    so nothing caught it.  The fix is a POSIX-sh/Python polyglot on line 2.
+    """
+
+    HOOK = REPO_ROOT / ".githooks" / "commit-msg"
+
+    @staticmethod
+    def _find_sh() -> str | None:
+        """Locate a POSIX shell; git ships one even when PATH has none."""
+        import shutil
+
+        found = shutil.which("sh")
+        if found:
+            return found
+        for candidate in (
+            r"D:\Program Files\Git\usr\bin\sh.exe",
+            r"C:\Program Files\Git\usr\bin\sh.exe",
+        ):
+            if Path(candidate).is_file():
+                return candidate
+        return None
+
+    def test_shebang_does_not_assume_python3(self) -> None:
+        """No python3-dependent shebang: conductor must be plain ``sh``."""
+        first = self.HOOK.read_text(encoding="utf-8").splitlines()[0]
+        assert first.strip() == "#!/bin/sh", first
+        assert "python3" not in first
+
+    def test_header_line_is_a_polyglot(self) -> None:
+        """Line 2 must exec an interpreter and degrade from python3 to python."""
+        lines = self.HOOK.read_text(encoding="utf-8").splitlines()
+        header = lines[1]
+        assert "exec" in header, header
+        assert "python3" in header and "python" in header, header
+        # It must stay a valid Python string literal (sh runs it, Python
+        # ignores it as an expression statement).
+        import ast
+
+        tree = ast.parse(self.HOOK.read_text(encoding="utf-8"))
+        assert isinstance(tree.body[0], ast.Expr)
+        assert isinstance(tree.body[0].value, ast.Constant)
+
+    def test_hook_file_uses_lf_endings(self) -> None:
+        """CRLF in the worktree makes sh choke on ``\\r`` before each command."""
+        raw = self.HOOK.read_bytes()
+        assert b"\r\n" not in raw, "hook must be checked out with LF endings"
+
+    def test_sh_runs_the_hook_without_interpreter_error(self, tmp_path: Path) -> None:
+        """End-to-end: sh executes the hook and it reaches the Python policy."""
+        sh = self._find_sh()
+        if sh is None:
+            pytest.skip("no POSIX shell available")
+
+        message = tmp_path / "msg.txt"
+        message.write_text("commit changes\n", encoding="utf-8")
+        proc = subprocess.run(
+            [sh, str(self.HOOK), str(message)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=120,
+        )
+        combined = (proc.stdout + proc.stderr).lower()
+        # The bug under test: sh could not find an interpreter at all.
+        assert "no such file or directory" not in combined, combined
+        # The hook actually reached the policy and rejected the subject.
+        assert proc.returncode == 1, proc.stdout + proc.stderr
+        assert "vacuous" in combined, proc.stdout + proc.stderr

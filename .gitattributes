@@ -1,0 +1,5 @@
+# Git hooks are executed by the OS shell, not by Python's importer: a CRLF
+# checkout appends "\r" to every command, so the shebang and each hook line
+# fail with "<cmd>\r: not found".  This machine uses core.autocrlf=true, which
+# would otherwise rewrite these files on checkout.  Pin them to LF everywhere.
+.githooks/* text eol=lf

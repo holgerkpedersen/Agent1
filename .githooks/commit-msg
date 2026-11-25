@@ -1,11 +1,18 @@
-#!/usr/bin/env python3
-"""commit-msg hook: reject vacuous subjects, advise on format.
-
-Installed via ``git config core.hooksPath .githooks`` (see AGENTS.md).  The
-message file path arrives as argv[1]; a missing argument or a missing policy
-module must never block a commit, so every failure path prints a warning and
-exits 0.
-"""
+#!/bin/sh
+''''command -v python3>/dev/null&&exec python3 "$0" "$@";exec python "$0" "$@" # '''
+# commit-msg hook: reject vacuous subjects, advise on format.
+#
+# Installed via ``git config core.hooksPath .githooks`` (see AGENTS.md).  The
+# message file path arrives as argv[1]; a missing argument or a missing policy
+# module must never block a commit, so every failure path prints a warning and
+# exits 0.
+#
+# Line 2 is a POSIX-sh / Python polyglot, not decoration.  A plain
+# ``#!/usr/bin/env python3`` shebang is not portable: on Windows the
+# interpreter is ``python``, git therefore falls back to sh, sh reads this
+# file as shell script and the commit dies with "python3: No such file or
+# directory" -- for EVERY commit.  Line 2 always runs, so sh sees a working
+# ``exec`` and Python sees a harmless string literal.
 from __future__ import annotations
 
 import importlib.util

@@ -432,6 +432,14 @@ into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`
   are **errors** and block the commit; format deviations (no type prefix,
   unknown type, trailing period, >88 chars) are **warnings** and never block
   you. Covered by `tests/test_commit_policy.py`.
+- **Hooks must stay Windows-portable.** They start with `#!/bin/sh` plus a
+  one-line sh/Python polyglot (`exec python3` falling back to `python`), never
+  a bare `#!/usr/bin/env python3`: Windows has no `python3`, so git would fall
+  back to sh and every commit would die with `python3: No such file or
+  directory`. CI is ubuntu-only and cannot catch this, so
+  `tests/test_commit_policy.py::TestCommitMsgHookPortability` does. Hooks are
+  also pinned to `eol=lf` in `.gitattributes` — a CRLF checkout appends `\r`
+  to each command and sh fails on it.
 - Implement auto-runs `py_compile` on every written file.
 
 ## Conventions
