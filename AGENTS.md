@@ -765,6 +765,19 @@ matters, and getting it wrong is what broke pushes:
 Also set: `credential.https://github.com.username=holgerkpedersen`,
 `credential.interactive=never`.
 
+`.git/config` is machine-local, so a fresh clone does NOT inherit this order.
+Re-apply it once per clone:
+
+```bash
+python scripts/setup_git_auth.py           # write the config (idempotent)
+python scripts/setup_git_auth.py --check    # verify only; exit 1 when wrong
+```
+
+`scripts/setup_git_auth.py` clears the helper list before re-adding it, so a
+stray empty entry cannot clear `manager` again. `tests/test_setup_git_auth.py`
+drives it against real throwaway `git init` repos, so the ORDER is pinned by a
+failing test, not by this paragraph.
+
 ### Why `manager` must come first
 Windows Credential Manager holds TWO accounts for `https://github.com`
 (`holgerkpedersen`, and a stale `1609665`). With several accounts GCM prompts the

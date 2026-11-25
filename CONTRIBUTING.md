@@ -23,6 +23,23 @@ pip install -e ".[dev]"
 
 The `[dev]` extra installs all development tools: `ruff`, `mypy`, `pytest`, `pytest-cov`, `pytest-testmon`, `psutil`, and type stubs.
 
+### Configure git auth (once per clone)
+
+`.git/config` is machine-local, so the credential-helper ORDER has to be applied
+again after every fresh clone. Do it once, or `git push` can fail with
+`401 Bad credentials`:
+
+```bash
+python scripts/setup_git_auth.py          # write the config
+python scripts/setup_git_auth.py --check   # verify (exit 1 when wrong)
+```
+
+It pins Git Credential Manager first and keeps `scripts/git_credential_helper.cmd`
+(a `.env` `GITHUB_TOKEN` reader) as a fallback, plus
+`credential.https://github.com.username` and `credential.interactive=never`, so no
+push ever stops to prompt. See the "Git / remote auth" section of
+[AGENTS.md](AGENTS.md) for why the order matters.
+
 ---
 
 ## Code Style
