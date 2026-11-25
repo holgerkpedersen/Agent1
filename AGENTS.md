@@ -752,14 +752,33 @@ incrementally as its capability grows — human stays in control.
 
 ## Git / remote auth (non-interactive)
 `git push`/`ls-remote` must NOT prompt for credentials (no human at the keyboard).
-Auth is supplied by a local credential helper that reads `GITHUB_TOKEN` from the
-gitignored `.env` — the token is never written into `.git/config` or the remote URL.
+The token is never written into `.git/config` or the remote URL.
 
-- Helper: `scripts/git_credential_helper.py` (reads `.env`, emits `git`/token for
-  `protocol=https host=github.com`).
-- Wired at repo scope in `.git/config`:
-  `credential.helper=!D:/Dev/Agent1/scripts/git_credential_helper.cmd` (placed
-  before the global `manager`), plus `credential.interactive never`.
-- If a push hangs on a credential prompt, run `git config --local --get-regexp
-  credential` to confirm the helper is present, and verify `.env` has a live
-  `GITHUB_TOKEN`.
+Repo-scope `credential.helper` is an ORDERED list, tried top to bottom. The order
+matters, and getting it wrong is what broke pushes:
+
+1. `manager` — Git Credential Manager, first. It holds the working credential in
+   the OS store and resolves it non-interactively.
+2. `!D:/Dev/Agent1/scripts/git_credential_helper.cmd` — fallback only. It reads
+   `GITHUB_TOKEN` from the gitignored `.env`.
+
+Also set: `credential.https://github.com.username=holgerkpedersen`,
+`credential.interactive=never`.
+
+### Why `manager` must come first
+Windows Credential Manager holds TWO accounts for `https://github.com`
+(`holgerkpedersen`, and a stale `1609665`). With several accounts GCM prompts the
+user to pick one, so it fails under `credential.interactive=never` unless the
+username is pinned. Pinning the username removes the prompt.
+
+The `.env` `GITHUB_TOKEN` is a separate, weaker credential. When it is expired or
+revoked, GitHub answers `HTTP 401 {"message": "Bad credentials"}`. That is a dead
+token, NOT a helper bug — do not rewrite the helper to chase it.
+
+### Diagnose a failed push
+- `git config --local --get-all credential.helper` — check order; an empty entry
+  CLEARS all earlier helpers, and ordering below `manager` disables it.
+- `git ls-remote --heads origin master` — non-mutating auth check.
+- `python -c "..."` a `GET https://api.github.com/user` with the token to tell a
+  dead token (401) from a wiring fault. Never print the token itself.
+- `GCM_TRACE=1 GCM_INTERACTIVE=never` shows which accounts the store holds.
