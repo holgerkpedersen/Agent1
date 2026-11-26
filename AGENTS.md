@@ -678,7 +678,12 @@ incrementally as its capability grows — human stays in control.
   ``inkling-2-mini-abliterated-fit`` subagent appear to finish without acting.
   The model is remembered in `_tools_unsupported`, and later tool-using turns
   short-circuit to the same error with NO request sent; plain chat (no tools)
-  still works.  `is_connection_failure` matches the
+  still works.  The memo is KEYED BY MODEL with an expiry: a deterministic
+  peg-grammar failure is remembered permanently (`None` deadline), while a
+  transient engine crash (`channel error`, `terminated`, predict `fetch
+  failed`) expires after `TOOLS_UNSUPPORTED_TTL_S` (600s) so an engine restart
+  or upgrade is retried instead of leaving the model banned for the session.
+  `is_connection_failure` matches the
   ``cannot use tools in this setup`` marker so the chain reaches a tool-capable
   model.  `_engine_server_error` EXCLUDES peg/OOM from transient retries
   (deterministic).  Server-side root cause is a llama.cpp/LM Studio parser bug;

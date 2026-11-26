@@ -179,6 +179,15 @@ def _is_tool_path_engine_error(text: Any) -> bool:
 #: failover chain moves on to a model that CAN call tools.
 _TOOL_UNSUPPORTED_MARKER = "cannot use tools in this setup"
 
+#: How long a NON-deterministic tool-path failure is remembered, in seconds.
+#: A peg-grammar failure is deterministic for a given model + engine build and
+#: is remembered permanently (``None`` deadline).  Every other tool-path signal
+#: — ``channel error``, ``terminated``, predict ``fetch failed`` — is a
+#: transient engine state: restarting LM Studio or upgrading it fixes the tool
+#: path, so the memo must not outlive the cause.  Without an expiry the model
+#: stayed banned for the whole session and a healthy engine was never retried.
+TOOLS_UNSUPPORTED_TTL_S = 600.0
+
 
 def _tool_unsupported_error(model_name: str, detail: Any = "") -> str:
     """Build the fail-fast error for a model whose TOOL path crashes the engine.
@@ -584,7 +593,15 @@ class LMStudioProvider:
         #: (it fails over to a tool-capable model) — its request is never
         #: re-sent without tools, because a prose answer would look like a
         #: completed task while no tool ever ran.
-        self._tools_unsupported: set[str] = set()
+        #:
+        #: Maps a model name to the monotonic deadline after which the memo
+        #: expires; ``None`` marks a PERMANENT entry.  Only a peg-grammar
+        #: failure is deterministic enough to remember forever — ``channel
+        #: error`` / ``terminated`` / predict ``fetch failed`` are transient
+        #: engine states that an engine restart or an LM Studio upgrade fixes,
+        #: so a memo that never expired would ban a recovered model for the
+        #: rest of the session (see :attr:`TOOLS_UNSUPPORTED_TTL_S`).
+        self._tools_unsupported: dict[str, float | None] = {}
         #: Real context window (tokens) of the ACTIVE model, extracted once
         #: from the native /api/v1/models catalog (loaded-instance config,
         #: else the model's max_context_length).  Read by
@@ -848,6 +865,43 @@ class LMStudioProvider:
         prefill_s = (tokens / rate) * _PREFILL_MARGIN + _PREFILL_SLACK_S
         return int(min(max(base, prefill_s), _MAX_SCALED_TIMEOUT_S))
 
+    def _tools_blocked(self, model_name: str) -> bool:
+        """True when ``model_name`` is still known to break the engine's TOOL path.
+
+        A permanent entry (``None`` deadline, set by a deterministic peg-grammar
+        failure) never expires.  A timed entry expires once its deadline passes,
+        so a transient engine crash is retried instead of banning the model for
+        the whole session — the entry is dropped here, on read.
+        """
+        if model_name not in self._tools_unsupported:
+            return False
+        deadline = self._tools_unsupported[model_name]
+        if deadline is None:
+            return True
+        if _time.monotonic() < deadline:
+            return True
+        del self._tools_unsupported[model_name]
+        print(
+            f"  [lmstudio] '{model_name}' tool-path memo expired — retrying, "
+            "the engine may have been restarted or upgraded",
+            flush=True,
+        )
+        return False
+
+    def _remember_tools_unsupported(self, model_name: str, detail: Any = "") -> None:
+        """Remember that ``model_name`` cannot use tools in this engine setup.
+
+        A deterministic peg-grammar failure is remembered permanently; any
+        other tool-path signal is transient engine state and expires after
+        :data:`TOOLS_UNSUPPORTED_TTL_S` seconds.
+        """
+        if isinstance(detail, str) and _is_tool_grammar_error(detail):
+            self._tools_unsupported[model_name] = None
+            return
+        self._tools_unsupported[model_name] = (
+            _time.monotonic() + TOOLS_UNSUPPORTED_TTL_S
+        )
+
     def _announce_model(self, payload: dict[str, Any]) -> None:
         """Print the model/profile status label once per label change.
 
@@ -908,7 +962,9 @@ class LMStudioProvider:
         tools: a tool-less reply looks exactly like a completed task while no
         tool ever ran, so the turn fails fast with a failover-worthy error
         instead (see :func:`_tool_unsupported_error`).  The model is remembered
-        in ``_tools_unsupported`` so later tool-using turns fail fast too.
+        in ``_tools_unsupported`` so later tool-using turns fail fast too — a
+        peg-grammar failure permanently, a transient engine crash only for
+        :data:`TOOLS_UNSUPPORTED_TTL_S` seconds (see :meth:`_tools_blocked`).
         """
         # One-time context-window extraction (native /api/v1/models): feeds
         # context_budget.provider_context_limit so the tool loop can bound
@@ -923,7 +979,7 @@ class LMStudioProvider:
         # asked to answer a tool-using turn at all: sending tools would fail
         # again, and answering WITHOUT them would silently skip the work.
         # Fail fast so the failover chain picks a tool-capable model.
-        if tools and self.model_name in self._tools_unsupported:
+        if tools and self._tools_blocked(self.model_name):
             print(
                 f"  [lmstudio] '{self.model_name}' "
                 f"{_TOOL_UNSUPPORTED_MARKER} (known bad tool path) — failing "
@@ -1027,11 +1083,12 @@ class LMStudioProvider:
         # task (the model writes "I created the file" in prose while no tool
         # ever ran), so degrading the turn hides the failure instead of
         # reporting it.  The model is remembered in `_tools_unsupported` so
-        # later turns skip the doomed attempt, and the error text carries
-        # `_TOOL_UNSUPPORTED_MARKER`, which `is_connection_failure` treats as
-        # failover-worthy: the chain moves on to a tool-capable model.
+        # later turns skip the doomed attempt (permanently for a deterministic
+        # peg failure, TTL-bounded for a transient engine crash), and the error
+        # text carries `_TOOL_UNSUPPORTED_MARKER`, which `is_connection_failure`
+        # treats as failover-worthy: the chain moves on to a tool-capable model.
         if use_tools and _is_tool_path_engine_error(result_text):
-            self._tools_unsupported.add(self.model_name)
+            self._remember_tools_unsupported(self.model_name, result_text)
             print(
                 f"  [lmstudio] '{self.model_name}' "
                 f"{_TOOL_UNSUPPORTED_MARKER} (engine error) — failing over "

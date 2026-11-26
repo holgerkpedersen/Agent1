@@ -491,7 +491,7 @@ class TestToolPathEngineFailure:
         """The memo only blocks TOOL-USING turns: a plain chat call (no tools)
         is unaffected, so a provider is not bricked for text callers."""
         prov = _provider()
-        prov._tools_unsupported.add(prov.model_name)
+        prov._tools_unsupported[prov.model_name] = None
         payloads: list = []
 
         def fake(req, timeout=None):
@@ -503,3 +503,85 @@ class TestToolPathEngineFailure:
         assert out == "ok"
         assert len(payloads) == 1
         assert "tools" not in payloads[0]
+
+
+class TestToolUnsupportedMemoExpiry:
+    """Regression: the "this model cannot use tools" memo must not outlive its
+    cause.
+
+    A transient engine crash (``channel error`` / ``terminated`` / predict
+    ``fetch failed``) is fixed by restarting or upgrading LM Studio, yet the
+    memo used to be permanent for the provider instance: the model stayed
+    banned for the whole session and a healthy engine was never retried.
+    A deterministic peg-grammar failure is different — same model plus same
+    engine build always fails — so that one stays permanent.
+    """
+
+    tools = [{"type": "function", "function": {"name": "x", "parameters": {}}}]
+
+    def test_transient_engine_failure_expires_and_is_retried(self) -> None:
+        from agent_core.llm import lmstudio
+
+        prov = _provider()
+        payloads: list = []
+
+        def fake(req, timeout=None):
+            payloads.append(json.loads(req.data.decode()))
+            raise _http_error(req, 400, _channel_error_body())
+
+        with patch("urllib.request.urlopen", side_effect=fake):
+            out1 = asyncio.run(
+                prov.chat([{"role": "user", "content": "a"}], tools=self.tools)
+            )
+            assert "cannot use tools in this setup" in out1
+            # The memo is TTL-bounded, not permanent.
+            assert prov.model_name in prov._tools_unsupported
+            assert prov._tools_unsupported[prov.model_name] is not None
+            first_call_len = len(payloads)
+            # Fast-forward past the TTL: the model must be retried, not banned.
+            with patch.object(
+                lmstudio._time,
+                "monotonic",
+                return_value=lmstudio._time.monotonic()
+                + lmstudio.TOOLS_UNSUPPORTED_TTL_S
+                + 1.0,
+            ):
+                out2 = asyncio.run(
+                    prov.chat([{"role": "user", "content": "b"}], tools=self.tools)
+                )
+        assert "cannot use tools in this setup" in out2
+        # A real request went out for the retry instead of the fail-fast path.
+        assert len(payloads) > first_call_len, (
+            "the expired memo must not skip the request"
+        )
+        assert "tools" in payloads[first_call_len]
+
+    def test_peg_grammar_failure_is_remembered_permanently(self) -> None:
+        from agent_core.llm import lmstudio
+
+        prov = _provider()
+        payloads: list = []
+
+        def fake(req, timeout=None):
+            payloads.append(json.loads(req.data.decode()))
+            raise _http_error(req, 400, _PEG_ERROR_BODY)
+
+        with patch("urllib.request.urlopen", side_effect=fake):
+            asyncio.run(
+                prov.chat([{"role": "user", "content": "a"}], tools=self.tools)
+            )
+            first_len = len(payloads)
+            # Far beyond the TTL: a peg failure is deterministic, so it must
+            # still fail fast without sending anything.
+            with patch.object(
+                lmstudio._time,
+                "monotonic",
+                return_value=lmstudio._time.monotonic()
+                + (lmstudio.TOOLS_UNSUPPORTED_TTL_S * 100),
+            ):
+                out2 = asyncio.run(
+                    prov.chat([{"role": "user", "content": "b"}], tools=self.tools)
+                )
+        assert prov._tools_unsupported[prov.model_name] is None
+        assert "cannot use tools in this setup" in out2
+        assert len(payloads) == first_len, "a peg failure must never be retried"
