@@ -36,10 +36,12 @@ from datetime import datetime
 from typing import Any
 
 from agent_core.llm.config import TASK_PROFILE_MAP
-from agent_core.llm.llm_types import ProfileType
+from agent_core.llm.llm_types import ProfileType, TaskType
 from agent_core.llm.meta_policy import MetaPolicyEvolver
 from agent_core.llm.metrics_tracker import MetricsTracker
+from agent_core.llm.model_profiles import get_profile
 from agent_core.llm.provider import get_last_metrics
+from agent_core.llm.router import _session_budget
 from agent_core.llm.task_type import infer_task_type
 
 logger = logging.getLogger(__name__)
@@ -255,24 +257,92 @@ def recommend_profile(
 ) -> str | None:
     """Profile name to suggest for *user_input*, or ``None``; never raises.
 
-    Rule (plan B2): ``TASK_PROFILE_MAP[infer_task_type(user_input)]`` must
-    differ from the currently running profile **and** its evolved weight must
-    be strictly higher than the current profile's weight.  The "current"
-    profile when no name is set is ``DEFAULT_PROFILE_TYPE`` — the same type
-    un-pinned turns are recorded under, so the baseline evolves from real
-    outcomes: the suggestion appears once the running profile underperforms
-    the mapped alternative.  With fresh, equal weights nothing is suggested.
+    Rule (plan B2 + cost-aware): ``TASK_PROFILE_MAP[infer_task_type(user_input)]``
+    must differ from the currently running profile **and** its evolved weight
+    must be strictly higher than the current profile's weight — but now also
+    adjusted for **cost efficiency**.  When two profiles have similar success
+    rates, the cheaper one wins.  A more expensive profile can still win if
+    its performance advantage is large enough to justify the cost delta.
+
+    Budget gate: when ``_session_budget.exceeded()`` is true, nothing is
+    suggested regardless of scores (plan item #4 residual).
+
+    The "current" profile when no name is set is ``DEFAULT_PROFILE_TYPE`` —
+    the same type un-pinned turns are recorded under, so the baseline evolves
+    from real outcomes: the suggestion appears once the running profile
+    underperforms the mapped alternative.  With fresh, equal weights nothing
+    is suggested.
     """
     try:
         load_weights()
+
+        # Budget gate — refuse to switch when we've blown past our cap.
+        if _session_budget.exceeded():
+            return None
+
         suggested = TASK_PROFILE_MAP[infer_task_type(user_input)]
         current = profile_type_for_name(current_profile_name) or DEFAULT_PROFILE_TYPE
         if suggested == current:
             return None
+
         scores = EVOLVER.get_preference_scores()
-        if scores.get(suggested, 1.0) <= scores.get(current, 1.0):
+        sug_weight = scores.get(suggested, 1.0)
+        cur_weight = scores.get(current, 1.0)
+
+        # Cost-adjusted comparison: combine evolved performance weight with
+        # cost efficiency.  Uses average recorded cost per turn from METRICS;
+        # falls back to profile metadata costs when no metrics exist yet.
+        sug_adj = _cost_adjust_score(suggested, sug_weight)
+        cur_adj = _cost_adjust_score(current, cur_weight)
+
+        if sug_adj <= cur_adj:
             return None
         return profile_name_for_type(suggested)
     except Exception:  # noqa: BLE001 - observability must not break turns
         logger.debug("Profile recommendation failed (no-op)", exc_info=True)
         return None
+
+
+def _cost_adjust_score(
+    profile_type: ProfileType, raw_weight: float
+) -> float:
+    """Compute a cost-adjusted score for one profile.
+
+    Formula::
+
+        adjusted = weight / (avg_cost + 1e-9)
+
+    High weight and low cost → high adjusted score.  When no METRICS cost
+    data exists, falls back to the profile metadata's per-1M costs divided
+    by a *reasonable average turn size* (~50k total tokens), so that the
+    relative ordering of profiles is preserved even before any real turns
+    are recorded.
+    """
+    # Try METRICS first — real token/cost accounting from tracked turns.
+    avg_cost: float | None = None
+    for tt in TaskType:
+        key = (tt.value, profile_type.value)
+        if key in METRICS._cost_entries and METRICS._cost_entries[key] > 0:
+            entry_avg = METRICS._costs[key] / METRICS._cost_entries[key]
+            if avg_cost is None:
+                avg_cost = entry_avg
+            else:
+                # Running mean across task types.
+                avg_cost = (avg_cost + entry_avg) / 2
+
+    # Fallback to profile metadata when no real cost data exists.
+    if avg_cost is None or avg_cost <= 0:
+        try:
+            prof = get_profile(profile_type.value.replace("_", "-"))
+            pp = getattr(prof, "prompt_cost_per_1m", 0.0) or 0.0
+            cp = getattr(prof, "completion_cost_per_1m", 0.0) or 0.0
+            # Assume ~25k prompt + 25k completion tokens per average turn.
+            avg_tokens = 50_000
+            avg_cost = (pp * avg_tokens + cp * avg_tokens) / 1_000_000
+        except Exception:
+            pass
+
+    # If we still have nothing, fall back to pure weight.
+    if avg_cost is None or avg_cost <= 0:
+        return raw_weight
+    return raw_weight / max(avg_cost, 1e-9)

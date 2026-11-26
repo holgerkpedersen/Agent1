@@ -6072,5 +6072,141 @@
     "status": "active",
     "category": "autonomous",
     "source": "agent"
+  },
+  {
+    "id": "288",
+    "date": "2026-11-26T12:50:47+00:00",
+    "title": "Delegated work to researcher",
+    "context": "## Research Report: Agent1 Kanban Board & Project Status ### 1.",
+    "decision": "Handed part of the task to a researcheragent instead of doing it inline.",
+    "rationale": "Delegation chosen during execution.",
+    "affected_files": [],
+    "tags": [
+      "autonomous",
+      "delegate"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "289",
+    "date": "2026-11-26T12:54:11+00:00",
+    "title": "Change tests/test_cost_aware_router.py",
+    "context": "Written C:\\Dev\\Agent1\\tests\\test_cost_aware_router.py (8392 bytes) [verify] py_compile ✓ [verify] ruff ✗ 2 blocking: test_cost_aware_router.py:166: F821 Undefined name `pytest`; test_cost_aware_router",
+    "decision": "write modified tests/test_cost_aware_router.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "tests/test_cost_aware_router.py"
+    ],
+    "tags": [
+      "autonomous",
+      "write"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "290",
+    "date": "2026-11-26T12:55:56+00:00",
+    "title": "Change agent_core/llm/model_profiles.py",
+    "context": "Edited C:\\Dev\\Agent1\\agent_core\\llm\\model_profiles.py [verify] py_compile ✓ [verify] ruff ✓",
+    "decision": "edit modified agent_core/llm/model_profiles.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "agent_core/llm/model_profiles.py"
+    ],
+    "tags": [
+      "autonomous",
+      "edit"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "291",
+    "date": "2026-11-26T12:56:28+00:00",
+    "title": "Change agent_core/llm/router.py",
+    "context": "Written C:\\Dev\\Agent1\\agent_core\\llm\\router.py (2563 bytes) [verify] py_compile ✓ [verify] ruff ✓",
+    "decision": "write modified agent_core/llm/router.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "agent_core/llm/router.py"
+    ],
+    "tags": [
+      "autonomous",
+      "write"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "292",
+    "date": "2026-11-26T12:56:44+00:00",
+    "title": "Change agent_core/llm/learning.py",
+    "context": "Edited C:\\Dev\\Agent1\\agent_core\\llm\\learning.py [verify] py_compile ✓ [verify] ruff style 4 (advisory - do not edit again just for formatting): learning.py:42: F401 [*] `agent_core.llm.model_profiles.",
+    "decision": "edit modified agent_core/llm/learning.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "agent_core/llm/learning.py"
+    ],
+    "tags": [
+      "autonomous",
+      "edit"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "293",
+    "date": "2026-11-26T13:48:09+00:00",
+    "title": "Change tests",
+    "context": "============================= test session starts ============================= platform win32 -- Python 3.12.10, pytest-9.0.3, pluggy-1.6.0 -- C:\\Program Files\\Python312\\python.exe cachedir: .pytest_",
+    "decision": "tests modified tests without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "tests"
+    ],
+    "tags": [
+      "autonomous",
+      "tests"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "294",
+    "date": "2026-11-26T13:52:56+00:00",
+    "title": "Change tests/test_learning.py",
+    "context": "============================= test session starts ============================= platform win32 -- Python 3.12.10, pytest-9.0.3, pluggy-1.6.0 -- C:\\Program Files\\Python312\\python.exe cachedir: .pytest_",
+    "decision": "tests modified tests/test_learning.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [],
+    "tags": [
+      "autonomous",
+      "tests"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
   }
 ]

@@ -17,6 +17,10 @@ class ProfileMetadata:
     temperature: float = 0.7
     max_tokens: int = 50000
     thinking: Optional[bool] = None  # None = use model default
+    #: Cost per 1M input tokens (USD); 0 means unknown/not tracked.
+    prompt_cost_per_1m: float = 0.0
+    #: Cost per 1M output/completion tokens (USD).
+    completion_cost_per_1m: float = 0.0
 
     def as_dict(self) -> dict[str, Any]:
         return dataclasses.asdict(self)
@@ -32,18 +36,24 @@ _BUILTIN_PROFILES: Final[Dict[str, ProfileMetadata]] = {
         description="Low temperature, low tokens — fast code generation",
         temperature=0.1,
         max_tokens=32000,
+        prompt_cost_per_1m=0.10,
+        completion_cost_per_1m=0.30,
     ),
     "deep-analysis": ProfileMetadata(
         name="deep-analysis",
         description="High temperature, max tokens — deep analysis and brainstorming",
         temperature=0.7,
         max_tokens=50000,
+        prompt_cost_per_1m=2.50,
+        completion_cost_per_1m=10.00,
     ),
     "precise": ProfileMetadata(
         name="precise",
         description="Medium temperature, high tokens — careful code fixes",
         temperature=0.3,
         max_tokens=50000,
+        prompt_cost_per_1m=0.50,
+        completion_cost_per_1m=1.50,
     ),
 }
 
