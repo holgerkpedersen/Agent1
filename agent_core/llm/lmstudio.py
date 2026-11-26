@@ -137,6 +137,14 @@ def _is_tool_grammar_error(detail: str) -> bool:
     return "peg" in low and ("native" in low or "format" in low or "grammar" in low)
 
 
+#: The engine-crash signals that are caused by the TOOL payload itself
+#: (observed live with ``llama-4-scout-17b-16e-instruct``): a ``channel error``,
+#: the engine being ``terminated`` mid-request, and a predict ``fetch failed``.
+#: A bare "engine protocol predict" prefix is NOT in here on purpose — a plain
+#: (recoverable) engine blip carries that prefix too.
+_TOOL_PATH_CRASH_MARKERS = ("channel error", "terminated", "fetch failed")
+
+
 def _is_tool_path_engine_error(text: Any) -> bool:
     """True when an engine error is caused by the TOOL path (grammar/alloc).
 
@@ -164,13 +172,11 @@ def _is_tool_path_engine_error(text: Any) -> bool:
     if _is_tool_grammar_error(text):
         return True
     low = text.lower()
-    return (
-        "channel error" in low
-        # The engine crashing/restarting mid-request surfaces as a bare
-        # "terminated" (observed live with llama-4-scout), a predict-stream
-        # error, or a predict fetch failure.
-        or "terminated" in low
-        or "engine protocol predict" in low
+    # The specific tool-path crashes, plus the broader predict prefix (that one
+    # only reaches here for a NON-transient body — see _is_tool_path_retry_worthless
+    # for why the transient-retry decision must stay narrower).
+    return any(marker in low for marker in _TOOL_PATH_CRASH_MARKERS) or (
+        "engine protocol predict" in low
     )
 
 
@@ -239,6 +245,26 @@ def _is_engine_oom_error(detail: str) -> bool:
             "not enough memory",
         )
     )
+
+
+def _is_tool_path_retry_worthless(detail: str, use_tools: bool) -> bool:
+    """True when re-sending *detail* with tools cannot recover the request.
+
+    A tool-path engine crash (``channel error`` / ``terminated`` / predict
+    ``fetch failed``) is caused by the TOOL payload itself, so every re-sample
+    fails at exactly the same place — but only AFTER the engine finished the
+    whole prompt prefill.  Observed live: three attempts of ~13 min each on a
+    large tool-using prompt, then the fail-fast message anyway.
+
+    Deliberately narrower than :func:`_is_tool_path_engine_error`: it matches
+    only :data:`_TOOL_PATH_CRASH_MARKERS`, never a generic predict prefix.  An
+    ordinary engine ``server_error`` stays retryable on a tool-using turn,
+    because a re-sample does recover those and suppression would give up early.
+    """
+    if not use_tools:
+        return False
+    low = (detail or "").lower()
+    return any(marker in low for marker in _TOOL_PATH_CRASH_MARKERS)
 
 
 def _engine_server_error(detail: str) -> bool:
@@ -712,7 +738,9 @@ class LMStudioProvider:
                 ctk.setdefault("enable_thinking", False)
         return payload
 
-    def _open_chat(self, req: urllib.request.Request, timeout: int) -> Any:
+    def _open_chat(
+        self, req: urllib.request.Request, timeout: int, use_tools: bool = False
+    ) -> Any:
         """Open *req* against LM Studio, auto-loading the pinned model on a
         "not loaded" 400 (multi-shell recovery).
 
@@ -721,6 +749,11 @@ class LMStudioProvider:
         loaded").  Instead of failing, load OUR model back and retry once —
         this is what keeps a running session pinned to its own choice.
         Shared by :meth:`_make_request` and :meth:`chat_stream`.
+
+        ``use_tools`` says whether the payload carries tool schemas: it is the
+        only thing that can distinguish a tool-path engine crash (retrying is
+        pointless AND costs a full prefill per attempt) from a plain engine
+        blip (where a re-sample often succeeds).
         """
         try:
             return urllib.request.urlopen(req, timeout=timeout)
@@ -745,8 +778,15 @@ class LMStudioProvider:
             # understands (rate limit / gateway blip) — every other status
             # stays a plain RuntimeError so permanent failures fail fast.
             # LM Studio also wraps engine-side crashes in a 400; those are
-            # retryable too (see _engine_server_error).
+            # retryable too (see _engine_server_error) — EXCEPT when the crash
+            # is the tool path failing, where a re-sample burns a full prefill
+            # per attempt and fails identically.
             if exc.code in TRANSIENT_HTTP_STATUSES or _engine_server_error(detail):
+                if _is_tool_path_retry_worthless(detail, use_tools):
+                    raise RuntimeError(
+                        f"HTTP Error {exc.code}: {detail} (tool path — not "
+                        "re-sampled: the same request fails at the same point)"
+                    ) from exc
                 raise TransientHTTPError(exc.code, detail) from exc
             raise RuntimeError(f"HTTP Error {exc.code}: {detail}") from exc
 
@@ -758,6 +798,11 @@ class LMStudioProvider:
         HTTP errors surface their response body (LM Studio explains the
         reason there — e.g. "model is not loaded"); a 400 whose body says the
         model is not in VRAM triggers an automatic load + single retry.
+
+        Whether the request carries tools is read from *payload* itself rather
+        than passed in: the body being sent is what decides if the engine's
+        tool path runs, so it cannot drift from the flag (and no caller —
+        including the reasoning-budget retry — can forget to pass it).
         """
         t = timeout if timeout is not None else chat_timeout()
         data = json.dumps(payload).encode("utf-8")
@@ -771,8 +816,8 @@ class LMStudioProvider:
             method="POST",
         )
         try:
-            with self._open_chat(req, t) as response:
-                return cast(dict[str, Any], json.loads(response.read().decode()))
+            with self._open_chat(req, t, use_tools=bool(payload.get("tools"))) as resp:
+                return cast(dict[str, Any], json.loads(resp.read().decode()))
         except json.JSONDecodeError as exc:
             raise RuntimeError(f"LM Studio returned non-JSON response: {exc}") from exc
 
@@ -1223,7 +1268,9 @@ class LMStudioProvider:
             # means another shell evicted our pinned model — reload + retry
             # once, same recovery as the non-streaming path.
             with self._open_chat(
-                req, timeout=self._scaled_timeout(payload)
+                req,
+                timeout=self._scaled_timeout(payload),
+                use_tools=bool(payload.get("tools")),
             ) as response:
                 for line_bytes in response:
                     line = line_bytes.decode("utf-8").strip()

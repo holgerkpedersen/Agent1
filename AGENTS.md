@@ -693,7 +693,17 @@ incrementally as its capability grows — human stays in control.
   the doomed request) and the turn lost the fail-fast explanation, while the
   chain still recovered because the raw text matches the failover regex — which
   is exactly why that leak stayed invisible.  `_engine_server_error` EXCLUDES
-  peg/OOM from transient retries (deterministic).  Server-side root cause is a
+  peg/OOM from transient retries (deterministic), and a tool-path crash
+  (`_TOOL_PATH_CRASH_MARKERS`: `channel error`, `terminated`, predict `fetch
+  failed`) is not RE-SAMPLED when the payload carries tools either
+  (`_is_tool_path_retry_worthless`): the crash is caused by the tool payload, so
+  every attempt fails at the same point after burning a full prefill (live:
+  3 attempts of ~13 min for ONE turn, then the fail-fast error anyway).  The
+  check reads `payload["tools"]` inside `_make_request`, so `_open_chat` needs
+  no new argument and the reasoning-budget retry cannot forget to pass it; a
+  plain engine `server_error` on a tool-using turn is STILL retried (a re-sample
+  recovers those) and a tool-less call is never affected.
+  Tests: `tests/test_llm_tool_path_no_resample.py`.  Server-side root cause is a
   llama.cpp/LM Studio parser bug;
   mitigations are a newer LM Studio / higher quant (Q4_K_XL, not Q4_K_S).
   Live-proof context: with `llama-4-scout-17b-16e-instruct` the engine dies on
