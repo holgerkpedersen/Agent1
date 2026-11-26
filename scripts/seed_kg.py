@@ -35,17 +35,22 @@ opt-in and reports what it removed.
 
 Re-run the seed while Agent1 is NOT running.  ``persistence._save_memory``
 rewrites the whole ``knowledge_graph`` key from the live agent's in-memory
-dict at the end of every turn (``turn_loop``), so a running agent overwrites
-an externally seeded graph on its next turn.  A live REPL reads the seeded
-graph back when it switches session (``session <name>`` and back), because a
-session switch calls ``_load_memory``.
+dict at the end of every turn (``turn_loop``), so a running agent that itself
+holds KG entries overwrites an externally seeded graph on its next turn.  A
+live REPL reads the seeded graph back when it switches session
+(``session <name>`` and back), because a session switch calls ``_load_memory``.
 
-Because that overwrite is silent, the write path WARNS on stderr when a live
-Agent1 session owns the memory file, naming the session and PID so the operator
-can judge whether to exit first and re-run.  It does not refuse: seeding from
-inside a running REPL is the common way this script is invoked, and an
-unverified verdict would block that flow.  ``--budget`` and ``--dry-run`` write
-nothing and never warn.
+The worst case — the one that used to empty this graph silently — is now
+guarded: a session whose in-memory graph is EMPTY (it started before the seed)
+no longer writes that empty dict over a non-empty graph on disk.  The save
+keeps the on-disk graph and prints a ``[memory]`` line naming the divergence,
+so a seeded graph survives until the owning session reloads.
+
+The write path still WARNS on stderr when a live Agent1 session owns the memory
+file, naming the session and PID so the operator can judge whether to exit
+first and re-run.  It does not refuse: seeding from inside a running REPL is
+the common way this script is invoked, and an unverified verdict would block
+that flow.  ``--budget`` and ``--dry-run`` write nothing and never warn.
 """
 
 from __future__ import annotations
@@ -232,8 +237,8 @@ SEED: dict[str, dict[str, Any]] = {
             "interactive.py (~241)."
         ),
         "_save_memory": (
-            "persistence.py (~216): persists all memory stores atomically to "
-            "agent_memory.json."
+            "persistence.py (~252): persists every store atomically; an empty "
+            "in-memory KG never overwrites a seeded one."
         ),
         "clear_history": (
             "persistence.py (~81): clears history, chat, files read, knowledge "
@@ -551,9 +556,11 @@ def main(argv: list[str] | None = None) -> int:
         print(
             f"warning: {len(owners)} live Agent1 session(s) own this memory "
             f"file ({detail}).\n"
-            "  _save_memory rewrites the whole knowledge_graph key from the "
-            "agent's in-memory dict at the end of every turn, so if that "
-            "session never reloads, this seed is lost on its next turn.\n"
+            "  A session that holds KG entries rewrites the whole "
+            "knowledge_graph key from its in-memory dict at the end of every "
+            "turn, so if it never reloads, this seed is lost on its next turn.\n"
+            "  A session with an EMPTY in-memory graph no longer clobbers the "
+            "file (the save keeps the on-disk graph and reports it).\n"
             "  A running REPL picks it up on 'session <name>' (that path calls "
             "_load_memory).",
             file=sys.stderr,

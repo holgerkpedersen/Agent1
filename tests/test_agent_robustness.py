@@ -107,6 +107,53 @@ class TestAtomicPersistence:
         data = json.loads(mem.read_text(encoding="utf-8"))
         assert data["files_read"] == [str(tmp_path / "x.py")]
 
+    def test_save_memory_keeps_on_disk_kg_when_in_memory_is_empty(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+        capsys,
+    ) -> None:
+        """Regression: a session that started BEFORE ``scripts/seed_kg.py``
+        wrote the graph holds an empty in-memory KG and used to write that
+        empty dict over the whole ``knowledge_graph`` key on its next turn,
+        silently discarding all seeded entries (the graph kept emptying
+        itself).  An empty in-memory graph must not clobber a non-empty one
+        on disk."""
+        mem = tmp_path / "agent_memory.json"
+        monkeypatch.setattr(agent, "AGENT_MEMORY_JSON_PATH", str(mem))
+        # The session starts BEFORE the graph is seeded (a live REPL), so its
+        # in-memory graph stays empty while the file gains entries underneath.
+        bot = Agent(workspace=str(tmp_path))
+        assert bot._knowledge_graph == {}, "precondition: session KG is empty"
+        seeded = {"kg": {"clear-command": {"doc": "wipes session state"}}}
+        mem.write_text(
+            json.dumps({"knowledge_graph": seeded, "files_read": []}),
+            encoding="utf-8",
+        )
+        bot._save_memory()
+        data = json.loads(mem.read_text(encoding="utf-8"))
+        assert data["knowledge_graph"] == seeded, "seeded graph was clobbered"
+        assert "keeping the on-disk graph" in capsys.readouterr().out
+
+    def test_save_memory_writes_kg_when_session_has_entries(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """The guard must not block a real update: a session that HAS entries
+        still owns the key and overwrites whatever was on disk."""
+        mem = tmp_path / "agent_memory.json"
+        monkeypatch.setattr(agent, "AGENT_MEMORY_JSON_PATH", str(mem))
+        mem.write_text(
+            json.dumps({"knowledge_graph": {"kg": {"old": {"v": 1}}}}),
+            encoding="utf-8",
+        )
+        bot = Agent(workspace=str(tmp_path))
+        bot._knowledge_graph = {"kg": {"new": {"v": 2}}}
+        bot._save_memory()
+        data = json.loads(mem.read_text(encoding="utf-8"))
+        assert data["knowledge_graph"] == {"kg": {"new": {"v": 2}}}
+
     def test_corrupt_chat_history_is_quarantined_not_silently_dropped(
         self,
         tmp_path: Path,

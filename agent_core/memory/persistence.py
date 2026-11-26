@@ -213,20 +213,56 @@ def _load_memory(agent: "Agent") -> None:
             agent._goal_from_restore = True
 
 
+def _kg_snapshot(agent: "Agent", memory_path: str) -> Any:
+    """The knowledge graph as it should be written to ``memory_path``.
+
+    A live session rewrites the WHOLE ``knowledge_graph`` key from its own
+    in-memory dict on every save, so a session that started before an
+    out-of-band write (``scripts/seed_kg.py``, ``kg add`` in another session)
+    writes back its stale — often empty — view and silently discards the
+    entries.  An empty in-memory graph therefore must not overwrite a
+    non-empty graph on disk: the on-disk graph is kept and the divergence is
+    reported instead of hidden.
+
+    An intentional wipe does not rely on this path: ``clear_history`` deletes
+    the memory file outright, so an empty graph on disk is always harmless to
+    preserve.  Any read/parse failure falls back to the in-memory graph, which
+    is the pre-existing behaviour.
+    """
+    graph = agent._knowledge_graph
+    if graph:
+        return graph
+    on_disk = _read_json_quarantining(memory_path, "agent memory")
+    if isinstance(on_disk, dict):
+        persisted = on_disk.get("knowledge_graph")
+        if isinstance(persisted, dict) and persisted:
+            print(
+                yellow(
+                    "\n  [memory] in-memory knowledge graph is empty but "
+                    f"{memory_path} holds {len(persisted)} section(s) — "
+                    "keeping the on-disk graph instead of overwriting it "
+                    "with this session's stale view (run `session <name>` "
+                    "to reload the seeded graph)."
+                )
+            )
+            return persisted
+    return graph
+
+
 def _save_memory(agent: "Agent") -> None:
     """Persist cross-session memory so the next session resumes with it.
 
     Atomic like :meth:`_save_chat_history` (tmp file + ``os.replace``).
     """
+    memory_path = current_paths().agent_memory_path
     data = {
         "files_read": sorted(agent._files_read),
         "semantic_index": {k: sorted(v) for k, v in agent._semantic_index.items()},
-        "knowledge_graph": agent._knowledge_graph,
+        "knowledge_graph": _kg_snapshot(agent, memory_path),
         "working_memory": agent._working_memory,
         "history": agent._history,
         "original_goal": agent._original_goal,
     }
-    memory_path = current_paths().agent_memory_path
     tmp_path = memory_path + ".tmp"
     try:
         with open(tmp_path, "w", encoding="utf-8") as f:
