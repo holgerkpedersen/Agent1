@@ -173,6 +173,54 @@ def test_card_update_never_overwrites_human_text(sandbox) -> None:
     assert "board body that must not clobber" not in updated["evidence"]
 
 
+def test_repeated_card_update_does_not_duplicate_the_evidence_note(sandbox) -> None:
+    """Re-syncing an unchanged card must not grow the ``[note]`` trail.
+
+    Kanban re-sends the whole card on every edit, and a ``---``-split body is
+    re-applied to ``evidence`` as a note each time.  The trail used to grow
+    quadratically: three edits of one card left ``observed failure`` plus three
+    ``[note] observed failure`` lines — four copies of a single observation.
+    """
+    card = {
+        "id": "cnote",
+        "title": "Split card",
+        "text": "observed failure\n\n---\nfix the poll loop",
+        "frame_id": "f1",
+        "tags": ["[bug]"],
+    }
+    kb._apply_card_create(card)
+
+    for _ in range(3):
+        kb._apply_card_update({"source_id": "cnote", "payload": dict(card)})
+
+    evidence = issue_store.load_issues()[0]["evidence"]
+    assert evidence == "observed failure"
+    assert evidence.count("observed failure") == 1
+
+
+def test_card_update_still_appends_a_genuinely_new_note(sandbox) -> None:
+    """Deduplication must not swallow new information: a new body is kept.
+
+    The guard only refuses text the record already carries, so a card edited
+    to report a *different* observation keeps its chronological trail — and
+    the second sync of that same new text is dropped.
+    """
+    card = {
+        "id": "cnew",
+        "title": "Split card",
+        "text": "first observation\n\n---\nfix the poll loop",
+        "frame_id": "f1",
+    }
+    kb._apply_card_create(card)
+    edited = dict(card, text="second observation\n\n---\nfix the poll loop")
+
+    for _ in range(2):
+        kb._apply_card_update({"source_id": "cnew", "payload": dict(edited)})
+
+    evidence = issue_store.load_issues()[0]["evidence"]
+    assert evidence.splitlines() == ["first observation", "[note] second observation"]
+
+
 # ── key anatomy: the map drift is the documented truth ───────────────────────
 
 

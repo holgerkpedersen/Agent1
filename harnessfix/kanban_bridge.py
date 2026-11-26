@@ -587,6 +587,39 @@ def issue_to_card_data(issue: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _with_evidence_note(evidence: str, note: str, *, limit: int = 50) -> str:
+    """``evidence`` with ``note`` appended as a ``[note]`` line, at most once.
+
+    The card→issue direction is a *sync*, not an event stream: Kanban re-sends
+    the whole card on every edit, so the same body arrives again and again.
+    Appending unconditionally (the old behaviour) grew the trail quadratically
+    — three edits of one ``---``-split card turned a single observation into
+    ``observed failure`` plus three ``[note] observed failure`` lines, because
+    the split body is re-applied as a note on every UPDATE.
+
+    Appending is therefore reserved for text that is genuinely new: a note
+    already present — as its own ``[note]`` line or as the body itself (the
+    CREATE path stores it there) — is skipped, and the number of note lines a
+    card may add is capped so even *different* bodies cannot grow a record
+    without bound.
+    """
+    base = str(evidence or "").strip()
+    text = str(note or "").strip()
+    if not text:
+        return base
+    lines = base.splitlines()
+    if text == base or f"[note] {text}" in lines:
+        return base
+    if sum(1 for line in lines if line.startswith("[note] ")) >= limit:
+        logger.info(
+            "card_update: evidence already holds %d notes — not appending %r",
+            limit,
+            text[:60],
+        )
+        return base
+    return f"{base}\n[note] {text}".strip()
+
+
 def card_to_issue_data(card: dict[str, Any]) -> dict[str, Any]:
     """Convert a Kanban card dict into Agent1 issue payload data.
 
@@ -807,10 +840,12 @@ def _apply_card_update(payload: dict[str, Any]) -> bool:
         existing["title"] = data["title"]
         updated = True
     if "evidence" in data and data["evidence"]:
-        existing["evidence"] = (
-            f"{existing.get('evidence', '')}\n[note] {data['evidence']}".strip()
+        merged_evidence = _with_evidence_note(
+            str(existing.get("evidence") or ""), str(data["evidence"])
         )
-        updated = True
+        if merged_evidence != str(existing.get("evidence") or ""):
+            existing["evidence"] = merged_evidence
+            updated = True
     if "suggested_approach" in data and data["suggested_approach"]:
         existing["suggested_approach"] = data["suggested_approach"]
         updated = True
