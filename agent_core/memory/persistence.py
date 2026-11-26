@@ -10,12 +10,13 @@ lazily from the ``agent`` module so test monkeypatches are honoured.
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import os
 import traceback
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from agent_core.bootstrap import LOOP_NOTE_TAG_KEY
@@ -97,6 +98,7 @@ def clear_history(agent: "Agent") -> None:
     agent._files_read.clear()
     agent._file_mtimes.clear()
     agent._knowledge_graph.clear()
+    agent._kg_load_baseline = {}
     agent._working_memory.clear()
     agent._semantic_index.clear()
     paths = current_paths()
@@ -200,6 +202,11 @@ def _load_memory(agent: "Agent") -> None:
     kg = data.get("knowledge_graph")
     if isinstance(kg, dict):
         agent._knowledge_graph = kg
+        # The load-time baseline lets a later save tell "this session deleted
+        # the entry" (it was here and the session saw it) from "someone wrote
+        # it out of band" (it never appeared in this session at all), which is
+        # what keeps a merge from resurrecting a deletion.
+        agent._kg_load_baseline = copy.deepcopy(kg)
     wm = data.get("working_memory")
     if isinstance(wm, list):
         agent._working_memory = wm
@@ -213,16 +220,74 @@ def _load_memory(agent: "Agent") -> None:
             agent._goal_from_restore = True
 
 
+def _as_entries(section: Any) -> dict[str, Any]:
+    """A graph section as a plain ``{key: entry}`` mapping (never ``None``)."""
+    return section if isinstance(section, dict) else {}
+
+
+def _kg_ts(entry: Any) -> datetime | None:
+    """The ``ts`` stamp of one entry, or ``None`` when it has no usable one.
+
+    ``kg add`` and ``scripts/seed_kg.py`` both write naive local ISO stamps
+    (``datetime.now().isoformat(timespec="seconds")``), existing data may hold
+    a trailing ``Z``, and hand-written entries carry no stamp at all.  All are
+    normalised to an aware datetime so they can be compared instead of
+    guessed at.
+    """
+    if not isinstance(entry, dict):
+        return None
+    raw = entry.get("ts")
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    text = raw.strip()
+    if text[-1] in "Zz":
+        text = text[:-1] + "+00:00"
+    try:
+        stamp = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
+
+
+def _merge_kg_section(
+    live: dict[str, Any],
+    baseline: dict[str, Any],
+    persisted: dict[str, Any],
+) -> dict[str, Any]:
+    """Merge one section's entries from this session and from disk.
+
+    * On both sides — the newer ``ts`` wins, so a stale session value cannot
+      overwrite an entry another session updated after this one started.  An
+      entry with no comparable stamp is left as the session holds it.
+    * Only on disk and in ``baseline`` — the session loaded it and deleted it,
+      so it stays deleted; a merge must never undo a deletion.  The load-time
+      baseline is what distinguishes this from the next case.
+    * Only on disk and not in ``baseline`` — written out of band after this
+      session started, so it is kept.
+    """
+    merged = dict(live)
+    for key, disk_entry in persisted.items():
+        if key in merged:
+            live_ts, disk_ts = _kg_ts(merged[key]), _kg_ts(disk_entry)
+            if live_ts is not None and disk_ts is not None and disk_ts > live_ts:
+                merged[key] = disk_entry
+            continue
+        if key not in baseline:
+            merged[key] = disk_entry
+    return merged
+
+
 def _kg_snapshot(agent: "Agent", memory_path: str) -> Any:
     """The knowledge graph as it should be written to ``memory_path``.
 
     A live session rewrites the WHOLE ``knowledge_graph`` key from its own
     in-memory dict on every save, so a session that started before an
     out-of-band write (``scripts/seed_kg.py``, ``kg add`` in another session)
-    writes back its stale — often empty — view and silently discards the
-    entries.  An empty in-memory graph therefore must not overwrite a
-    non-empty graph on disk: the on-disk graph is kept and the divergence is
-    reported instead of hidden.
+    would write back its stale view and silently discard those entries.  The
+    snapshot is therefore merged with what is on disk, entry by entry — see
+    :func:`_merge_kg_section` for the three cases.  An empty in-memory graph
+    keeps the on-disk graph wholesale and says so, because such a session
+    holds no evidence about any entry.
 
     An intentional wipe does not rely on this path: ``clear_history`` deletes
     the memory file outright, so an empty graph on disk is always harmless to
@@ -230,23 +295,42 @@ def _kg_snapshot(agent: "Agent", memory_path: str) -> Any:
     is the pre-existing behaviour.
     """
     graph = agent._knowledge_graph
-    if graph:
-        return graph
     on_disk = _read_json_quarantining(memory_path, "agent memory")
-    if isinstance(on_disk, dict):
-        persisted = on_disk.get("knowledge_graph")
-        if isinstance(persisted, dict) and persisted:
-            print(
-                yellow(
-                    "\n  [memory] in-memory knowledge graph is empty but "
-                    f"{memory_path} holds {len(persisted)} section(s) — "
-                    "keeping the on-disk graph instead of overwriting it "
-                    "with this session's stale view (run `session <name>` "
-                    "to reload the seeded graph)."
-                )
+    persisted = on_disk.get("knowledge_graph") if isinstance(on_disk, dict) else None
+    if not isinstance(persisted, dict) or not persisted:
+        return graph
+    if not graph:
+        print(
+            yellow(
+                "\n  [memory] in-memory knowledge graph is empty but "
+                f"{memory_path} holds {len(persisted)} section(s) — "
+                "keeping the on-disk graph instead of overwriting it "
+                "with this session's stale view (run `session <name>` "
+                "to reload the seeded graph)."
             )
-            return persisted
-    return graph
+        )
+        return persisted
+    baseline = agent._kg_load_baseline if isinstance(
+        agent._kg_load_baseline, dict
+    ) else {}
+    merged: dict[str, Any] = {}
+    for section in dict.fromkeys([*graph, *persisted]):
+        live_sec = _as_entries(graph.get(section))
+        base_sec = _as_entries(baseline.get(section))
+        disk_sec = _as_entries(persisted.get(section))
+        if not disk_sec:
+            if live_sec:
+                merged[section] = live_sec
+            continue
+        if not live_sec and not base_sec:
+            # The session never had this section, so the disk copy is the
+            # only copy: nothing to merge against.
+            merged[section] = disk_sec
+            continue
+        section_merged = _merge_kg_section(live_sec, base_sec, disk_sec)
+        if section_merged:  # every entry was deleted here — stay deleted
+            merged[section] = section_merged
+    return merged
 
 
 def _save_memory(agent: "Agent") -> None:

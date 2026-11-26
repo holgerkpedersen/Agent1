@@ -35,16 +35,22 @@ opt-in and reports what it removed.
 
 Re-run the seed while Agent1 is NOT running.  ``persistence._save_memory``
 rewrites the whole ``knowledge_graph`` key from the live agent's in-memory
-dict at the end of every turn (``turn_loop``), so a running agent that itself
-holds KG entries overwrites an externally seeded graph on its next turn.  A
-live REPL reads the seeded graph back when it switches session
+dict at the end of every turn (``turn_loop``), so a seed that lands mid-session
+is not visible to that session and the session's own view is what it will
+write back.  A live REPL reads the seeded graph back when it switches session
 (``session <name>`` and back), because a session switch calls ``_load_memory``.
+A session that started before the seed keeps the new entries only thanks to the
+merge described below; reloading makes the session authoritative about them.
 
-The worst case — the one that used to empty this graph silently — is now
-guarded: a session whose in-memory graph is EMPTY (it started before the seed)
-no longer writes that empty dict over a non-empty graph on disk.  The save
-keeps the on-disk graph and prints a ``[memory]`` line naming the divergence,
-so a seeded graph survives until the owning session reloads.
+The save path now MERGES the session's graph with the one on disk, entry by
+entry, so a seed is no longer lost to a live session.  An entry on both sides
+keeps the newer ``ts``.  An entry on disk that this session loaded and deleted
+stays deleted.  An entry on disk that the session never saw — the seed case —
+is kept.  The one case that still keeps the on-disk copy wholesale is a session
+whose in-memory graph is EMPTY (it started before the seed and holds no entries
+at all): such a session has no evidence about any entry, so the save keeps the
+on-disk graph and prints a ``[memory]`` line naming the divergence.  That is
+what used to empty this graph silently.
 
 The write path still WARNS on stderr when a live Agent1 session owns the memory
 file, naming the session and PID so the operator can judge whether to exit
@@ -237,8 +243,8 @@ SEED: dict[str, dict[str, Any]] = {
             "interactive.py (~241)."
         ),
         "_save_memory": (
-            "persistence.py (~252): persists every store atomically; an empty "
-            "in-memory KG never overwrites a seeded one."
+            "persistence.py (~336): persists stores atomically; merges the KG "
+            "per entry so a seeded entry survives."
         ),
         "clear_history": (
             "persistence.py (~81): clears history, chat, files read, knowledge "

@@ -500,6 +500,9 @@ class AgentCore:
         self._full_run_gate = _agent_mod().FullRunGate(self.workspace)
         self._pending_effects: list[str] | None = None
         self._knowledge_graph: dict[str, Any] = {}
+        #: The graph as LOADED, used to tell a session deletion from an
+        #: out-of-band write when ``_save_memory`` merges with the disk copy.
+        self._kg_load_baseline: dict[str, Any] = {}
         self._working_memory: list[Any] = []
         self._original_goal: str = ""
         self._goal_from_restore: bool = False
@@ -1610,6 +1613,7 @@ class AgentCore:
         self._files_read.clear()
         self._file_mtimes.clear()
         self._knowledge_graph.clear()
+        self._kg_load_baseline = {}
         self._working_memory.clear()
         self._semantic_index.clear()
 

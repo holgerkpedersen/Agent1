@@ -31,6 +31,7 @@ import pytest
 
 import agent
 from agent import Agent
+from agent_core.commands.kg_cmd import add_entry, remove_entry
 from agent_core.config import AgentDisplayMode
 
 
@@ -153,6 +154,111 @@ class TestAtomicPersistence:
         bot._save_memory()
         data = json.loads(mem.read_text(encoding="utf-8"))
         assert data["knowledge_graph"] == {"kg": {"new": {"v": 2}}}
+
+    def test_save_memory_merges_entries_seeded_after_session_start(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """The empty-vs-non-empty guard is too coarse for a session that has
+        entries of its OWN: it then rewrites the whole key from memory and
+        still discards the entries seeded underneath it.  Entries written by
+        someone else must survive the save."""
+        mem = tmp_path / "agent_memory.json"
+        monkeypatch.setattr(agent, "AGENT_MEMORY_JSON_PATH", str(mem))
+        bot = Agent(workspace=str(tmp_path))
+        seeded_entry = {"value": "from seed", "ts": "2026-01-01T00:00:00"}
+        mem.write_text(
+            json.dumps({"knowledge_graph": {"facts": {"seeded": seeded_entry}}}),
+            encoding="utf-8",
+        )
+        # The live session edits its own entry AFTER the seed landed.
+        add_entry(bot, "facts", "mine", "added in session")
+        bot._save_memory()
+        facts = json.loads(mem.read_text(encoding="utf-8"))["knowledge_graph"]["facts"]
+        assert facts["seeded"] == seeded_entry, "seeded entry was clobbered"
+        assert facts["mine"]["value"] == "added in session", "session edit lost"
+
+    def test_save_memory_keeps_the_newer_on_disk_value_when_the_session_is_stale(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """Every entry carries ``ts``, so the two graphs CAN be merged: when
+        the same key exists on both sides, the newer stamp wins.  A session
+        holding a stale non-empty graph used to win by default."""
+        mem = tmp_path / "agent_memory.json"
+        monkeypatch.setattr(agent, "AGENT_MEMORY_JSON_PATH", str(mem))
+        bot = Agent(workspace=str(tmp_path))
+        mem.write_text(
+            json.dumps(
+                {
+                    "knowledge_graph": {
+                        "facts": {
+                            "shared": {
+                                "value": "newer on disk",
+                                "ts": "2026-06-01T00:00:00",
+                            }
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        stale = {"value": "stale in session", "ts": "2026-01-01T00:00:00"}
+        bot._knowledge_graph = {"facts": {"shared": stale}}
+        bot._save_memory()
+        facts = json.loads(mem.read_text(encoding="utf-8"))["knowledge_graph"]["facts"]
+        assert facts["shared"]["value"] == "newer on disk", "stale session value won"
+
+    def test_save_memory_keeps_untimestamped_on_disk_entries(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """Not every stored entry carries ``ts`` (hand-written and legacy
+        graphs store a bare ``{"doc": ...}``).  An entry whose age cannot be
+        compared must be kept, not dropped."""
+        mem = tmp_path / "agent_memory.json"
+        monkeypatch.setattr(agent, "AGENT_MEMORY_JSON_PATH", str(mem))
+        bot = Agent(workspace=str(tmp_path))
+        legacy = {"doc": "hand-written, no timestamp"}
+        mem.write_text(
+            json.dumps({"knowledge_graph": {"facts": {"legacy": legacy}}}),
+            encoding="utf-8",
+        )
+        add_entry(bot, "facts", "tracked", "written by this session")
+        bot._save_memory()
+        facts = json.loads(mem.read_text(encoding="utf-8"))["knowledge_graph"]["facts"]
+        assert facts["legacy"] == legacy, "untimestamped entry was dropped"
+        assert facts["tracked"]["value"] == "written by this session"
+
+    def test_save_memory_does_not_resurrect_entries_the_session_deleted(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """A merge must not undo a deletion.  An entry the session removed is
+        absent from memory because the session SAW the file and deleted it, so
+        it must not come back from the on-disk copy — while a key the session
+        edited more recently still wins."""
+        mem = tmp_path / "agent_memory.json"
+        monkeypatch.setattr(agent, "AGENT_MEMORY_JSON_PATH", str(mem))
+        old = {"value": "old", "ts": "2026-01-01T00:00:00"}
+        mem.write_text(
+            json.dumps({"knowledge_graph": {"facts": {"edited": old, "doomed": old}}}),
+            encoding="utf-8",
+        )
+        # The file is present at construction, so the session LOADS both
+        # entries — which is what makes its later deletion authoritative.
+        bot = Agent(workspace=str(tmp_path))
+        assert "doomed" in bot._knowledge_graph["facts"], "precondition: loaded"
+        remove_entry(bot, "facts", "doomed")
+        add_entry(bot, "facts", "edited", "edited here")
+        bot._save_memory()
+        facts = json.loads(mem.read_text(encoding="utf-8"))["knowledge_graph"]["facts"]
+        assert facts["edited"]["value"] == "edited here", "newer session edit lost"
+        assert "doomed" not in facts, "a deleted entry was resurrected"
 
     def test_corrupt_chat_history_is_quarantined_not_silently_dropped(
         self,
