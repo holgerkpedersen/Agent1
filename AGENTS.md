@@ -685,8 +685,16 @@ incrementally as its capability grows — human stays in control.
   or upgrade is retried instead of leaving the model banned for the session.
   `is_connection_failure` matches the
   ``cannot use tools in this setup`` marker so the chain reaches a tool-capable
-  model.  `_engine_server_error` EXCLUDES peg/OOM from transient retries
-  (deterministic).  Server-side root cause is a llama.cpp/LM Studio parser bug;
+  model.  The rule is spelled ONCE, in `_classify_tool_path_failure`, and
+  applied to EVERY result `chat` accepts — the first request AND the
+  reasoning-budget retry, which is also a tool-using request.  It used to be
+  inlined after the first request only, so a `channel error` surfacing on the
+  retry came back RAW: the model was never memoised (every later turn re-sent
+  the doomed request) and the turn lost the fail-fast explanation, while the
+  chain still recovered because the raw text matches the failover regex — which
+  is exactly why that leak stayed invisible.  `_engine_server_error` EXCLUDES
+  peg/OOM from transient retries (deterministic).  Server-side root cause is a
+  llama.cpp/LM Studio parser bug;
   mitigations are a newer LM Studio / higher quant (Q4_K_XL, not Q4_K_S).
   Live-proof context: with `llama-4-scout-17b-16e-instruct` the engine dies on
   tools (`bad allocation`/`terminated`).  Tests:

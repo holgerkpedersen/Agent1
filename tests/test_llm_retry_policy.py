@@ -504,6 +504,62 @@ class TestToolPathEngineFailure:
         assert len(payloads) == 1
         assert "tools" not in payloads[0]
 
+    def test_engine_failure_on_the_thinking_retry_is_classified(self) -> None:
+        """Regression: a tool-path crash seen only on the REASONING-BUDGET
+        retry must still be remembered and reported as fail-fast.
+
+        The classification used to be inlined after the first request only, so
+        a Channel Error surfacing on the escalated retry was returned RAW: the
+        model was never added to ``_tools_unsupported`` (every later tool-using
+        turn re-sent the doomed request) and the turn lost the fail-fast
+        explanation.  The failover chain still recovered — the raw text matches
+        ``_CONNECTION_FAILURE_RE`` — which is why the leak stayed invisible.
+        """
+        from agent_core.llm.provider import is_connection_failure
+
+        prov = _provider()
+        payloads: list = []
+        thinking_body = json.dumps(
+            {
+                "choices": [
+                    {
+                        "message": {"content": "", "reasoning_content": "x" * 900},
+                        "finish_reason": "length",
+                    }
+                ]
+            }
+        ).encode()
+
+        def fake(req, timeout=None):
+            payloads.append(json.loads(req.data.decode()))
+            if len(payloads) == 1:
+                # Reasoning budget exhausted -> triggers the escalated retry.
+                return _FakeResponse(thinking_body)
+            raise _http_error(req, 400, _channel_error_body())
+
+        tools = [{"type": "function", "function": {"name": "x", "parameters": {}}}]
+        with patch("urllib.request.urlopen", side_effect=fake):
+            out1 = asyncio.run(
+                prov.chat([{"role": "user", "content": "a"}], tools=tools)
+            )
+            escalated = len(payloads)
+            out2 = asyncio.run(
+                prov.chat([{"role": "user", "content": "b"}], tools=tools)
+            )
+        assert escalated > 1, "the thinking retry must actually have run"
+        assert "tools" in payloads[escalated - 1], "the retry must keep its tools"
+        assert "cannot use tools in this setup" in out1, (
+            "the escalated retry's engine failure must be reported as fail-fast"
+        )
+        assert is_connection_failure(out1)
+        assert prov.model_name in prov._tools_unsupported, (
+            "the model must be remembered so later turns stop re-sending it"
+        )
+        # The consequence of the leak: without the memo the 2nd turn re-sent
+        # the whole doomed request again.  Now it sends NOTHING.
+        assert len(payloads) == escalated
+        assert "cannot use tools in this setup" in out2
+
 
 class TestToolUnsupportedMemoExpiry:
     """Regression: the "this model cannot use tools" memo must not outlive its

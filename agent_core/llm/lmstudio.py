@@ -902,6 +902,32 @@ class LMStudioProvider:
             _time.monotonic() + TOOLS_UNSUPPORTED_TTL_S
         )
 
+    def _classify_tool_path_failure(self, result_text: str, use_tools: bool) -> str:
+        """Rewrite a tool-path engine failure into the fail-fast error.
+
+        The single spelling of the rule, applied to EVERY result `chat()`
+        accepts.  It used to be inlined after the first request only, so an
+        engine failure that surfaced on the reasoning-budget RETRY was
+        returned raw: the model was never remembered in
+        ``_tools_unsupported`` (every later tool-using turn re-sent the
+        doomed request) and the turn lost the fail-fast explanation.  The
+        failover chain still recovered, because the raw text matches
+        ``_CONNECTION_FAILURE_RE``, which is why the leak stayed invisible.
+
+        Returns *result_text* unchanged when this is not a tool-path engine
+        failure, or when the call carried no tools (plain chat is unaffected).
+        """
+        if not use_tools or not _is_tool_path_engine_error(result_text):
+            return result_text
+        self._remember_tools_unsupported(self.model_name, result_text)
+        print(
+            f"  [lmstudio] '{self.model_name}' "
+            f"{_TOOL_UNSUPPORTED_MARKER} (engine error) — failing over "
+            "instead of retrying without tools",
+            flush=True,
+        )
+        return _tool_unsupported_error(self.model_name, result_text)
+
     def _announce_model(self, payload: dict[str, Any]) -> None:
         """Print the model/profile status label once per label change.
 
@@ -1082,20 +1108,12 @@ class LMStudioProvider:
         # WITHOUT tools.  A tool-less reply is indistinguishable from a finished
         # task (the model writes "I created the file" in prose while no tool
         # ever ran), so degrading the turn hides the failure instead of
-        # reporting it.  The model is remembered in `_tools_unsupported` so
-        # later turns skip the doomed attempt (permanently for a deterministic
-        # peg failure, TTL-bounded for a transient engine crash), and the error
-        # text carries `_TOOL_UNSUPPORTED_MARKER`, which `is_connection_failure`
-        # treats as failover-worthy: the chain moves on to a tool-capable model.
-        if use_tools and _is_tool_path_engine_error(result_text):
-            self._remember_tools_unsupported(self.model_name, result_text)
-            print(
-                f"  [lmstudio] '{self.model_name}' "
-                f"{_TOOL_UNSUPPORTED_MARKER} (engine error) — failing over "
-                "instead of retrying without tools",
-                flush=True,
-            )
-            result_text = _tool_unsupported_error(self.model_name, result_text)
+        # reporting it.  `_classify_tool_path_failure` remembers the model in
+        # `_tools_unsupported` (permanently for a deterministic peg failure,
+        # TTL-bounded for a transient engine crash) and stamps the error with
+        # `_TOOL_UNSUPPORTED_MARKER`, which `is_connection_failure` treats as
+        # failover-worthy: the chain moves on to a tool-capable model.
+        result_text = self._classify_tool_path_failure(result_text, bool(use_tools))
         if not disable_thinking and _is_thinking_budget_error(result_text):
             retry_max = _escalated_max_tokens(
                 max_tokens if max_tokens is not None else self.max_tokens
@@ -1112,6 +1130,13 @@ class LMStudioProvider:
                 disable_thinking=True,
             )
             result_text = await _run(retry_payload, self._scaled_timeout(retry_payload))
+            # The retry is still a TOOL-USING request, and an engine that
+            # crashes in the tool path can crash on the second attempt just as
+            # well as the first: classify its result too, or the model is
+            # never remembered and every later turn re-sends the doomed call.
+            result_text = self._classify_tool_path_failure(
+                result_text, bool(use_tools)
+            )
         return result_text
 
     async def chat_logprobs(
