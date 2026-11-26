@@ -25,6 +25,16 @@ def _default_llm() -> str:
     return os.environ.get("AGENT_OPENCODE_MODEL") or _DEFAULT_OPENCODE_MODEL
 
 
+def _default_zen_free_model() -> str:
+    """Free-tier opencode-zen model name for tests.
+
+    Honours ``AGENT_OPENCODE_MODEL`` env var when set (CI / .env), else falls
+    back to the catalog default zen free-tier entry.  Never returns *None*.
+    """
+    fallback = "opencode-zen/deepseek-v4-flash-free"
+    return os.environ.get("AGENT_OPENCODE_MODEL") or fallback
+
+
 def _default_llm_short() -> str:
     """Model tail without the ``opencode-go/`` prefix (e.g. ``hy3``)."""
     return _default_llm().removeprefix("opencode-go/")
