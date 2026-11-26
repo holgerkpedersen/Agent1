@@ -923,7 +923,7 @@ class LMStudioProvider:
         print(
             f"  [lmstudio] '{self.model_name}' "
             f"{_TOOL_UNSUPPORTED_MARKER} (engine error) — failing over "
-            "instead of retrying without tools",
+            "instead of answering without tools",
             flush=True,
         )
         return _tool_unsupported_error(self.model_name, result_text)
@@ -1009,7 +1009,7 @@ class LMStudioProvider:
             print(
                 f"  [lmstudio] '{self.model_name}' "
                 f"{_TOOL_UNSUPPORTED_MARKER} (known bad tool path) — failing "
-                "over instead of answering without tools",
+                f"over to the next model instead of answering without tools",
                 flush=True,
             )
             return _tool_unsupported_error(self.model_name)

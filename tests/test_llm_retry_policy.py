@@ -560,6 +560,37 @@ class TestToolPathEngineFailure:
         assert len(payloads) == escalated
         assert "cannot use tools in this setup" in out2
 
+    def test_console_never_advertises_a_tool_less_retry(self, capsys) -> None:
+        """The fail-fast message must not describe a fallback we never take.
+
+        The wording read "failing over instead of retrying without tools",
+        which parses as if the tool-less retry still happens — the exact
+        behaviour this path refuses.  Both announcements (a fresh failure and
+        the known-bad-path short-circuit) must name what actually happens:
+        fail over, never answer without tools.
+        """
+        prov = _provider()
+        tools = [{"type": "function", "function": {"name": "x", "parameters": {}}}]
+
+        def fake(req, timeout=None):
+            raise _http_error(req, 400, _PEG_ERROR_BODY)
+
+        with patch("urllib.request.urlopen", side_effect=fake):
+            asyncio.run(prov.chat([{"role": "user", "content": "a"}], tools=tools))
+            fresh = capsys.readouterr().out
+            # The memo now makes the second turn short-circuit (no request).
+            asyncio.run(prov.chat([{"role": "user", "content": "b"}], tools=tools))
+            short_circuit = capsys.readouterr().out
+
+        assert "cannot use tools in this setup" in fresh
+        assert "cannot use tools in this setup" in short_circuit
+        for out in (fresh, short_circuit):
+            assert "failing over" in out
+            assert "answering without tools" in out
+            assert "retrying without tools" not in out, (
+                "the console must not advertise a retry that is never taken"
+            )
+
 
 class TestToolUnsupportedMemoExpiry:
     """Regression: the "this model cannot use tools" memo must not outlive its
