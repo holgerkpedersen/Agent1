@@ -240,6 +240,28 @@ def test_is_connection_failure_detects_zen_exhaustion() -> None:
     assert is_connection_failure(msg)
 
 
+def test_is_connection_failure_detects_any_free_tier_exhaustion() -> None:
+    """Regression: the sentinel matched only the literal "opencode-zen free
+    model" wording, so the opencode-go free-tier error (same sentence, no
+    "opencode-zen" prefix) was treated as a REAL answer and the chain stopped.
+
+    The phrase is emitted by every free-tier slot, so it is matched on the
+    sentence itself rather than on one provider's name."""
+    assert is_connection_failure(
+        "[Error: free model opencode-go/deepseek-v4-flash:free is currently "
+        "unavailable on the backend. Try another free model with "
+        "'model <provider>:<id>-free' "
+        "(e.g. opencode-go/deepseek-v4-flash:free). "
+        "Checked: opencode-go/deepseek-v4-flash:free.]"
+    )
+    assert is_connection_failure(
+        "[Error: free model zen/hy3-free is currently unavailable on the "
+        "backend. Checked: zen/hy3-free.]"
+    )
+    # A healthy answer that merely mentions a free model must not fail over.
+    assert not is_connection_failure("the free model list is in the catalog")
+
+
 def test_config_rejects_invalid_provider_with_model() -> None:
     with pytest.raises(Exception):
         AgentSettings(

@@ -273,9 +273,13 @@ class TestEngineServerErrors:
 
 class TestToolGrammarRecovery:
     """Regression (2026-09-27, llama-4-scout-17b-16e-instruct): LM Studio's PEG
-    tool-call grammar rejects the model's output; the provider must drop tools
-    and answer as text instead of failing the turn.  The failure is
-    deterministic, so it must NOT be retried verbatim as a transient error."""
+    tool-call grammar rejects the model's output.  The failure is deterministic,
+    so it must NOT be retried verbatim as a transient error.
+
+    It must NOT be retried WITHOUT tools either: a tool-less reply is
+    indistinguishable from a finished task (the model writes "I created the
+    file" in prose while no tool ever ran), so the turn must fail fast and let
+    the failover chain pick a tool-capable model."""
 
     def test_peg_body_is_not_transient(self) -> None:
         from agent_core.llm.lmstudio import (
@@ -287,7 +291,10 @@ class TestToolGrammarRecovery:
         assert _is_tool_grammar_error(detail)
         assert not _engine_server_error(detail)
 
-    def test_peg_error_retries_without_tools(self) -> None:
+    def test_peg_error_fails_fast_instead_of_dropping_tools(self) -> None:
+        """A tool-using caller must never be silently answered without tools."""
+        from agent_core.llm.provider import is_connection_failure
+
         prov = _provider()
         payloads: list = []
 
@@ -302,10 +309,13 @@ class TestToolGrammarRecovery:
             out = asyncio.run(
                 prov.chat([{"role": "user", "content": "hi"}], tools=tools)
             )
-        assert out == "ok"
-        assert len(payloads) == 2  # no verbatim retries, just the no-tools retry
+        # Exactly ONE request: no verbatim retry AND no tool-less retry.
+        assert len(payloads) == 1, "a deterministic peg failure must not retry"
         assert "tools" in payloads[0]
-        assert "tools" not in payloads[1]
+        assert out.startswith("[Error:")
+        assert "cannot use tools in this setup" in out
+        # The failover chain must be allowed to move on.
+        assert is_connection_failure(out)
 
     def test_peg_error_without_tools_surfaces(self) -> None:
         prov = _provider()
@@ -383,13 +393,15 @@ def _channel_error_body() -> bytes:
     )
 
 
-class TestToolPathDropTools:
-    """When a model's tool path crashes the LM Studio engine, the provider may
-    drop tools and answer as text (LM Studio's own chat sends no tools).
+class TestToolPathEngineFailure:
+    """When a model's tool path crashes the LM Studio engine, the turn must
+    FAIL FAST and fail over — never be silently answered without tools.
 
-    An out-of-memory is NOT a tool-path failure: dropping tools cannot make an
-    oversized model fit, so it must fail fast instead of degrading a
-    tool-calling caller into plain chat that cannot act."""
+    A tool-less reply is indistinguishable from a completed task (the model
+    writes "I created the file" in prose while no tool ever ran), so dropping
+    tools hides the failure.  An out-of-memory is likewise NOT a tool-path
+    failure: it must also fail fast instead of degrading a tool-calling caller
+    into plain chat that cannot act."""
 
     def test_tool_path_error_markers(self) -> None:
         from agent_core.llm.lmstudio import _is_tool_path_engine_error
@@ -441,20 +453,21 @@ class TestToolPathDropTools:
         assert "out of memory" in out
         assert is_connection_failure(out), "the failover chain must move on"
 
-    def test_tools_disabled_on_subsequent_calls(self) -> None:
-        """A GENUINE tool-path failure is remembered so the doomed attempt is
-        not repeated; the caller keeps getting the degraded text answer that
-        makes sense for plain chat."""
+    def test_subsequent_tool_calls_fail_fast_without_a_request(self) -> None:
+        """A GENUINE tool-path failure is remembered, but the memo must not
+        turn later tool-using turns into tool-less prose: the doomed attempt is
+        skipped AND no request is sent at all — the turn fails fast so the
+        failover chain can reach a tool-capable model."""
+        from agent_core.llm.provider import is_connection_failure
+
         prov = _provider()
         payloads: list = []
 
         def fake(req, timeout=None):
             payloads.append(json.loads(req.data.decode()))
-            if "tools" in payloads[-1]:
-                # PEG is deterministic and non-transient: it fails fast, so the
-                # "already known unsupported" memo can be observed in one turn.
-                raise _http_error(req, 400, _PEG_ERROR_BODY)
-            return _FakeResponse(b'{"choices": [{"message": {"content": "ok"}}]}')
+            # PEG is deterministic and non-transient: it fails fast, so the
+            # "already known unsupported" memo can be observed in one turn.
+            raise _http_error(req, 400, _PEG_ERROR_BODY)
 
         tools = [{"type": "function", "function": {"name": "x", "parameters": {}}}]
         with patch("urllib.request.urlopen", side_effect=fake):
@@ -465,7 +478,28 @@ class TestToolPathDropTools:
             out2 = asyncio.run(
                 prov.chat([{"role": "user", "content": "b"}], tools=tools)
             )
-        assert out1 == "ok" and out2 == "ok"
-        # The 2nd chat must skip tools entirely (no doomed attempt).
-        assert first_call_len == 2
-        assert "tools" not in payloads[first_call_len]
+        assert first_call_len == 1, "the first turn must not retry without tools"
+        assert "tools" in payloads[0]
+        assert out1.startswith("[Error:") and is_connection_failure(out1)
+        # The 2nd chat must send NOTHING (no doomed attempt, no tool-less turn).
+        assert len(payloads) == first_call_len
+        assert out2.startswith("[Error:")
+        assert "cannot use tools in this setup" in out2
+        assert is_connection_failure(out2)
+
+    def test_plain_chat_still_works_after_tool_path_failure(self) -> None:
+        """The memo only blocks TOOL-USING turns: a plain chat call (no tools)
+        is unaffected, so a provider is not bricked for text callers."""
+        prov = _provider()
+        prov._tools_unsupported.add(prov.model_name)
+        payloads: list = []
+
+        def fake(req, timeout=None):
+            payloads.append(json.loads(req.data.decode()))
+            return _FakeResponse(b'{"choices": [{"message": {"content": "ok"}}]}')
+
+        with patch("urllib.request.urlopen", side_effect=fake):
+            out = asyncio.run(prov.chat([{"role": "user", "content": "hi"}]))
+        assert out == "ok"
+        assert len(payloads) == 1
+        assert "tools" not in payloads[0]

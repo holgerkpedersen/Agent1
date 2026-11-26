@@ -608,11 +608,15 @@ _CONNECTION_FAILURE_RE = re.compile(
     r"getaddrinfo|urlopen error|winerror|http error 5\d\d|"
     r"server_error|engine protocol predict|"
     r"out of memory|bad allocation|failed to allocate|insufficient memory|"
-    r"opencode-zen free model \S+ is currently unavailable|"
+    r"free model \S+ is currently unavailable|"
     r"openrouter free-tier model is rate-limited|"
     r"openrouter.*only available on agentic harnesses|"
     r"openrouter.*no endpoints found that support tool|"
-    r"model\s+[^\"\]]*\bnot supported)"
+    r"model\s+[^\"\]]*\bnot supported|"
+    # A model whose LM Studio TOOL path crashes the engine must fail over to a
+    # tool-capable one — never be answered with tools dropped (see
+    # ``lmstudio._tool_unsupported_error``).
+    r"cannot use tools in this setup)"
     r")",
     re.IGNORECASE,
 )

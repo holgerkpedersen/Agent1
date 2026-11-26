@@ -170,6 +170,40 @@ def _is_tool_path_engine_error(text: Any) -> bool:
     )
 
 
+#: Marker carried by the fail-fast error built by :func:`_tool_unsupported_error`.
+#: :data:`agent_core.llm.provider._CONNECTION_FAILURE_RE` matches it, so the
+#: failover chain moves on to a model that CAN call tools.
+_TOOL_UNSUPPORTED_MARKER = "cannot use tools in this setup"
+
+
+def _tool_unsupported_error(model_name: str, detail: Any = "") -> str:
+    """Build the fail-fast error for a model whose TOOL path crashes the engine.
+
+    A tool-using caller must NEVER be answered without tools.  A prose answer
+    looks exactly like a completed task while no tool ever ran (the subagent
+    that should have written and run tests replies with a description instead),
+    so the degraded turn is worse than an honest failure.
+
+    The returned text starts with ``[Error:`` and carries
+    :data:`_TOOL_UNSUPPORTED_MARKER`, which makes
+    :func:`agent_core.llm.provider.is_connection_failure` treat it as
+    failover-worthy — the chain then tries a tool-capable provider.
+    """
+    snippet = ""
+    if isinstance(detail, str) and detail.startswith("[Error:"):
+        inner = detail[len("[Error:") :].strip()
+        if inner.endswith("]"):
+            inner = inner[:-1]
+        inner = inner.strip()
+        if inner:
+            snippet = f" [{inner[:200]}]"
+    return (
+        f"[Error: model '{model_name}' {_TOOL_UNSUPPORTED_MARKER}"
+        f"{snippet} — a tool-less answer would silently skip the work, so the "
+        "request fails over to a tool-capable model instead]"
+    )
+
+
 def _is_engine_oom_error(detail: str) -> bool:
     """True when LM Studio's engine reports an out-of-memory failure.
 
@@ -862,9 +896,12 @@ class LMStudioProvider:
           ``reasoning_content`` and returns no content is retried ONCE with
           thinking disabled and a larger budget (the old behaviour surfaced
           "[Error: model consumed N reasoning bytes ...]" and ended the task);
-        * a model whose LM Studio TOOL path crashes the engine (peg grammar /
-          ``bad allocation`` / ``channel error``) is retried WITHOUT tools,
-          then remembered for the session (LM Studio's own chat sends no tools).
+        A model whose LM Studio TOOL path crashes the engine (peg grammar /
+        ``channel error`` / predict ``fetch failed``) is NOT retried without
+        tools: a tool-less reply looks exactly like a completed task while no
+        tool ever ran, so the turn fails fast with a failover-worthy error
+        instead (see :func:`_tool_unsupported_error`).  The model is remembered
+        in ``_tools_unsupported`` so later tool-using turns fail fast too.
         """
         # One-time context-window extraction (native /api/v1/models): feeds
         # context_budget.provider_context_limit so the tool loop can bound
@@ -875,9 +912,19 @@ class LMStudioProvider:
         # never stalls the event loop (same reason as _make_request below).
         if self.context_limit is None and not self._context_probed:
             await asyncio.to_thread(self.context_length)
-        # A model already known to break the engine's tool path skips tools
-        # entirely — sending them would just fail again.
-        use_tools = None if self.model_name in self._tools_unsupported else tools
+        # A model already known to break the engine's tool path must not be
+        # asked to answer a tool-using turn at all: sending tools would fail
+        # again, and answering WITHOUT them would silently skip the work.
+        # Fail fast so the failover chain picks a tool-capable model.
+        if tools and self.model_name in self._tools_unsupported:
+            print(
+                f"  [lmstudio] '{self.model_name}' "
+                f"{_TOOL_UNSUPPORTED_MARKER} (known bad tool path) — failing "
+                "over instead of answering without tools",
+                flush=True,
+            )
+            return _tool_unsupported_error(self.model_name)
+        use_tools = tools
         first_payload = self._build_payload(
             messages,
             use_tools,
@@ -966,28 +1013,25 @@ class LMStudioProvider:
                 return f"[Error: {e}]"
 
         result_text = await _run(first_payload, self._scaled_timeout(first_payload))
-        # Tool-path engine failure (peg grammar / bad allocation / channel
-        # error / predict "fetch failed"): the model's tool format crashes the
-        # LM Studio engine, yet the SAME prompt WITHOUT tools succeeds (verified
-        # live with llama-4-scout-17b-16e-instruct).  Mark the model as
-        # tools-unsupported so later turns skip the doomed attempt, then retry
-        # without tools instead of retrying verbatim or failing the turn.
+        # Tool-path engine failure (peg grammar / channel error / predict
+        # "fetch failed"): the model's tool format crashes the LM Studio engine.
+        # The request must FAIL FAST and fail over — never be silently re-sent
+        # WITHOUT tools.  A tool-less reply is indistinguishable from a finished
+        # task (the model writes "I created the file" in prose while no tool
+        # ever ran), so degrading the turn hides the failure instead of
+        # reporting it.  The model is remembered in `_tools_unsupported` so
+        # later turns skip the doomed attempt, and the error text carries
+        # `_TOOL_UNSUPPORTED_MARKER`, which `is_connection_failure` treats as
+        # failover-worthy: the chain moves on to a tool-capable model.
         if use_tools and _is_tool_path_engine_error(result_text):
             self._tools_unsupported.add(self.model_name)
             print(
-                f"  [lmstudio] '{self.model_name}' cannot use tools in this "
-                "setup (engine error) — retrying without tools",
+                f"  [lmstudio] '{self.model_name}' "
+                f"{_TOOL_UNSUPPORTED_MARKER} (engine error) — failing over "
+                "instead of retrying without tools",
                 flush=True,
             )
-            no_tools_payload = self._build_payload(
-                messages,
-                None,
-                override_max_tokens=max_tokens,
-                disable_thinking=disable_thinking,
-            )
-            result_text = await _run(
-                no_tools_payload, self._scaled_timeout(no_tools_payload)
-            )
+            result_text = _tool_unsupported_error(self.model_name, result_text)
         if not disable_thinking and _is_thinking_budget_error(result_text):
             retry_max = _escalated_max_tokens(
                 max_tokens if max_tokens is not None else self.max_tokens

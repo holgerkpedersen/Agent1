@@ -666,22 +666,27 @@ incrementally as its capability grows — human stays in control.
   output]` and ended the turn.  Live (2026-09-27): `qwen/qwen3.5-9b` IGNORES the
   reasoning-off knob, so the larger budget is what actually recovers it (250-token
   request -> retry at 4096 -> full answer).  Tests: `tests/test_llm_retry_policy.py`.
-- **Tool-path drop-tools recovery (DONE, 2026-09-27)**: when ``tools`` are
-  sent to a model whose LM Studio TOOL path crashes the engine, `chat` detects
-  it (`_is_tool_path_engine_error`: peg-native grammar, ``bad allocation``/
-  out-of-memory, ``channel error``, ``terminated``, engine predict stream/request
-  failure) and retries the SAME prompt WITHOUT tools so the turn completes as
-  plain chat — then remembers the model in `_tools_unsupported` so later turns
-  skip the doomed attempt.  Proven live with `llama-4-scout-17b-16e-instruct`:
-  with tools the engine dies (`bad allocation`/`terminated`), without tools the
-  full agent system prompt answers fine; LM Studio's own chat works because it
-  sends no tools.  `_engine_server_error` EXCLUDES peg/OOM from transient
-  retries (deterministic).  If no tools were sent or the no-tools retry also
-  fails, the error propagates and the failover chain takes over.  Server-side
-  root cause is a llama.cpp/LM Studio parser/alloc bug; mitigations are a newer
-  LM Studio / higher quant (Q4_K_XL, not Q4_K_S).  Tests:
+- **Tool-path failure = FAIL FAST, never drop tools (DONE, 2026-09-28)**:
+  when ``tools`` are sent to a model whose LM Studio TOOL path crashes the
+  engine, `chat` detects it (`_is_tool_path_engine_error`: peg-native grammar,
+  ``channel error``, ``terminated``, engine predict stream/request failure) and
+  returns a FAILOVER-WORTHY error built by `_tool_unsupported_error` instead of
+  retrying the same prompt without tools.  The earlier drop-tools recovery
+  (2026-09-27) was removed: a tool-less reply is indistinguishable from a
+  finished task (the model writes "I created the file" in prose while no tool
+  ever ran), so the degradation HID the failure — it is what made the
+  ``inkling-2-mini-abliterated-fit`` subagent appear to finish without acting.
+  The model is remembered in `_tools_unsupported`, and later tool-using turns
+  short-circuit to the same error with NO request sent; plain chat (no tools)
+  still works.  `is_connection_failure` matches the
+  ``cannot use tools in this setup`` marker so the chain reaches a tool-capable
+  model.  `_engine_server_error` EXCLUDES peg/OOM from transient retries
+  (deterministic).  Server-side root cause is a llama.cpp/LM Studio parser bug;
+  mitigations are a newer LM Studio / higher quant (Q4_K_XL, not Q4_K_S).
+  Live-proof context: with `llama-4-scout-17b-16e-instruct` the engine dies on
+  tools (`bad allocation`/`terminated`).  Tests:
   `tests/test_llm_retry_policy.py::TestToolGrammarRecovery`,
-  `::TestToolPathDropTools`.
+  `::TestToolPathEngineFailure`.
 - **Engine OOM recovery (DONE, 2026-09-27)**: `LMStudioProvider._open_chat`
   detects a `std::bad_alloc` engine 400 (`_is_engine_oom_error`: "bad
   allocation"/"out of memory"/...) and raises a RuntimeError with an actionable

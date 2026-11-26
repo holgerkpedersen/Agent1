@@ -6208,5 +6208,65 @@
     "status": "active",
     "category": "autonomous",
     "source": "agent"
+  },
+  {
+    "id": "295",
+    "date": "2026-11-26T15:19:02+00:00",
+    "title": "Change agent_core/llm/provider.py",
+    "context": "Edited C:\\Dev\\Agent1\\agent_core\\llm\\provider.py [verify] py_compile ✓ [verify] ruff ✓",
+    "decision": "edit modified agent_core/llm/provider.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "agent_core/llm/provider.py"
+    ],
+    "tags": [
+      "autonomous",
+      "edit"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "296",
+    "date": "2026-11-26T15:20:26+00:00",
+    "title": "Change model_catalog.json",
+    "context": "Edited C:\\Dev\\Agent1\\model_catalog.json",
+    "decision": "edit modified model_catalog.json without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "model_catalog.json"
+    ],
+    "tags": [
+      "autonomous",
+      "edit"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "297",
+    "date": "2026-11-26T15:27:35+00:00",
+    "title": "Change tests/test_llm_retry_policy.py",
+    "context": "Edited C:\\Dev\\Agent1\\tests\\test_llm_retry_policy.py [verify] py_compile ✓ [verify] ruff ✓",
+    "decision": "edit modified tests/test_llm_retry_policy.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "tests/test_llm_retry_policy.py"
+    ],
+    "tags": [
+      "autonomous",
+      "edit"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
   }
 ]

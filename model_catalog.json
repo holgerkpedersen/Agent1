@@ -19,6 +19,7 @@
   },
   "_routing": {
     "opencode": "opencode",
+    "zen/": "opencode",
     "openrouter": "openrouter",
     "lemonade": "lemonade",
     "llama/": "llama",
