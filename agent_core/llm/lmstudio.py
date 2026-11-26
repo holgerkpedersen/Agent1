@@ -128,8 +128,10 @@ def _is_tool_grammar_error(detail: str) -> bool:
     not match the grammar (observed live: ``llama-4-scout-17b-16e-instruct``)
     fails with "The model produced output that does not match the expected
     peg-native format" (the engine wraps it as a 500 inside an HTTP 400).
-    This is DETERMINISTIC for a given payload, so retrying it verbatim is
-    wasted — the caller retries the request WITHOUT tools instead.
+    This is DETERMINISTIC for a given payload, so neither a verbatim retry nor
+    a tool-less retry can recover the turn: the request fails fast through
+    :func:`_tool_unsupported_error` so the failover chain reaches a model that
+    can call tools.
     """
     low = (detail or "").lower()
     return "peg" in low and ("native" in low or "format" in low or "grammar" in low)
@@ -141,9 +143,11 @@ def _is_tool_path_engine_error(text: Any) -> bool:
     When ``tools`` are sent, LM Studio builds its tool parser/grammar; a model
     whose tool format is unsupported (observed: ``llama-4-scout-17b-16e-instruct``)
     fails there with a peg error, a ``channel error`` or a predict ``fetch
-    failed`` — while the SAME prompt WITHOUT tools succeeds.  Dropping tools and
-    retrying recovers the turn (degraded to plain chat), which is exactly what
-    LM Studio's own chat UI does (it sends no tools).
+    failed`` — while the SAME prompt WITHOUT tools succeeds.  That makes a
+    tool-less retry *possible*, but it is NOT taken: it would answer a
+    tool-using turn in prose while no tool ever ran, so the turn instead fails
+    fast through :func:`_tool_unsupported_error` and the failover chain picks a
+    tool-capable model.
 
     An OUT-OF-MEMORY is deliberately NOT one of these: dropping tools cannot
     make a model that does not fit fit.  It used to match here because
@@ -575,8 +579,11 @@ class LMStudioProvider:
         #: Last printed status label — printed once per session and only
         #: re-printed when it changes (model/profile/temperature/tokens).
         self._last_label: str | None = None
-        #: Models whose LM Studio TOOL path crashes the engine (once detected,
-        #: their requests omit tools entirely — LM Studio's own chat sends none).
+        #: Models whose LM Studio TOOL path crashes the engine.  Once detected,
+        #: a tool-USING turn for that model is refused without a request at all
+        #: (it fails over to a tool-capable model) — its request is never
+        #: re-sent without tools, because a prose answer would look like a
+        #: completed task while no tool ever ran.
         self._tools_unsupported: set[str] = set()
         #: Real context window (tokens) of the ACTIVE model, extracted once
         #: from the native /api/v1/models catalog (loaded-instance config,

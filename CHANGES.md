@@ -1,3 +1,13 @@
+## 2026-11-26 - docs(llm): the tool-path docstrings stop teaching the retry-without-tools fallback
+
+**Change**: three stale docstrings in `agent_core/llm/lmstudio.py` were corrected to describe the fail-fast contract the code has enforced since the fix below. `_is_tool_grammar_error` (line 119) said "the caller retries the request WITHOUT tools instead"; `_is_tool_path_engine_error` (line 140) said "dropping tools and retrying recovers the turn (degraded to plain chat), which is exactly what LM Studio's own chat UI does"; and the `_tools_unsupported` attribute comment (line 582) said "their requests omit tools entirely". All three now state that the turn fails fast through `_tool_unsupported_error()` and fails over to a tool-capable model.
+
+**Reason**: the comments contradicted the code, and in the worst direction. A reader (human or agent) who trusted `_is_tool_path_engine_error`'s docstring would conclude that a tool-less retry is the intended recovery and could reintroduce it as a "regression fix" — the exact downgrade that produced a completed-looking turn in this session. Comments are the cheapest place for a rejected design to survive; the code said "never degrade" while its own docstring advertised degrading as already-working behaviour.
+
+**Files**: `agent_core/llm/lmstudio.py`, `CHANGES.md`.
+
+**Verification**: documentation-only, no behaviour touched. `python -m pytest tests/test_llm_retry_policy.py tests/test_failover_chain.py -q --no-cov` -> `40 passed in 3.99s`, including `test_peg_error_fails_fast_instead_of_dropping_tools`, which pins the behaviour the new text describes. `python -m ruff check agent_core/llm/lmstudio.py` -> `All checks passed!`. A repo-wide search for `without tools|drop tools|dropping tools|omit tools` over `*.md` now returns only `AGENTS.md:669-674` (which documents the fail-fast contract) and the `CHANGES.md` history — no remaining text advertises the fallback. File encoding verified as clean UTF-8 (39 em-dashes, no replacement characters) after the edits.
+
 ## 2026-11-26 - fix(issues): the ledger's `[note]` trail follows the same rule as the card path
 
 **Change**: `resolve()` (`harnessfix/issues.py:642`) and `update_issue()` (line 683) now append their note through `kanban_bridge._with_evidence_note` (imported at line 25), at lines 662 and 726, instead of the unconditional `f"{evidence}\n[note] {note}"` f-string each built for itself. The two spellings of one rule are now one function: a note the record already carries is skipped, and the empty case is normalised. This closes the follow-up recorded in the entry below.
