@@ -6328,5 +6328,45 @@
     "status": "active",
     "category": "autonomous",
     "source": "agent"
+  },
+  {
+    "id": "301",
+    "date": "2026-11-26T18:45:40+00:00",
+    "title": "Change harnessfix/issues.py",
+    "context": "Edited C:\\Dev\\Agent1\\harnessfix\\issues.py [verify] py_compile ✓ [verify] ruff style 1 (advisory - do not edit again just for formatting): issues.py:25: F401 [*] `.kanban_bridge._with_evidence_note` im",
+    "decision": "edit modified harnessfix/issues.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "harnessfix/issues.py"
+    ],
+    "tags": [
+      "autonomous",
+      "edit"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "302",
+    "date": "2026-11-26T18:46:08+00:00",
+    "title": "Change tests/test_issues_ledger.py",
+    "context": "Edited C:\\Dev\\Agent1\\tests\\test_issues_ledger.py [verify] py_compile ✓ [verify] ruff ✓",
+    "decision": "edit modified tests/test_issues_ledger.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "tests/test_issues_ledger.py"
+    ],
+    "tags": [
+      "autonomous",
+      "edit"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
   }
 ]

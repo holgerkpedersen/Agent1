@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from . import kanban_junk
+from .kanban_bridge import _with_evidence_note
 
 logger = logging.getLogger(__name__)
 
@@ -658,7 +659,7 @@ def resolve(
     it["status"] = disposition
     it["resolved_at"] = _now() if disposition in RESOLVED_STATUSES else None
     if note:
-        it["evidence"] = f"{it.get('evidence', '')}\n[note] {note}".strip()
+        it["evidence"] = _with_evidence_note(str(it.get("evidence") or ""), note)
 
     # Release this issue's claim on the card it belongs to.  Without this the
     # claim outlives the work: ``release_card`` has no other automatic caller,
@@ -694,7 +695,9 @@ def update_issue(
     Only fields explicitly provided (not ``None``) are touched, so a partial
     update never clobbers a field the caller did not intend to change.  A
     ``note`` is appended to ``evidence`` as a ``[note]`` line (matching
-    ``resolve``), so the trail stays chronological.
+    ``resolve``), so the trail stays chronological.  Both paths share
+    ``kanban_bridge._with_evidence_note``: a note the record already carries is
+    not appended twice, so a repeated update cannot duplicate the trail.
 
     When ``emit_child_card`` is set and the issue is card-attributable, a
     ``child_card_create`` is enqueued describing this milestone, so the board
@@ -720,7 +723,7 @@ def update_issue(
             # Re-opening a previously resolved item clears the terminal stamp.
             it["resolved_at"] = None
     if note:
-        it["evidence"] = f"{it.get('evidence', '')}\n[note] {note}".strip()
+        it["evidence"] = _with_evidence_note(str(it.get("evidence") or ""), note)
     it["updated_at"] = _now()
 
     # The child card only makes sense for work-on-card issues; _emit_child_card_for

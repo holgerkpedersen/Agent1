@@ -462,3 +462,80 @@ def test_save_issues_leaves_healthy_ledger_alone(tmp_path: Path) -> None:
     )
     assert list(tmp_path.glob(".issues.json.corrupt-*")) == []
     assert len(issue_store.load_issues(ledger)) == 1
+
+
+# ── the [note] trail: one rule, shared with the kanban bridge ───────────────
+
+
+def _quiet_issue(tmp_path: Path) -> dict:
+    """A real issue record with sync suppressed (no outbox traffic)."""
+    return issue_store.make_issue(
+        "cat",
+        "duplicate handler in report.py",
+        ["report.py:11"],
+        ledger_path=tmp_path / ".issues.json",
+    )
+
+
+def test_resolve_twice_with_the_same_note_does_not_duplicate_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A repeated ``resolve`` must not stack the same ``[note]`` line.
+
+    ``resolve`` used to append its note unconditionally, so any caller that
+    re-resolved an issue (a retry, a resumed session, a sync echo) wrote the
+    same observation into the record again.  The trail is permanent, so the
+    duplicate is permanent too.  It now shares
+    ``kanban_bridge._with_evidence_note`` with the card path, so one rule
+    governs both spellings.
+    """
+    monkeypatch.setattr(issue_store, "_should_sync", lambda: False)
+    issue = _quiet_issue(tmp_path)
+    issues = [issue]
+
+    for _ in range(3):
+        assert issue_store.resolve(issues, issue["id"], "resolved", note="done") is True
+
+    assert issue["evidence"] == "[note] done"
+    assert issue["evidence"].count("done") == 1
+
+
+def test_update_issue_repeats_no_note_but_keeps_a_new_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deduplication must not swallow information: a *new* note still appends.
+
+    Pins both halves of the rule for ``update_issue`` -- the same milestone
+    reported twice stays a single line, while a different milestone is still
+    recorded once, in order.
+    """
+    monkeypatch.setattr(issue_store, "_should_sync", lambda: False)
+    issue = _quiet_issue(tmp_path)
+    issues = [issue]
+
+    for _ in range(2):
+        ok, _ = issue_store.update_issue(issues, issue["id"], note="halfway")
+        assert ok
+    ok, _ = issue_store.update_issue(issues, issue["id"], note="done")
+    assert ok
+
+    assert issue["evidence"].splitlines() == ["[note] halfway", "[note] done"]
+
+
+def test_note_with_non_string_evidence_never_writes_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A ``None`` evidence field must not leak the literal text ``None``.
+
+    The old f-string interpolated the missing value, so an issue whose
+    ``evidence`` was ``None`` gained a trail starting with ``None\\n[note] ...``.
+    The shared helper normalises the empty case instead.
+    """
+    monkeypatch.setattr(issue_store, "_should_sync", lambda: False)
+    issue = _quiet_issue(tmp_path)
+    issue["evidence"] = None
+
+    ok, _ = issue_store.update_issue([issue], issue["id"], note="done")
+    assert ok
+    assert issue["evidence"] == "[note] done"
+    assert "None" not in issue["evidence"]
