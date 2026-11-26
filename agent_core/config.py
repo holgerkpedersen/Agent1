@@ -24,7 +24,7 @@ from .timeout import COMPILATION_CHECK_TIMEOUT, SEARCH_COMMAND_TIMEOUT
 logger = logging.getLogger(__name__)
 
 #: Default LM Studio server port (OpenAI-compatible + management REST API).
-DEFAULT_LMSTUDIO_PORT: Final[int] = 1235
+DEFAULT_LMSTUDIO_PORT: Final[int] = 1234
 
 
 def lmstudio_port() -> int:

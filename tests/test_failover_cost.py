@@ -2,8 +2,8 @@
 
 No real network/endpoints are touched: providers are stubbed and the pricing
 table is monkeypatched, so the suite is deterministic and offline.  Model
-names come from ``_helpers`` (``_default_zen_free_model`` / ``_default_llm``)
-which honor ``AGENT_ZEN_FREE_MODEL`` / ``AGENT_OPENCODE_MODEL`` when set.
+names come from ``_helpers`` (``_default_llm``), which honors
+``AGENT_OPENCODE_MODEL`` when set.
 """
 
 from __future__ import annotations
@@ -14,7 +14,16 @@ import pytest
 
 from agent_core.llm.pricing import cost_per_token, estimate_cost
 from agent_core.llm.provider import FailoverProvider
-from tests._helpers import _default_llm, _default_zen_free_model
+from tests._helpers import _default_llm
+
+
+def _free_model() -> str:
+    """A keyless free-tier id (``-free`` suffix -> priced at 0.0)."""
+    return "opencode-go/deepseek-v4-flash:free"
+
+
+def _paid_model() -> str:
+    return _default_llm()
 
 
 class _Stub:
@@ -34,9 +43,9 @@ class _Stub:
         self.call_count += 1
         if self._fail:
             return (
-                f"[Error: opencode-zen free model {self.model_name} is "
-                "currently unavailable on the backend. Try another free model "
-                f"with 'model opencode-zen/<id>-free' (e.g. {self.model_name}). "
+                f"[Error: free model {self.model_name} is currently "
+                "unavailable on the backend. Try another free model "
+                f"with 'model <provider>:<id>-free' (e.g. {self.model_name}). "
                 f"Checked: {self.model_name}.]"
             )
         return f"ok:{self.name}"
@@ -51,16 +60,8 @@ class _Stub:
         pass
 
 
-def _free_model() -> str:
-    return _default_zen_free_model()
-
-
-def _paid_model() -> str:
-    return _default_llm()
-
-
 def test_cost_per_token_free_tiers_zero() -> None:
-    """Free/zen and local providers are always cost 0.0 (cheapest wins)."""
+    """Free-tier and local providers are always cost 0.0 (cheapest wins)."""
     assert cost_per_token(_free_model(), "opencode") == 0.0
     assert cost_per_token("opencode-go/deepseek-v4-flash:free", "opencode") == 0.0
     assert cost_per_token("anything", "lmstudio") == 0.0
@@ -86,11 +87,11 @@ def test_cost_per_token_paid_nonzero(monkeypatch) -> None:
 
 def test_ordered_strategy_preserves_chain() -> None:
     """Default 'ordered' strategy keeps the configured provider order."""
-    zen = _Stub("zen", _free_model())
+    free = _Stub("free", _free_model())
     go = _Stub("go", _paid_model())
-    fp = FailoverProvider([zen, go], model_name=_free_model(), strategy="ordered")
+    fp = FailoverProvider([free, go], model_name=_free_model(), strategy="ordered")
     assert [type(p).__name__ for p in fp.providers] == ["_Stub", "_Stub"]
-    assert fp.providers[0] is zen
+    assert fp.providers[0] is free
     assert fp.providers[1] is go
 
 
@@ -110,14 +111,14 @@ def test_cheapest_strategy_orders_by_cost(monkeypatch) -> None:
     )
     # Order the inputs as paid-then-free; cheapest must try free first.
     go = _Stub("go", paid)
-    zen = _Stub("zen", _free_model())
-    fp = FailoverProvider([go, zen], model_name=_free_model(), strategy="cheapest")
-    assert fp.providers[0] is zen
+    free = _Stub("free", _free_model())
+    fp = FailoverProvider([go, free], model_name=_free_model(), strategy="cheapest")
+    assert fp.providers[0] is free
     assert fp.providers[1] is go
 
 
 def test_cheapest_strategy_prefers_free_over_paid(monkeypatch) -> None:
-    """With a paid go and free zen, cheapest tries zen (cost 0) first."""
+    """With a paid go model and a free model, cheapest tries the free one first."""
     paid = _paid_model()
     monkeypatch.setattr(
         "agent_core.llm.pricing.BASELINE_PRICES",
@@ -131,11 +132,11 @@ def test_cheapest_strategy_prefers_free_over_paid(monkeypatch) -> None:
         },
     )
     go = _Stub("go", paid, fail=False)
-    zen = _Stub("zen", _free_model(), fail=False)
-    fp = FailoverProvider([go, zen], model_name=_free_model(), strategy="cheapest")
+    free = _Stub("free", _free_model(), fail=False)
+    fp = FailoverProvider([go, free], model_name=_free_model(), strategy="cheapest")
     out = asyncio.run(fp.chat([{"role": "user", "content": "hi"}]))
-    assert out == f"ok:{zen.name}"
-    assert zen.call_count == 1
+    assert out == f"ok:{free.name}"
+    assert free.call_count == 1
     assert go.call_count == 0
 
 
@@ -153,13 +154,13 @@ def test_cheapest_falls_over_on_failure(monkeypatch) -> None:
             }
         },
     )
-    # zen is cheapest (cost 0) but failing; go is next and must answer.
-    zen = _Stub("zen", _free_model(), fail=True)
+    # The free model is cheapest (cost 0) but failing; go is next and must answer.
+    free = _Stub("free", _free_model(), fail=True)
     go = _Stub("go", paid, fail=False)
-    fp = FailoverProvider([go, zen], model_name=_free_model(), strategy="cheapest")
+    fp = FailoverProvider([go, free], model_name=_free_model(), strategy="cheapest")
     out = asyncio.run(fp.chat([{"role": "user", "content": "hi"}]))
     assert out == f"ok:{go.name}"
-    assert zen.call_count == 1
+    assert free.call_count == 1
     assert go.call_count == 1
 
 

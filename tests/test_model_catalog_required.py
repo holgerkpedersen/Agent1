@@ -34,6 +34,7 @@ def _valid_catalog() -> dict:
             "model": "model-a",
             "opencode_model": "opencode-go/model-b",
             "openrouter_model": "openrouter/some/model:free",
+            "jev_model": "qwen2.5-coder-1.5b-instruct",
             "llm_chain": ["opencode:model-b", "lmstudio", "llama"],
             "opencode_server_url": "http://127.0.0.1:4096",
             "opencode_api_base": "https://example.invalid/zen/go/v1",
@@ -44,6 +45,9 @@ def _valid_catalog() -> dict:
         },
         "_routing": {"model-a": "lmstudio", "opencode": "opencode"},
         "_zen_free_tier_prefixes": ["opencode-zen/", "zen/"],
+        "_thinking_gates": {
+            "nemotron": {"/think": "/think", "/no_think": "/no_think"}
+        },
         "model-a": {"desc": "a", "max_tokens": 1000},
     }
 
@@ -125,7 +129,6 @@ class TestCatalogLoader:
         [
             "opencode_server_url",
             "opencode_api_base",
-            "opencode_zen_api_base",
             "llama_base_url",
             "openrouter_api_base",
             "lemonade_base_url",
@@ -140,15 +143,6 @@ class TestCatalogLoader:
         _write_catalog(p, data)
         monkeypatch.setattr(constants, "_MODEL_CATALOG_PATH", str(p))
         with pytest.raises(RuntimeError, match=f"_defaults\\.{key}"):
-            constants._load_model_catalog()
-
-    def test_missing_zen_prefixes_raises(self, tmp_path, monkeypatch):
-        p = tmp_path / "model_catalog.json"
-        data = _valid_catalog()
-        del data["_zen_free_tier_prefixes"]
-        _write_catalog(p, data)
-        monkeypatch.setattr(constants, "_MODEL_CATALOG_PATH", str(p))
-        with pytest.raises(RuntimeError, match="_zen_free_tier_prefixes"):
             constants._load_model_catalog()
 
     def test_non_object_thinking_gates_raises(self, tmp_path, monkeypatch):
@@ -213,11 +207,3 @@ class TestDefaultsFromCatalog:
         assert constants.DEFAULT_OPENCODE_MODEL == "env-model-b"
         assert constants.DEFAULT_OPENROUTER_MODEL == "env-model-c"
 
-    def test_zen_prefixes_come_from_catalog(self, monkeypatch):
-        for var in ("AGENT_MODEL", "AGENT_OPENCODE_MODEL", "AGENT_OPENROUTER_MODEL"):
-            monkeypatch.delenv(var, raising=False)
-        importlib.reload(constants)
-        # Whatever the catalog says, the code must mirror it exactly.
-        with open(constants._MODEL_CATALOG_PATH, "r", encoding="utf-8") as f:
-            catalog = json.load(f)
-        assert constants._ZEN_TIER_PREFIXES == tuple(catalog["_zen_free_tier_prefixes"])

@@ -19,7 +19,6 @@
   },
   "_routing": {
     "opencode": "opencode",
-    "zen": "opencode",
     "openrouter": "openrouter",
     "lemonade": "lemonade",
     "llama/": "llama",
@@ -31,7 +30,10 @@
     "prism": "lmstudio",
     "lmstudio": "lmstudio"
   },
-  "_zen_free_tier_prefixes": ["opencode-zen/", "zen/"],
+  "_zen_free_tier_prefixes": [
+    "opencode-zen/",
+    "zen/"
+  ],
   "_thinking_gates": {
     "nemotron": {"/think": "/think", "/no_think": "/no_think"}
   },

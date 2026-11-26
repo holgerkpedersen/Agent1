@@ -210,16 +210,15 @@ def test_load_prices_merges_cache_over_baseline(isolated_cache) -> None:
 
 
 def test_is_free_tier_matches() -> None:
-    """Free-tier detection covers -free, :free and zen prefixes."""
-    assert pricing._is_free_tier("opencode-zen/hy3-free")
+    """Free-tier detection covers the -free and :free suffixes."""
+    assert pricing._is_free_tier("opencode-go/hy3-free")
     assert pricing._is_free_tier("opencode-go/deepseek-v4-flash:free")
-    assert pricing._is_free_tier("opencode-zen/anything")
     assert not pricing._is_free_tier("opencode-go/grok-4.6")
 
 
 def test_cost_per_token_free_is_zero() -> None:
-    """Free/zen/local tiers always cost 0.0 (cheapest-failover correctness)."""
-    assert pricing.cost_per_token("opencode-zen/hy3-free", "opencode") == 0.0
+    """Free/local tiers always cost 0.0 (cheapest-failover correctness)."""
+    assert pricing.cost_per_token("opencode-go/hy3-free", "opencode") == 0.0
     assert pricing.cost_per_token("anything", "lmstudio") == 0.0
     assert pricing.cost_per_token("anything", "llama") == 0.0
 

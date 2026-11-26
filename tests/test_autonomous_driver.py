@@ -351,7 +351,7 @@ def test_commit_stages_only_repair_files_not_blanket_add(monkeypatch, tmp_path):
         git_calls.append(args)
         if args[:1] == ["status"] and "--porcelain" in args:
             # Only the repair's file is reported as changed; a scratch file
-            # (_tmp_zen_out.txt) exists in the real tree but must be ignored.
+            # (_tmp_scratch_out.txt) exists in the real tree but must be ignored.
             if "tool_loop.py" in args[-1]:
                 return subprocess.CompletedProcess(
                     args, 0, " M agent_core/llm/tool_loop.py\n"
