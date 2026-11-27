@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
@@ -126,4 +127,60 @@ def test_vanished_recorded_workspace_falls_back(tmp_path: Path, capsys) -> None:
     assert Path(selection.workspace) != ws
     assert Path(selection.workspace).is_dir()
     assert "no longer exists" in capsys.readouterr().out
+
+
+# ── the real ``--workspace`` flag, not just the keyword ─────────────────────
+#
+# Every test above passes ``workspace=`` as a keyword, so none of them prove
+# that ``python agent.py --workspace PATH`` is wired to the same selection.
+# The flag is the documented entry point (``--help``), so it needs its own
+# coverage: a regression that drops it from ``build_arg_parser`` would leave
+# all of the keyword tests green.
+
+
+def test_workspace_flag_is_parsed(tmp_path: Path) -> None:
+    ws = _ws_dir(tmp_path, "checkout")
+    ns = build_arg_parser().parse_known_args(
+        ["--new-session", "work", "--workspace", str(ws)]
+    )[0]
+    assert Path(ns.workspace) == ws
+
+
+def test_workspace_flag_selects_and_records(tmp_path: Path) -> None:
+    ws = _ws_dir(tmp_path, "checkout")
+    selection = parse_and_activate(["--new-session", "work", "--workspace", str(ws)])
+    assert not selection.should_exit
+    assert Path(selection.workspace) == ws
+
+    from agent_core.session.store import load_meta
+
+    assert Path(load_meta("work").workspace) == ws
+
+
+def test_workspace_flag_beats_keyword_hint(tmp_path: Path) -> None:
+    # The namespace value wins over the caller's default hint, so an explicit
+    # flag can never be silently overridden by a stale default.
+    flagged = _ws_dir(tmp_path, "flagged")
+    hinted = _ws_dir(tmp_path, "hinted")
+    selection = parse_and_activate(
+        ["--new-session", "work", "--workspace", str(flagged)],
+        workspace=str(hinted),
+    )
+    assert Path(selection.workspace) == flagged
+
+
+def test_bad_workspace_flag_is_ignored_not_silently_used(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    ghost = tmp_path / "does-not-exist"
+    with caplog.at_level(logging.WARNING):
+        selection = parse_and_activate(
+            ["--new-session", "work", "--workspace", str(ghost)]
+        )
+    assert not selection.should_exit
+    # The failure mode this guards: a typo'd path quietly becoming the default
+    # with no signal at all.
+    assert Path(selection.workspace).is_dir()
+    assert str(ghost) not in str(selection.workspace)
+    assert "is not a directory; ignoring it" in caplog.text
 
