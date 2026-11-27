@@ -127,7 +127,7 @@ class TestPlanAnswerPersistence:
         assert run_dirs, "expected a fresh .docs run folder"
         out = run_dirs[0] / "plan_proposed.md"
         text = out.read_text(encoding="utf-8")
-        assert "# Proposed plan" in text
+        assert "# Proposed Plan" in text
         assert "1. Do the thing" in text
         assert "build mode" in text
 

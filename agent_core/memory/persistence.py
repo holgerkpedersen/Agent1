@@ -52,7 +52,7 @@ def _persist_plan_answer(agent: "Agent", plan_text: str) -> None:
 
         out = new_run_dir(agent.workspace) / "plan_proposed.md"
         out.write_text(
-            f"# Proposed plan\n\n_Generated in plan mode on "
+            f"# Proposed Plan\n\n_Generated in plan mode on "
             f"{datetime.now():%Y-%m-%d %H:%M}. Review before applying "
             f"— switch to build mode to implement._\n\n{plan_text}\n",
             encoding="utf-8",

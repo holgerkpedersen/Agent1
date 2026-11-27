@@ -99,7 +99,13 @@ class PlanCommand(Command):
                 "role": "system",
                 "content": "You are an expert software architect. Based on the code "
                 "analysis provided, create a detailed coding plan with specific "
-                "implementation steps, prioritized by impact and dependencies.",
+                "implementation steps, prioritized by impact and dependencies.\n"
+                "End the plan with a '## Tasks' section of one bullet per task, "
+                "in the form '- [T1] do the thing (role: implementer)', adding "
+                "'deps: T1' when a task needs an earlier one. Use only these "
+                "roles: implementer, tester, reviewer, debugger, integrator, "
+                "researcher, planner, security, documenter. 'plan exec' parses "
+                "those lines literally, so keep them free of extra formatting.",
             },
             {
                 "role": "user",
@@ -109,7 +115,10 @@ class PlanCommand(Command):
         ]
         plan = await agent.llm.chat(messages)
 
-        content = f"# Coding Plan\n\n{plan}"
+        # The title must satisfy the same schema ``plan exec`` validates
+        # (``# Proposed Plan``, case-insensitively) or the command halts on
+        # its own output.  Itemize so the task parser can consume it.
+        content = f"# Proposed Plan\n\n{plan}"
         result = check_doc("plan", content, agent.workspace)
         summarize(result, "plan")
         if not result.clean and not force:

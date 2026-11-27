@@ -105,14 +105,13 @@ def validate_plan_markdown(content: str) -> tuple[bool, List[str]]:
     errors = []
     lines = [ln.strip() for ln in content.splitlines() if ln.strip()]
 
-    # Check required headings
-    found_headings = set()
-    for line in lines:
-        if line.startswith("#"):
-            found_headings.add(line)
+    # Check required headings. Compared case-insensitively: the task parser
+    # already matches ``## Tasks`` regardless of case, and a plan must not be
+    # rejected over the capitalisation of its title.
+    found_headings = {line.lower() for line in lines if line.startswith("#")}
 
     for heading in _REQUIRED_HEADINGS:
-        if not any(h.startswith(heading) for h in found_headings):
+        if not any(h.startswith(heading.lower()) for h in found_headings):
             errors.append(f"Missing required heading: {heading}")
 
     # Check for at least one task

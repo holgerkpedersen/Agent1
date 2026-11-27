@@ -120,6 +120,17 @@ def plan_mode_system_suffix() -> str:
         "- Do not attempt or promise changes: research the workspace, then "
         "end the turn with a concrete, file-by-file implementation plan as "
         "your final text answer.\n"
+        "- End that answer with a '## Tasks' section in exactly this form, so "
+        "'plan exec' can run it:\n"
+        "    ## Tasks\n"
+        "    - [T1] do the thing (role: implementer)\n"
+        "    - [T2] next step, needs T1 (role: tester) deps: T1\n"
+        "  One line per task, one `- [T<n>]` bullet per task, no nested "
+        "bullets. Name the role only from: implementer, tester, reviewer, "
+        "debugger, integrator, researcher, planner, security, documenter. "
+        "Add 'deps: <ids>' when a task needs an earlier one. Keep those "
+        "lines free of extra formatting — the executor parses them "
+        "literally.\n"
         "- The user applies the plan later by switching back with "
         "'mode build'."
     )
@@ -136,5 +147,6 @@ def plan_mode_turn_note() -> str:
     return (
         "[PLAN MODE] Read-only research turn: propose a plan, change "
         "nothing. Mutating tools are blocked; finish with the plan as "
-        "text."
+        "text, ending in a '## Tasks' section of '- [T1] ... (role: "
+        "implementer)' lines so 'plan exec' can run it."
     )

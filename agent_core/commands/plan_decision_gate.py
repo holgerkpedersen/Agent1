@@ -33,6 +33,28 @@ _EXTENSION_ONLY_RE = re.compile(r"^\.\w+$")
 #: matching inside ``3007`` while still matching "decision 007".
 _ID_BOUNDARY = r"[0-9A-Za-z_-]"
 
+#: Statuses that no longer constrain a plan, plus the one that does.  These
+#: mirror ``agent_core.decisions`` (``STATUS_ACTIVE`` / ``_STATUSES``);
+#: duplicated as literals because ``agent_core.decisions`` imports the commands
+#: package, so importing it here would close an import cycle.
+_STATUS_ACTIVE = "active"
+_KNOWN_STATUSES = {"active", "superseded", "archived", "void"}
+
+
+def _is_active(decision: dict[str, Any]) -> bool:
+    """True when *decision* still constrains a plan.
+
+    Same normalization as :func:`agent_core.decisions.load_decisions`: a
+    MISSING, empty, or unrecognised status counts as ``active``.  Treating only
+    an explicit ``"active"`` as live silently disabled the gate
+    (``decisions_checked: 0``) for any hand-written or older
+    ``.decisions.json``.
+    """
+    status = str(decision.get("status") or "").strip().lower()
+    if status not in _KNOWN_STATUSES:
+        return True
+    return status == _STATUS_ACTIVE
+
 
 def _is_path_like(token: str) -> bool:
     """True when *token* plausibly names a file, not just an extension.
@@ -103,8 +125,9 @@ class PlanDecisionGate:
                 raw = json.load(f)
             # Only active decisions constrain plans; superseded/archived/void
             # are resolved and no longer authoritative (same rule as
-            # :func:`decisions_as_system_prompt`).
-            self._decisions = [d for d in raw if d.get("status") == "active"]
+            # :func:`decisions_as_system_prompt`).  See :func:`_is_active` for
+            # why a missing/unknown status counts as active.
+            self._decisions = [d for d in raw if _is_active(d)]
         except (json.JSONDecodeError, OSError):
             self._decisions = []
 
