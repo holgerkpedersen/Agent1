@@ -1,6 +1,6 @@
 # Plan — Stop relying on opencode-zen free models (quota-exhausted dead end)
 
-Status: **Tasks 1-9 implemented** (2026-11-27)
+Status: **Tasks 1-12 implemented** (2026-11-27)
 Date: 2026-11-27
 
 >> Implementation note: ALL tasks are DONE. Tasks 1-3 (classify the quota 429
@@ -9,9 +9,11 @@ Date: 2026-11-27
 >> by `tests/test_zen_quota_classification.py` (14 tests). Tasks 4-7 (the cached
 >> tier-level `QuotaGuard` in `agent_core/llm/quota_guard.py`, the 0 s fast path,
 >> the suppressed rotation and the honest keyless catalog) plus the Task 8
->> regression suite live in `tests/unit/test_zen_quota_guard.py` (21 tests).
+>> regression suite live in `tests/unit/test_zen_quota_guard.py` (38 tests).
 >> Task 9 documentation landed in `agent_core/config.py` (caveat next to the zen
 >> settings), `README.md` ("Zen free tier (not recommended)") and `CHANGES.md`.
+>> Tasks 10-11 persist the verdict across restarts and clear it on a user model
+>> switch; Task 12 adds the explicit `model reset-quota [<tier>]` verb.
 >>
 >> One correction found while implementing Task 6: `chat()` must NOT gate the
 >> rotation on re-matching the returned text. The quota message is a friendly
@@ -280,6 +282,26 @@ no way out — the user who upgrades to a paid account would stay quarantined.
   (`llm/provider.py`, which persists the model that answered). That would
   un-quarantine a dead tier on every successful failover and re-introduce the
   wasted probe the whole plan removes. Only a *user* clears the block.
+
+### Task 12 — name the escape hatch: `model reset-quota` (implemented)
+
+Task 11 made a *model switch* clear the block, which couples two unrelated
+decisions: a user who has just subscribed had to change their selected model
+merely to re-probe a tier. This task makes the escape hatch explicit.
+
+- `ModelCommand.execute` (`agent_core/commands/model_cmd.py`) routes the verbs
+  `reset-quota`, `reset_quota` and `quota` to the new
+  `ModelCommand._handle_reset_quota` instead of letting them fall through to
+  `_switch_model` as a model *name*.
+- `_handle_reset_quota(rest)` prints the remaining cooldown and clears through
+  the public `quota_guard().reset()`: every tier by default, one tier when a
+  name is given (`model reset-quota opencode-zen`). It reports "nothing to
+  clear" rather than pretending to act.
+- `help_text` lists the new verb.
+- Pinned by 5 tests in `tests/unit/test_zen_quota_guard.py`
+  (`TestUserReselectClearsQuotaBlock`), including a routing regression: without
+  the dispatch branch, `reset-quota` was searched for in the catalogs as a model
+  name and cleared the block only as a side effect of the switch attempt.
 
 ### Task 9 — document the constraint where a user will hit it
 

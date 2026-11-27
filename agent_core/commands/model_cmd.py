@@ -113,9 +113,10 @@ class ModelCommand(Command):
     @property
     def help_text(self) -> str:
         return (
-            "model [pick|list|load|unload|reload|provider|profile|jev] - Show "
-            "and pick LLM models / manage providers ('model' alone = picker; "
-            "jev = the dedicated Jev decision model)"
+            "model [pick|list|load|unload|reload|provider|profile|jev|"
+            "reset-quota] - Show and pick LLM models / manage providers "
+            "('model' alone = picker; jev = the dedicated Jev decision model; "
+            "reset-quota = clear a persisted free-tier quota block)"
         )
 
     async def execute(self, args: list[str], agent: "Agent") -> bool:
@@ -136,6 +137,14 @@ class ModelCommand(Command):
 
         if sub == "provider":
             await self._handle_provider(rest, agent)
+            return True
+
+        if sub in ("reset-quota", "reset_quota", "quota"):
+            # `model reset-quota` — clear a persisted free-tier quota block.
+            # The explicit escape hatch for a user who has since subscribed (or
+            # whose cooldown should not be waited out). `model provider <name>`
+            # and picking a model already clear it implicitly; this names it.
+            self._handle_reset_quota(rest)
             return True
 
         if sub == "load":
@@ -1547,6 +1556,43 @@ class ModelCommand(Command):
         agent.llm.model_name = model
         persist_model_choice(model, provider=target)
         print(f"  Provider switched: {current} -> {target}  (model: {model})")
+
+    def _handle_reset_quota(self, rest: list[str]) -> None:
+        """``model reset-quota [<tier>]`` — clear a persisted quota block.
+
+        Picking a model or running ``model provider <name>`` already clears the
+        block implicitly.  This names the escape hatch explicitly, so a user who
+        has just subscribed (or who does not want to wait out a cooldown) can
+        re-probe a quarantined tier without changing their selection.  Without
+        it the only documented way out was ``reset()``, which no REPL verb
+        called.
+        """
+        from agent_core.llm.opencode_provider import ZEN_QUOTA_TIER
+        from agent_core.llm.quota_guard import quota_guard
+
+        guard = quota_guard()
+        tier = rest[0].strip().lower() if rest else None
+
+        if tier is not None:
+            was_blocked = guard.is_exhausted(tier)
+            guard.reset(tier)
+            if was_blocked:
+                print(f"  Cleared the '{tier}' quota block.")
+                print("  The next request will probe that tier again.")
+            else:
+                print(f"  '{tier}' was not blocked — nothing to clear.")
+            return
+
+        remaining = guard.remaining(ZEN_QUOTA_TIER)
+        guard.reset()
+        if remaining > 0:
+            print(
+                f"  Cleared the {ZEN_QUOTA_TIER} quota block "
+                f"({remaining:.0f}s of cooldown left)."
+            )
+        else:
+            print(f"  No {ZEN_QUOTA_TIER} quota block to clear.")
+        print("  The next request will probe the tier again.")
 
     async def _handle_jev(self, rest: list[str], agent: "Agent") -> None:
         """``model jev [<name>]`` — show or set the dedicated Jev model.

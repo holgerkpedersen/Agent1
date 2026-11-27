@@ -690,3 +690,92 @@ class TestUserReselectClearsQuotaBlock:
         written = json.loads((tmp_path / "model.json").read_text(encoding="utf-8"))
         assert written["model"] == "some-working-model"
         assert guard.is_exhausted(ZEN_QUOTA_TIER) is True
+
+    # -- `model reset-quota`: the explicit escape hatch ---------------------
+
+    def test_reset_quota_verb_clears_a_persisted_block(self, monkeypatch):
+        """The named escape hatch works WITHOUT changing the selection.
+
+        A user who subscribes mid-session may not want to switch models; before
+        this verb the only way to drop a persisted block was to re-pick one.
+        """
+        from agent_core.commands.model_cmd import ModelCommand
+
+        guard = quota_guard()
+        guard.mark_exhausted(ZEN_QUOTA_TIER)
+        assert guard.is_exhausted(ZEN_QUOTA_TIER) is True
+
+        out = io.StringIO()
+        monkeypatch.setattr("sys.stdout", out)
+        asyncio.run(ModelCommand().execute(["reset-quota"], self._agent()))
+
+        assert guard.is_exhausted(ZEN_QUOTA_TIER) is False
+        assert "Cleared" in out.getvalue()
+
+    def test_reset_quota_is_routed_as_a_verb_not_a_model_name(self, monkeypatch):
+        """Regression: without the dispatch branch 'reset-quota' became a MODEL.
+
+        It would fall through to ``_switch_model``, which searched the catalogs
+        for a model called "reset-quota" and cleared the block as a side effect
+        of the switch attempt — silently changing the user's model selection.
+        """
+        from agent_core.commands.model_cmd import ModelCommand
+
+        guard = quota_guard()
+        guard.mark_exhausted(ZEN_QUOTA_TIER)
+
+        called: list[list[str]] = []
+
+        async def _boom(args, agent):
+            called.append(list(args))
+
+        monkeypatch.setattr(ModelCommand, "_switch_model", _boom)
+        monkeypatch.setattr("sys.stdout", io.StringIO())
+        asyncio.run(ModelCommand().execute(["reset-quota"], self._agent()))
+
+        assert called == [], "reset-quota must not be treated as a model name"
+        assert guard.is_exhausted(ZEN_QUOTA_TIER) is False
+
+    def test_reset_quota_names_a_specific_tier(self, monkeypatch):
+        from agent_core.commands.model_cmd import ModelCommand
+
+        guard = quota_guard()
+        guard.mark_exhausted(ZEN_QUOTA_TIER)
+        guard.mark_exhausted("other-tier")
+
+        monkeypatch.setattr("sys.stdout", io.StringIO())
+        asyncio.run(
+            ModelCommand().execute(["reset-quota", ZEN_QUOTA_TIER], self._agent())
+        )
+
+        assert guard.is_exhausted(ZEN_QUOTA_TIER) is False
+        assert guard.is_exhausted("other-tier") is True
+
+    def test_reset_quota_reports_when_nothing_was_blocked(self, monkeypatch):
+        from agent_core.commands.model_cmd import ModelCommand
+
+        out = io.StringIO()
+        monkeypatch.setattr("sys.stdout", out)
+        asyncio.run(ModelCommand().execute(["reset-quota"], self._agent()))
+
+        assert "No " in out.getvalue() or "nothing to clear" in out.getvalue()
+
+    def test_reset_quota_clears_the_state_file(self, monkeypatch):
+        """The file must be rewritten, or a restart reloads the stale block."""
+        import json
+
+        from agent_core.commands.model_cmd import ModelCommand
+        from agent_core.llm.quota_guard import _session_state_path
+
+        guard = quota_guard()
+        guard.mark_exhausted(ZEN_QUOTA_TIER)
+        state = _session_state_path()
+        if not state or not __import__("os").path.exists(state):
+            pytest.skip("no session state path in this environment")
+
+        monkeypatch.setattr("sys.stdout", io.StringIO())
+        asyncio.run(ModelCommand().execute(["reset-quota"], self._agent()))
+
+        with open(state, "r", encoding="utf-8") as fh:
+            persisted = json.load(fh)
+        assert ZEN_QUOTA_TIER not in (persisted.get("tiers") or {})

@@ -1,3 +1,15 @@
+## 2026-11-27 - feat(zen): `model reset-quota` names the escape hatch
+
+**Change**: new `model reset-quota [<tier>]` subcommand. It dispatches to `ModelCommand._handle_reset_quota` (`agent_core/commands/model_cmd.py`), which reports the remaining cooldown and clears the persisted block through the public `quota_guard().reset()` — all tiers by default, one tier when named. It is routed as a VERB in `ModelCommand.execute` (aliases `reset_quota`, `quota`) and added to `help_text`.
+
+**Reason**: the previous fix made a user-initiated model switch clear the block, but that couples two decisions — a user who subscribes mid-session had to change their selected model just to re-probe a tier. Without the verb the only documented way out was `reset()`, which no REPL command called.
+
+**Files**: `agent_core/commands/model_cmd.py`, `tests/unit/test_zen_quota_guard.py`, `CHANGES.md`.
+
+**Verification**: `python -m pytest tests/unit/test_zen_quota_guard.py -q --no-cov` -> `38 passed` (5 new tests); `python -m pytest tests/test_chat_model_picker.py tests/test_zen_quota_classification.py tests/unit/test_zen_quota_guard.py -q --no-cov` -> `69 passed`; `python -m ruff check agent_core harnessfix fixcommand tests performance_dashboard` -> `All checks passed!`. One new test is a routing regression: without the dispatch branch `reset-quota` fell through to `_switch_model`, which searched the catalogs for a model of that name and cleared the block as a side effect while silently changing the user's selection.
+
+**Next**: none.
+
 ## 2026-11-27 - fix(zen): give a persisted quota block an escape hatch
 
 **Change**: a user-initiated model switch now clears the persisted quota verdict. `ModelCommand._switch_model` and `ModelCommand._handle_provider` (`agent_core/commands/model_cmd.py`) call the public `reset_quota_guard()` on entry, wrapped in `except Exception` so a guard problem can never block a legitimate switch. The automatic failover path deliberately does NOT reset: `llm/provider.py` persists the model that answered a failover, and resetting there would un-quarantine a dead tier on every successful failover, re-introducing the wasted probe the plan removes.
@@ -8,7 +20,7 @@
 
 **Verification**: `python -m pytest tests/unit/test_zen_quota_guard.py -q --no-cov` -> `33 passed`; the six related suites (`tests/unit/test_zen_quota_guard.py tests/test_zen_quota_classification.py tests/test_opencode_provider.py tests/test_model_helpers.py tests/test_model_picker.py tests/test_model_provider_selection.py`) -> `180 passed`. The new `TestUserReselectClearsQuotaBlock` drives the real `_switch_model` / `_handle_provider` entry points rather than a simulation, and was proven genuine by mutation: replacing the reset call with `pass` made exactly the two switch tests fail (`2 failed, 31 passed`), and the fix was then restored. Two defects were found while writing them: a first draft of the failover test stubbed the very `persist_model_choice` it claimed to guard (now drives the real function against a `tmp_path`), and the class leaked the process-wide guard's exhausted state into `tests/test_opencode_provider.py` (`TestZenFree*` failed only when run in the same process) — fixed with an autouse fixture that resets the singleton before and after each test.
 
-**Next**: expose `reset()` as a `model reset-quota` subcommand only if re-subscribing mid-run proves common; a model switch already covers the realistic case.
+**Next**: none — the explicit `model reset-quota` verb described in the entry above is now implemented.
 
 ## 2026-11-27 - fix(zen): a dead free tier now costs 0 s instead of a retry cascade
 
@@ -20,7 +32,7 @@
 
 **Verification**: `python -m pytest tests/unit/test_zen_quota_guard.py -q --no-cov` -> `21 passed`; `python -m pytest tests/unit/test_zen_quota_guard.py tests/test_zen_quota_classification.py tests/test_opencode_provider.py tests/test_model_helpers.py -q --no-cov` -> `136 passed`; failover regression `python -m pytest tests/test_failover_chain.py tests/test_failover_provider.py tests/test_model_provider_selection.py tests/test_openrouter_provider.py -q --no-cov` -> `87 passed`. The suite is hermetic (stubbed `/models`, injected clock, no live HTTP). Four tests initially failed and each caught a real defect or a wrong assumption: `chat()` was gating rotation on a text match that the friendly message no longer satisfies (fixed by reading the guard); a bare 429 must STAY retryable, unlike the quota body; the failover gate keys off `_CONNECTION_FAILURE_RE`, so the user-facing message must still trip it; and a fake `503 down` body did not match the real marker, so the outage test now uses `Service Unavailable`.
 
-**Next**: the guard skips a dead tier with zero HTTP in a fresh process too (see the entry below); the remaining follow-up is exposing `reset()` as an explicit user command if re-subscribing mid-run proves common.
+**Next**: the guard skips a dead tier with zero HTTP in a fresh process too (see the entry below); the explicit `reset()` command later shipped as `model reset-quota` (see the entry above).
 
 ## 2026-11-27 - fix(zen): a dead free tier is remembered across restarts
 
