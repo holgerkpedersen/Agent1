@@ -1188,6 +1188,18 @@ async def _nlp_run(agent: "Agent", args: dict[str, Any]) -> str:
         conflict = _pytest_flag_conflict(cmd_to_run)
         if conflict:
             return f"Error: {conflict}"
+    # State-change rule (the no-redundant-verification discipline): a repeat of
+    # the SAME pytest command over an UNCHANGED tree cannot produce a different
+    # result, so it is refused with the PREVIOUS result instead of being paid
+    # for twice.  Fail open: no fingerprint means the run proceeds.
+    repeat_guard = getattr(agent, "_pytest_repeat_guard", None)
+    repeat_fingerprint: str | None = None
+    if is_pytest and repeat_guard is not None:
+        repeat_refusal, repeat_fingerprint = repeat_guard.check(
+            cmd_to_run, _effective_repo_root(cmd_to_run, _effective_ws_dir(agent))
+        )
+        if repeat_refusal:
+            return str(repeat_refusal)
     # Windows: start the shell in its own process group so a timeout
     # can kill the WHOLE tree. Killing only cmd.exe leaves orphaned
     # children (e.g. a harnessfix.loop python process) running and
@@ -1276,7 +1288,17 @@ async def _nlp_run(agent: "Agent", args: dict[str, Any]) -> str:
     output, marker_code = _parse_ps_exit_marker(output)
     if marker_code is not None:
         exit_code = marker_code
-    return _truncate_output(_shape_run_stderr(err, output, exit_code))
+    shaped = _shape_run_stderr(err, output, exit_code)
+    if is_pytest and repeat_guard is not None:
+        # Recorded only now: a timeout/launch failure returned above, and only
+        # a completed run is evidence that a repeat is redundant.
+        repeat_guard.record(
+            cmd_to_run,
+            repeat_fingerprint,
+            output=shaped,
+            exit_code=exit_code,
+        )
+    return _truncate_output(shaped)
 
 
 async def _nlp_git(agent: "Agent", args: dict[str, Any]) -> str:
@@ -1500,6 +1522,18 @@ async def _nlp_tests(agent: "Agent", args: dict[str, Any]) -> str:
         cmd = [sys.executable, "-m", "pytest", test_path, "-v"]
     else:
         cmd = [sys.executable, "-m", "unittest", test_path, "-v"]
+    # Same state-change rule as the run tool: re-running this exact lane over
+    # an unchanged tree cannot differ, so the previous result is returned
+    # instead (fail open when no fingerprint can be computed).
+    repeat_guard = getattr(agent, "_pytest_repeat_guard", None)
+    repeat_key = " ".join(cmd)
+    repeat_fingerprint: str | None = None
+    if repeat_guard is not None and framework == "pytest":
+        repeat_refusal, repeat_fingerprint = repeat_guard.check(
+            repeat_key, _effective_repo_root("", _effective_ws_dir(agent))
+        )
+        if repeat_refusal:
+            return str(repeat_refusal)
     started = time.monotonic()
     output, error = _run_subprocess_captured(
         cmd,
@@ -1507,8 +1541,19 @@ async def _nlp_tests(agent: "Agent", args: dict[str, Any]) -> str:
         timeout,
         "Tests",
     )
+    timed_out = error is None and "timed out after" in (output or "")
+    if (
+        repeat_guard is not None
+        and framework == "pytest"
+        and error is None
+        and not timed_out
+    ):
+        repeat_guard.record(
+            repeat_key,
+            repeat_fingerprint,
+            output=output or "",
+        )
     if is_full and error is None:
-        timed_out = "timed out after" in (output or "")
         if not timed_out:
             # The run completed - only now is the one-shot budget spent
             # (parity with _nlp_run, which records after communicate()).

@@ -364,6 +364,20 @@ into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`
    NOT be turned back into a `✗`: on 2026-11-16 a 119B model read a style `✗`
    as "the write failed" and spent six edits chasing E501 in a scratch script
    instead of running it.
+11. **Verification stays valid until the tree changes (state-change rule,
+   2026-11-27).** `agent_core/pytest_repeat_guard.py` refuses an idempotent
+   pytest RE-RUN: it memoises (command, tree fingerprint, result summary) per
+   session and, when the same command is issued again over an unchanged tree,
+   returns the PREVIOUS result instead of running it (the refusal text carries
+   the old summary). The fingerprint is deterministic and free — `git status
+   --porcelain -uall` plus content hashes of the differing paths, housekeeping
+   trees (`.pytest_cache/`, `__pycache__/`, `.git/`) excluded so a run cannot
+   legitimise its own repeat. It FAILS OPEN (no git view, oversized tree,
+   broken probe -> the run is allowed), is per session (`clear` resets it, a
+   new named session rebinds it), and never covers non-pytest commands.
+   Escape hatch for a deliberate flakiness check:
+   `AGENT_PYTEST_REPEAT_GUARD=off`. Never weaken this into "skip tests when a
+   file was not saved" — it keys on the tree, not on a feeling.
 
 ## Verification commands
 
@@ -398,6 +412,14 @@ into `implement <tasks> <analysis> <plan> <entities> --workspace . --modify`
     `--testmon` select a SUBSET and are no longer classified as full runs by
     either classifier (`agent._is_full_pytest_command`, `conftest._is_full_run`)
     — they were being given the whole-suite budget *and* the gate.
+  - **No redundant re-verification (2026-11-27)** `agent_core/pytest_repeat_guard.py`:
+    the `run` and `tests` tools memoise each pytest command with a fingerprint
+    of the tree it read plus its result summary. Issuing the SAME command again
+    over an unchanged tree is REFUSED without spawning a process; the refusal
+    text quotes the previous result (`12 passed in 0.50s`) so the model still
+    has the evidence. Any real change (edit, new file, deletion, a different
+    lane) lifts the refusal; `AGENT_PYTEST_REPEAT_GUARD=off` is the escape
+    hatch for a stated flakiness check. See invariant 11.
   - Full suite (only before commit/push, and only via the one earned run):
     `python -m pytest -q --no-cov`.
     Bare `pytest` and the whole tree spelled out (`pytest tests/`, `pytest .`)

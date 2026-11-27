@@ -186,6 +186,7 @@ from agent_core.pytest_cmd_policy import (
     _is_subset_pytest_command,
     _pytest_full_suite_timeout,
 )
+from agent_core.pytest_repeat_guard import PytestRepeatGuard
 from agent_core.json_utils import _read_json_quarantining
 from agent_core.history_compaction import (
     _recover_original_goal,
@@ -498,6 +499,11 @@ class AgentCore:
         self._files_read: set[str] = set()
         self._file_mtimes: dict[str, float] = {}
         self._full_run_gate = _agent_mod().FullRunGate(self.workspace)
+        #: Per-session "verification stays valid until the tree changes" guard:
+        #: a repeat of the SAME pytest command over an unchanged tree is
+        #: refused with the PREVIOUS result instead of being paid for twice
+        #: (``agent_core.pytest_repeat_guard``).
+        self._pytest_repeat_guard = PytestRepeatGuard(self.workspace)
         self._pending_effects: list[str] | None = None
         self._knowledge_graph: dict[str, Any] = {}
         #: The graph as LOADED, used to tell a session deletion from an
@@ -1616,6 +1622,15 @@ class AgentCore:
         self._kg_load_baseline = {}
         self._working_memory.clear()
         self._semantic_index.clear()
+        # Per-SESSION state, not per-workspace: two sessions can share one tree
+        # (``--no-worktree``), and the second one must be allowed to verify a
+        # lane the first already ran.
+        repeat_guard = getattr(self, "_pytest_repeat_guard", None)
+        if repeat_guard is not None:
+            try:
+                repeat_guard.reset()
+            except Exception:  # noqa: BLE001 - a broken guard must not block a switch
+                logger.debug("pytest repeat guard reset failed", exc_info=True)
 
     def switch_session(self, session_id: str) -> "Any":
         """Persist the current session and resume another one in place."""
@@ -1670,6 +1685,7 @@ class AgentCore:
             self.fs = _agent_mod().FileSystem(self.workspace)
             self.searcher = _agent_mod().FileSearcher(self.workspace)
             self._full_run_gate = _agent_mod().FullRunGate(self.workspace)
+            self._pytest_repeat_guard = PytestRepeatGuard(self.workspace)
             self._nlp_workspace = None
         self._reset_session_state()
         self._chat_history = self._load_chat_history()

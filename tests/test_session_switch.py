@@ -138,3 +138,27 @@ def test_switch_to_same_session_is_noop() -> None:
     same = agent.switch_session("one")
     assert same is not None
     assert current_session_id() == "one"
+
+
+def test_switch_session_forgets_pytest_run_records(tmp_path: Path) -> None:
+    """The repeat guard is per SESSION, not per workspace.
+
+    Two sessions can share one tree (``--no-worktree``), so a record made by
+    the session we left must not silence the first verification of the session
+    we enter.
+    """
+    from agent_core.pytest_repeat_guard import PytestRepeatGuard
+
+    create_session("one", workspace=str(tmp_path))
+    create_session("two", workspace=str(tmp_path))
+    activate_session("one", workspace=str(tmp_path))
+    agent = AgentCore(workspace=str(tmp_path))
+    guard = PytestRepeatGuard(str(tmp_path), fingerprint_fn=lambda root: "fp")
+    agent._pytest_repeat_guard = guard
+    guard.record("python -m pytest -q", "fp", output="1 passed")
+    assert guard.records == 1
+
+    agent.switch_session("two")
+
+    assert guard.records == 0
+    assert guard.check("python -m pytest -q")[0] is None
