@@ -117,6 +117,7 @@ EXPECTED_IMPORTED = frozenset(
         "UnrepresentableTextError",
         "WorkflowCommand",
         "WriteCommand",
+        "resolve_workspace",
         "_ACTION_VERB_RE",
         "_COMPLETE_MARKERS",
         "_CONTEXT_AST_THRESHOLD_KB",

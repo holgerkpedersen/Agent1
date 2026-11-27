@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import TYPE_CHECKING, Any
 
 from agent_core.colors import yellow
@@ -38,6 +39,8 @@ from agent_core.run_utils import (
     MAX_KG_BLOCK_CHARS,
     MAX_KG_BLOCK_LINES,
     MAX_KG_ENTRY_CHARS,
+    MAX_WORKSPACE_BLOCK_CHARS,
+    WORKSPACE_MARKER,
 )
 from agent_core.skills import (
     discover_skills,
@@ -343,6 +346,75 @@ def _knowledge_graph_block(agent: "Agent") -> str:
         )[:MAX_KG_BLOCK_CHARS]
     except Exception:
         logger.exception("Knowledge graph block unavailable:\n")
+        return ""
+
+
+def _git_branch_label(root: str) -> str:
+    """Branch name read straight from ``.git/HEAD`` (no subprocess).
+
+    Reading the file keeps the per-turn prompt rebuild cheap; a subprocess per
+    turn would cost far more than the block is worth.  Returns ``""`` when
+    *root* is not a git working tree and ``"detached"`` for a detached HEAD.
+    """
+    head = os.path.join(root, ".git", "HEAD")
+    try:
+        if not os.path.isfile(head):
+            return ""
+        with open(head, encoding="utf-8", errors="replace") as fh:
+            ref = fh.read().strip()
+    except OSError:
+        return ""
+    if ref.startswith("ref:"):
+        return ref.split("/", 2)[-1].strip() or "detached"
+    return "detached"
+
+
+def _workspace_block(agent: "Agent") -> str:
+    """The working root told to the model, in the system prompt.
+
+    Before this block the LLM had no idea which directory it was working in:
+    the human saw ``Workspace: ...`` in the banner, the model saw only tool
+    results and had to infer the root from them — which is how edits and test
+    runs end up aimed at the wrong repository.
+
+    Emitted only when the effective root differs from
+    :attr:`AgentCore.DEFAULT_WORKSPACE`, so the ordinary single-repo use keeps
+    a byte-identical prompt (same contract as :func:`_habits_block`).  Rebuilt
+    every turn and cut at :data:`agent_core.run_utils.WORKSPACE_MARKER` by the
+    dynamic-block stripper, so switching the root replaces the block instead
+    of appending a second one.  Never raises.
+    """
+    try:
+        ws = str(getattr(agent, "_effective_ws_dir")()).strip()
+        if not ws:
+            return ""
+        core_cls = getattr(_agent_mod(), "AgentCore", None)
+        default = str(getattr(core_cls, "DEFAULT_WORKSPACE", ""))
+        if default and os.path.normcase(os.path.abspath(ws)) == os.path.normcase(
+            os.path.abspath(default)
+        ):
+            return ""
+        root = os.path.abspath(ws)
+        branch = _git_branch_label(root)
+        lines = [
+            WORKSPACE_MARKER,
+            f"Absolute working root: {root}",
+        ]
+        if branch:
+            lines.append(f"Repository: git, current branch: {branch}")
+        else:
+            lines.append("Repository: not a git working tree")
+        lines.append(
+            "All relative paths resolve against this root. Use an absolute "
+            "path to touch anything outside it."
+        )
+        lines.append(
+            "`workspace <path>` switches the root, `workspace reset` returns "
+            "to the default. Wrote to the wrong repo? Check this path first."
+        )
+        return ("\n".join(lines) + "\n")[:MAX_WORKSPACE_BLOCK_CHARS]
+    except Exception:
+        logger.exception("Workspace block unavailable:\n")
         return ""
 
 

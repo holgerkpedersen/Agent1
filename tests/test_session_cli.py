@@ -70,3 +70,60 @@ def test_format_session_table_marks_locks() -> None:
     assert "work" in text
     assert "default" in text
     assert "free" in text
+
+
+# ── --workspace round-trip through session meta ─────────────────────────────
+#
+# A resumed session must come back to the checkout it was created in.  Without
+# this, ``--session foo`` silently snapped back to whatever directory the
+# process sat in, so a run meant for one repository landed in another.
+
+
+def _ws_dir(tmp_path: Path, name: str) -> Path:
+    path = tmp_path / name
+    path.mkdir()
+    (path / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
+    return path
+
+
+def test_new_session_records_workspace(tmp_path: Path) -> None:
+    ws = _ws_dir(tmp_path, "checkout")
+    selection = parse_and_activate(["--new-session", "work"], workspace=str(ws))
+    assert not selection.should_exit
+    from agent_core.session.store import load_meta
+
+    assert Path(load_meta("work").workspace) == ws
+
+
+def test_resumed_session_restores_workspace(tmp_path: Path) -> None:
+    ws = _ws_dir(tmp_path, "checkout")
+    parse_and_activate(["--new-session", "work"], workspace=str(ws))
+    reset()
+    # Resume with NO explicit workspace: the recorded one must win.
+    selection = parse_and_activate(["--session", "work"])
+    assert not selection.should_exit
+    assert Path(selection.workspace) == ws
+
+
+def test_explicit_workspace_beats_recorded(tmp_path: Path) -> None:
+    recorded = _ws_dir(tmp_path, "recorded")
+    other = _ws_dir(tmp_path, "other")
+    parse_and_activate(["--new-session", "work"], workspace=str(recorded))
+    reset()
+    selection = parse_and_activate(["--session", "work"], workspace=str(other))
+    assert Path(selection.workspace) == other
+
+
+def test_vanished_recorded_workspace_falls_back(tmp_path: Path, capsys) -> None:
+    ws = _ws_dir(tmp_path, "gone")
+    parse_and_activate(["--new-session", "work"], workspace=str(ws))
+    reset()
+    import shutil
+
+    shutil.rmtree(ws)
+    selection = parse_and_activate(["--session", "work"])
+    assert not selection.should_exit
+    assert Path(selection.workspace) != ws
+    assert Path(selection.workspace).is_dir()
+    assert "no longer exists" in capsys.readouterr().out
+

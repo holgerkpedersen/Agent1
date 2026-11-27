@@ -102,6 +102,9 @@ Type `quit` or `exit` to leave.
 | `kg add <fact\|file\|tag\|symbol> <key> [value...]` | Add a knowledge-graph entry (persisted) |
 | `kg show [section [key]]` | Print the knowledge graph, one section, or one key |
 | `kg remove <section> <key>` | Delete one knowledge-graph entry |
+| `workspace` | Show the root the agent works on |
+| `workspace <path>` | Switch to another root for the rest of the session |
+| `workspace reset` | Return to the resolved default root |
 | `clear` | View and clear memory — includes a `Knowledge graph: N entries` line |
 
 Run `help` inside the REPL for the full list.
@@ -318,8 +321,30 @@ All config lives in `.env` (see `.env.example` for the full annotated list) and 
 AGENT_LLM_PROVIDER=opencode        # Provider: opencode | lmstudio | openrouter | llama
 OPENCODE_API_KEY=sk-...            # Cloud API key (or use LM Studio locally)
 AGENT_DISPLAY_MODE=normal          # Tool output: verbose | normal | clean | quiet | intent
+AGENT_WORKSPACE_ROOT=C:\Dev\MyApp  # Directory the agent works on (see below)
 LOG_LEVEL=INFO                     # Logging: DEBUG | INFO | WARNING | ERROR
 ```
+
+### Choosing the workspace
+
+The workspace is the root every tool resolves relative paths against. One
+precedence chain decides it (`agent_core/workspace.py`):
+
+1. `--workspace PATH` on the command line
+2. `AGENT_WORKSPACE_ROOT` from `.env` / the environment
+3. the current directory, when it is a project (`.git/` or `pyproject.toml`)
+4. this repository's root — the fallback that keeps existing setups working
+
+```bash
+python agent.py --workspace ../Strata      # start on another checkout
+python agent.py --session feature-auth     # a session returns to its own root
+```
+
+Inside the REPL, `workspace` shows the root in force, `workspace <path>`
+switches it (the system prompt is rebuilt, so the model is told immediately),
+and `workspace reset` goes back to the default. The model always receives the
+absolute root plus the rule that relative paths resolve against it, so it does
+not have to infer the checkout from tool output.
 
 ---
 

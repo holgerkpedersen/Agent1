@@ -126,6 +126,7 @@ from agent_core.modes import (
     plan_mode_turn_note,
 )
 from agent_core.path_utils import resolve_path, safe_path
+from agent_core.workspace import resolve_workspace
 from agent_core.pytest_gate import (
     DEFAULT_FULL_SUITE_TIMEOUT,
     FullRunGate,
@@ -301,6 +302,7 @@ __all__ = [
     "record_turn_outcome",
     "red",
     "resolve_model",
+    "resolve_workspace",
     "resolve_path",
     "role_names",
     "safe_path",

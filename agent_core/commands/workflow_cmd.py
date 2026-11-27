@@ -57,6 +57,7 @@ from .base import (
 from .doc_paths import latest_run_dir, new_run_dir
 from .reasoning_strip import dedupe_repeated_sections, extract_section, strip_reasoning
 from agent_core import to_windows_path
+from agent_core.workspace import describe_target_divergence
 from agent_core.decisions import (
     add_decision,
     annotate_candidates,
@@ -1033,6 +1034,11 @@ class WorkflowCommand(Command):
             ws_idx = parts.index("--workspace")
             if ws_idx + 1 < len(parts):
                 target_workspace = parts[ws_idx + 1]
+        # A --workspace that differs from the chat's root forks the pipeline's
+        # world from the conversation's; say so instead of forking silently.
+        _divergence = describe_target_divergence(target_workspace, agent.workspace)
+        if _divergence:
+            print(_divergence)
 
         if spec_file and not os.path.isabs(spec_file):
             spec_file = os.path.join(target_workspace, spec_file)

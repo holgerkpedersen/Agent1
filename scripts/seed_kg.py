@@ -192,9 +192,9 @@ SEED: dict[str, dict[str, Any]] = {
     },
     "files": {
         "agent_core/agent.py": (
-            "AgentCore (~459): state stores (~502: _knowledge_graph, "
-            "_working_memory), tool-call execution, chat_nlp (~1322); "
-            "Agent = AgentCore (~1828)."
+            "AgentCore (~462): state stores (~520: _knowledge_graph, "
+            "_working_memory), tool-call execution, chat_nlp (~1336); "
+            "Agent = AgentCore (~1837)."
         ),
         "agent_core/decision_collector.py": (
             "DecisionCollector.collect_turn_decisions re-reads a turn's "

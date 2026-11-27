@@ -67,6 +67,7 @@ class HelpCommand(Command):
         from .kg_cmd import KGCommand
         from .session_cmd import SessionCommand
         from .model_catalog import ModelsCommand
+        from .workspace_cmd import WorkspaceCommand
 
         for cmd_cls in (
             ReadCommand,
@@ -108,6 +109,7 @@ class HelpCommand(Command):
             KGCommand,
             SessionCommand,
             ModelsCommand,
+            WorkspaceCommand,
             HelpCommand,
         ):
             registry.register(cmd_cls())

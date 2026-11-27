@@ -20,6 +20,7 @@ from agent_core.decisions import (
     add_decision,
 )
 from agent_core.subprocess_utils import shell_info as _shell_info
+from agent_core.workspace import describe_target_divergence
 
 from typing import TYPE_CHECKING, Any
 
@@ -1644,6 +1645,11 @@ class ImplementCommand(Command):
             ws_idx = parts.index("--workspace")
             if ws_idx + 1 < len(parts):
                 target_workspace = parts[ws_idx + 1].strip('"')
+        # A --workspace that differs from the chat's root forks the command's
+        # world from the conversation's; say so instead of forking silently.
+        _divergence = describe_target_divergence(target_workspace, agent.workspace)
+        if _divergence:
+            print(_divergence)
 
         skip_tokens = [
             "--keep",

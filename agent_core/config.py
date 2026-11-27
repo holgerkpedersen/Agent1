@@ -581,7 +581,12 @@ def load_agent_settings(env_path: Path | None = None) -> AgentSettings:
     )
 
     workspace_root_str = merged.get("AGENT_WORKSPACE_ROOT")
-    workspace_root = Path(workspace_root_str) if workspace_root_str else Path.cwd()
+    # One resolver for the whole process: this used to be a bare
+    # ``Path.cwd()`` fallback that nothing read, so ``AGENT_WORKSPACE_ROOT``
+    # was a documented setting with no effect on where tools actually ran.
+    from agent_core.workspace import resolve_workspace
+
+    workspace_root = Path(resolve_workspace(workspace_root_str))
 
     # The failover chain drives the active provider: its first entry IS the
     # active provider, so llm_provider is derived from it (never diverges).

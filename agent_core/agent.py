@@ -133,6 +133,7 @@ from agent_core.bootstrap import (  # explicit names (was: import *)
     TaskplanCommand,
     time,
     to_windows_path,
+    resolve_workspace,
     ToolDispatcher,
     ToolLoopRunner,
     trace_enabled,
@@ -304,6 +305,7 @@ from agent_core.prompts.context_blocks import (
     _skill_hint_block,
     _habits_block,
     _knowledge_graph_block,
+    _workspace_block,
     _file_history_block,
     _semantic_memory_block,
     _language_block,
@@ -460,6 +462,10 @@ def _single_turn_guard(method: Any) -> Any:
 class AgentCore:
     """Main agent class with workspace management and tool execution."""
 
+    #: Historical default = Agent1's own checkout.  Kept as a *fallback* for
+    #: callers that pass nothing; the authoritative resolution lives in
+    #: :func:`agent_core.workspace.resolve_workspace` (explicit -> env -> cwd
+    #: when it looks like a project -> here).
     DEFAULT_WORKSPACE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
     @property
@@ -483,9 +489,7 @@ class AgentCore:
         self._model_name_boot = value
 
     def __init__(self, workspace: str | None = None, model_name: str | None = None):
-        self.workspace = os.path.abspath(
-            _agent_mod().to_windows_path(workspace or self.DEFAULT_WORKSPACE)
-        )
+        self.workspace = _agent_mod().resolve_workspace(workspace)
         self._session_meta = active_session()
         self._session_id = current_session_id()
         self._session_paths = current_paths()
@@ -1242,6 +1246,7 @@ class AgentCore:
             + self._skill_index_block()
             + self._habits_block()
             + self._knowledge_graph_block()
+            + self._workspace_block()
             + self._semantic_memory_block(query)
             + self._file_history_block(query)
             + (plan_mode_system_suffix() if self.is_plan_mode() else "")
@@ -1720,6 +1725,10 @@ class AgentCore:
     def _knowledge_graph_block(self) -> str:
         return _knowledge_graph_block(self)
 
+    def _workspace_block(self) -> str:
+        """The working root told to the model (empty for the default root)."""
+        return _workspace_block(self)
+
     def _file_history_block(self, query: str | None = None) -> str:
         return _file_history_block(self, query)
 
@@ -2105,6 +2114,7 @@ __all__ = (
     "record_turn_outcome",
     "red",
     "resolve_model",
+    "resolve_workspace",
     "resolve_path",
     "role_names",
     "safe_path",

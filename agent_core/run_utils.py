@@ -412,6 +412,16 @@ def append_turn_log(record: dict[str, Any]) -> None:
 #: per rebuild (same contract as ``agent_core.language.LANGUAGE_MARKER``).
 KNOWLEDGE_GRAPH_MARKER = "\n\nKNOWLEDGE GRAPH"
 
+#: Marker that marks the workspace block.  Single source of truth: the builder
+#: in ``prompts/context_blocks.py`` prefixes it and the stripper below cuts at
+#: it, so exactly one copy survives a rebuild (same contract as
+#: ``KNOWLEDGE_GRAPH_MARKER``).
+WORKSPACE_MARKER = "\n\nWORKSPACE"
+
+#: Hard cap on the rendered workspace block (system-prompt budget).  The block
+#: is a few fixed lines; the cap only guards a pathological path length.
+MAX_WORKSPACE_BLOCK_CHARS = 900
+
 #: Most entries rendered in the knowledge-graph block (the graph is a curated
 #: store; overflow points at ``kg show`` instead of bloating the prompt).
 MAX_KG_BLOCK_LINES = 40
@@ -448,6 +458,8 @@ def strip_dynamic_system_blocks(text: str) -> str:
         "\n\n[semantic memory]",
         # Knowledge-graph content + `kg add` steering (single source: here).
         KNOWLEDGE_GRAPH_MARKER,
+        # Absolute working root told to the model (single source: here).
+        WORKSPACE_MARKER,
         # Per-turn language reminder (single source: agent_core.language).
         LANGUAGE_MARKER,
     )

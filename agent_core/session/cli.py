@@ -27,11 +27,12 @@ from agent_core.session.store import (
     SessionNotFound,
     create_session,
     list_sessions,
+    load_meta,
     paths_for,
-    repo_root,
     session_root,
     slugify,
 )
+from agent_core.workspace import resolve_workspace
 
 
 @dataclass
@@ -87,6 +88,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Run only the dashboard server.",
     )
     parser.add_argument("--port", type=int, default=None, help="Dashboard port.")
+    parser.add_argument(
+        "--workspace",
+        metavar="PATH",
+        default=None,
+        help="Directory the agent works on (default: $AGENT_WORKSPACE_ROOT, "
+        "else the current directory when it is a project, else this repo).",
+    )
     return parser
 
 
@@ -131,6 +139,31 @@ def format_session_table(root: str | None = None) -> str:
     return "\n".join(lines)
 
 
+def _recorded_workspace(session_id: str, root: str, *, fallback: str) -> str:
+    """Return the workspace recorded for *session_id*, or *fallback*.
+
+    A session remembers the checkout it was created in, so ``--session foo``
+    returns to foo's workspace instead of silently snapping back to the repo
+    the process happens to sit in.  A recorded path that no longer exists is
+    ignored (the checkout may have been moved or deleted) rather than handed
+    to the agent as a root it cannot use.
+    """
+    try:
+        meta = load_meta(session_id, root)
+    except (SessionNotFound, SessionError):
+        return fallback
+    recorded = str(getattr(meta, "workspace", "") or "").strip()
+    if not recorded:
+        return fallback
+    if not os.path.isdir(recorded):
+        print(
+            f"[session] Recorded workspace '{recorded}' no longer exists; "
+            f"using {fallback}."
+        )
+        return fallback
+    return os.path.abspath(recorded)
+
+
 def resolve_startup(
     namespace: argparse.Namespace,
     *,
@@ -138,15 +171,19 @@ def resolve_startup(
 ) -> StartupSelection:
     """Create/resume/lock the session selected on the command line.
 
-    The *workspace* is the caller's (or the repo root): sessions share one
-    checkout by design.  ``should_exit`` is true for informational commands
-    (``--list-sessions``) and for a refused session (locked or missing); the
-    caller should return.
+    The *workspace* is the caller's hint: sessions share one checkout by
+    design.  Resolution goes through :func:`agent_core.workspace.
+    resolve_workspace`, so ``--workspace`` on the command line wins over
+    ``$AGENT_WORKSPACE_ROOT``, which wins over the current directory when it
+    looks like a project, which wins over the repository root.
+    ``should_exit`` is true for informational commands (``--list-sessions``)
+    and for a refused session (locked or missing); the caller should return.
     """
     if namespace.session_root:
         os.environ["AGENT_SESSION_ROOT"] = str(namespace.session_root)
     root = str(session_root())
-    ws = os.path.abspath(workspace or str(repo_root()))
+    explicit_ws = getattr(namespace, "workspace", None) or workspace
+    ws = resolve_workspace(explicit_ws)
 
     if namespace.list_sessions:
         print(format_session_table(root))
@@ -172,6 +209,8 @@ def resolve_startup(
         except SessionError as exc:
             print(f"[session] {exc}")
             return StartupSelection(root=root, workspace=ws, should_exit=True)
+        if not explicit_ws:
+            ws = _recorded_workspace(sid, root, fallback=ws)
 
     try:
         activate_session(sid, root=root, workspace=ws)

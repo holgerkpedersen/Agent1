@@ -233,13 +233,14 @@ def test_workspace_without_skills_gets_no_index(tmp_path, monkeypatch) -> None:
     A workspace with no ``skills/`` directory must yield the base prompt
     (plus the always-on language reminder), byte for byte — no skill index.
     """
-    from agent_core.language import language_block
     from agent_core.skills import SKILL_INDEX_MARKER
     import agent as agent_mod
 
     content = _system_prompt_for(tmp_path, tmp_path, monkeypatch)
     assert SKILL_INDEX_MARKER not in content
-    assert content == agent_mod._SYSTEM_PROMPT + language_block(None)
+    # A tmp root is never DEFAULT_WORKSPACE, so the workspace block is present
+    # by design; the base prompt underneath it must stay untouched.
+    assert agent_mod._strip_dynamic_system_blocks(content) == agent_mod._SYSTEM_PROMPT
 
 
 # ---------------------------------------------------------------------------

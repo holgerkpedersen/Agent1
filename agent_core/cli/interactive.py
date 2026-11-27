@@ -239,6 +239,9 @@ def _register_commands(registry: CommandRegistry) -> None:
     from agent_core.commands.kg_cmd import KGCommand
 
     registry.register(KGCommand())
+    from agent_core.commands.workspace_cmd import WorkspaceCommand
+
+    registry.register(WorkspaceCommand())
     from agent_core.commands.help_cmd import HelpCommand
 
     registry.register(HelpCommand())
@@ -367,6 +370,14 @@ async def run_interactive() -> None:
     print(banner)
     print(blue("Agent Interactive Mode with LM Studio"))
     print(f"Workspace: {cyan(agent.workspace)}")
+    try:
+        from agent_core.workspace import describe_workspace_mismatch
+
+        _mismatch = describe_workspace_mismatch(agent.workspace)
+        if _mismatch:
+            print(yellow(_mismatch))
+    except Exception:  # a broken hint must never stop the REPL
+        pass
     print(f"Session:   {cyan(agent.session_id)}")
     try:
         from agent_core.session.context import peers
