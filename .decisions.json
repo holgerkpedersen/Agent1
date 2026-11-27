@@ -6408,5 +6408,125 @@
     "status": "active",
     "category": "autonomous",
     "source": "agent"
+  },
+  {
+    "id": "305",
+    "date": "2026-11-27T15:49:59+00:00",
+    "title": "Change tests/test_model_helpers.py",
+    "context": "============================= test session starts ============================= platform win32 -- Python 3.12.10, pytest-9.0.3, pluggy-1.6.0 -- C:\\Program Files\\Python312\\python.exe cachedir: .pytest_",
+    "decision": "tests modified tests/test_model_helpers.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "tests/test_model_helpers.py"
+    ],
+    "tags": [
+      "autonomous",
+      "tests"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "306",
+    "date": "2026-11-27T17:10:55+00:00",
+    "title": "Change docs/plans/2026-11-27-zen-free-tier-quota-plan.md",
+    "context": "Written C:\\Dev\\Agent1\\docs\\plans\\2026-11-27-zen-free-tier-quota-plan.md (11560 bytes)",
+    "decision": "write modified docs/plans/2026-11-27-zen-free-tier-quota-plan.md without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "docs/plans/2026-11-27-zen-free-tier-quota-plan.md"
+    ],
+    "tags": [
+      "autonomous",
+      "write"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "307",
+    "date": "2026-11-27T17:13:14+00:00",
+    "title": "Change agent_core/llm/opencode_provider.py",
+    "context": "Edited C:\\Dev\\Agent1\\agent_core\\llm\\opencode_provider.py [verify] py_compile ✓ [verify] ruff ✓",
+    "decision": "edit modified agent_core/llm/opencode_provider.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "agent_core/llm/opencode_provider.py"
+    ],
+    "tags": [
+      "autonomous",
+      "edit"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "308",
+    "date": "2026-11-27T17:13:54+00:00",
+    "title": "Change tests/test_zen_quota_classification.py",
+    "context": "Written C:\\Dev\\Agent1\\tests\\test_zen_quota_classification.py (5858 bytes) [verify] py_compile ✓ [verify] ruff ✓",
+    "decision": "write modified tests/test_zen_quota_classification.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "tests/test_zen_quota_classification.py"
+    ],
+    "tags": [
+      "autonomous",
+      "write"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "309",
+    "date": "2026-11-27T17:18:15+00:00",
+    "title": "Change agent_core/llm/quota_guard.py",
+    "context": "Written C:\\Dev\\Agent1\\agent_core\\llm\\quota_guard.py (4870 bytes) [verify] py_compile ✓ [verify] ruff ✓",
+    "decision": "write modified agent_core/llm/quota_guard.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "agent_core/llm/quota_guard.py"
+    ],
+    "tags": [
+      "autonomous",
+      "write"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
+  },
+  {
+    "id": "310",
+    "date": "2026-11-27T17:21:51+00:00",
+    "title": "Change tests/unit/test_zen_quota_guard.py",
+    "context": "Written C:\\Dev\\Agent1\\tests\\unit\\test_zen_quota_guard.py (13209 bytes) [verify] py_compile ✓ [verify] ruff style 1 (advisory - do not edit again just for formatting): test_zen_quota_guard.py:65: E501",
+    "decision": "write modified tests/unit/test_zen_quota_guard.py without that path being named in the request.",
+    "rationale": "Chosen during execution to advance the task.",
+    "affected_files": [
+      "tests/unit/test_zen_quota_guard.py"
+    ],
+    "tags": [
+      "autonomous",
+      "write"
+    ],
+    "contradictions": [],
+    "resolved_by": null,
+    "status": "active",
+    "category": "autonomous",
+    "source": "agent"
   }
 ]

@@ -91,6 +91,7 @@ class _PickerEntry:
     value: str
     current: bool = False
     loaded: bool = False
+    meta: Any = None
 
 
 class ModelCommand(Command):
@@ -100,6 +101,10 @@ class ModelCommand(Command):
     #: skips it when there is no TTY and just lists — so the dashboard can still
     #: run it.  Without this the source probe marks the command terminal-only.
     declared_needs_terminal_input = False
+
+    #: One-line note about the keyless zen tier (e.g. quota exhausted), set by
+    #: ``_zen_free_catalog`` and printed once below the [opencode-zen] block.
+    _zen_note: str = ""
 
     @property
     def name(self) -> str:
@@ -261,6 +266,9 @@ class ModelCommand(Command):
         when settings fail).  Returns an empty list when the catalog is
         unreachable — no model names are hardcoded here.
         """
+        # Reset first: a stale note from a previous call must never be shown
+        # against a list that is not actually exhausted.
+        self._zen_note = ""
         try:
             from agent_core.llm.opencode_provider import (
                 OpencodeProvider,
@@ -279,6 +287,9 @@ class ModelCommand(Command):
             )
             live = list(prov.list_models())
             if live:
+                # The provider records the exhausted state here (the list stays
+                # free of annotations so every row remains selectable).
+                self._zen_note = getattr(prov, "zen_catalog_note", "")
                 return live
         except Exception:
             pass
@@ -422,34 +433,109 @@ class ModelCommand(Command):
         if choice:
             await self._switch_model([choice], agent)
 
-    def _lmstudio_picker_entries(
-        self, agent: "Agent", start: int = 1
+    def _catalog_entries(
+        self, agent: "Agent", openrouter_free_only: bool = True
     ) -> list[_PickerEntry]:
-        """Numbered rows for the LM Studio catalog (the ``/model`` listing order)."""
-        models, _loaded = self._fetch_models()
+        """Numbered rows for the FULL ``/model`` listing (all providers).
+
+        The order matches ``_list_models`` exactly — opencode (go),
+        opencode-zen (free), llama, openrouter, lemonade, lmstudio — so a
+        number printed in the listing is the same number the picker accepts
+        and ``model <number>`` resolves against.  Numbers are 1-based and
+        global (not per-provider).
+        """
         current = agent.llm.model_name
         entries: list[_PickerEntry] = []
-        for offset, m in enumerate(models, start):
+
+        # ---- opencode (go tier) ----
+        opencode_models, zen_models, _oc_api_mode = self._opencode_catalog(agent)
+        for key in opencode_models:
             entries.append(
                 _PickerEntry(
-                    number=offset,
+                    number=0,
+                    label=str(key),
+                    provider="opencode",
+                    value=str(key),
+                    current=str(key) == current,
+                )
+            )
+
+        # ---- opencode-zen FREE tier ----
+        for key in zen_models:
+            entries.append(
+                _PickerEntry(
+                    number=0,
+                    label=str(key),
+                    provider="opencode-zen",
+                    value=str(key),
+                    current=str(key) == current,
+                )
+            )
+
+        # ---- llama.cpp ----
+        for key in self._llama_catalog(agent):
+            entries.append(
+                _PickerEntry(
+                    number=0,
+                    label=str(key),
+                    provider="llama",
+                    value=str(key),
+                    current=str(key) == current,
+                )
+            )
+
+        # ---- openrouter ----
+        for key in self._openrouter_catalog(agent, free_only=openrouter_free_only):
+            entries.append(
+                _PickerEntry(
+                    number=0,
+                    label=str(key),
+                    provider="openrouter",
+                    value=str(key),
+                    current=str(key) == current,
+                )
+            )
+
+        # ---- lemonade (NPU) ----
+        for key in self._lemonade_catalog(agent):
+            entries.append(
+                _PickerEntry(
+                    number=0,
+                    label=str(key),
+                    provider="lemonade",
+                    value=str(key),
+                    current=str(key) == current,
+                )
+            )
+
+        # ---- lmstudio ----
+        models, _loaded = self._fetch_models()
+        for m in models:
+            entries.append(
+                _PickerEntry(
+                    number=0,
                     label=str(m["display_name"]),
                     provider="lmstudio",
                     value=str(m["key"]),
                     current=str(m["key"]) == current,
                     loaded=bool(m["loaded"]),
+                    meta=m,
                 )
             )
+
+        # Assign global 1-based numbers in listing order.
+        for i, entry in enumerate(entries, 1):
+            entry.number = i
         return entries
 
     async def _prompt_model_choice(self, agent: "Agent") -> str | None:
         """Ask for a model number; return the query to hand to ``_switch_model``.
 
-        Accepts a number from the shown LM Studio listing, a bare name, or a
-        ``provider/name`` key.  Empty input, ``q``/``quit``, EOF and Ctrl+C all
+        Accepts a number from the shown listing (any provider), a bare name,
+        or a ``provider/name`` key.  Empty input, ``q``/``quit``, EOF and Ctrl+C all
         cancel without switching anything (listing stays read-only).
         """
-        entries = self._lmstudio_picker_entries(agent)
+        entries = self._catalog_entries(agent)
         hint = "  Pick a model number"
         if entries:
             hint += f" (1-{entries[-1].number})"
@@ -471,7 +557,7 @@ class ModelCommand(Command):
         by_number = {e.number: e for e in entries}
         entry = by_number.get(idx)
         if entry is None:
-            print(f"  No model number {idx} in the LM Studio listing.")
+            print(f"  No model number {idx} in the listing.")
             return None
         return entry.value
 
@@ -517,6 +603,21 @@ class ModelCommand(Command):
         # and the hosted catalog was unreachable — opencode models vanished
         # from the list and could not be selected by name.  The keyless
         # opencode-zen FREE tier is always fetched separately (no key).
+        # Global 1-based numbers come from the SAME catalog the picker and
+        # ``model <number>`` use, so a number printed here selects the same
+        # model in every provider section (not just LM Studio).  The listing
+        # order is fixed by _catalog_entries: opencode, opencode-zen, llama,
+        # openrouter, lemonade, lmstudio.
+        entries = self._catalog_entries(
+            agent, openrouter_free_only=openrouter_free_only
+        )
+        _num = {e.value: e.number for e in entries}
+
+        def _row(value: str, tail: str = "") -> str:
+            n = _num.get(str(value), 0)
+            marker = " *" if str(value) == current else "  "
+            return f"  {marker}{n:>3}. {value}{tail}"
+
         opencode_models, zen_models, oc_api_mode = self._opencode_catalog(agent)
 
         print(
@@ -527,12 +628,11 @@ class ModelCommand(Command):
             f"(active: {'*' if active_provider == 'openrouter' else ' '})  "
             f"lemonade (active: {'*' if active_provider == 'lemonade' else ' '})"
         )
+        print("  Pick any number below with: model <number>")
         if opencode_models:
             print(f"  [opencode] {len(opencode_models)} model(s) — needs API key:\n")
             for key in opencode_models:
-                is_current = key == current
-                marker = "  *" if is_current else "   "
-                print(f"{marker} {key}")
+                print(_row(key))
         else:
             hint = (
                 "'opencode serve --port 4096'"
@@ -546,9 +646,12 @@ class ModelCommand(Command):
         if zen_models:
             print(f"\n  [opencode-zen] {len(zen_models)} FREE model(s) — no API key:\n")
             for key in zen_models:
-                is_current = key == current
-                marker = "  *" if is_current else "   "
-                print(f"{marker} {key}  (provider=opencode-zen, free)")
+                print(_row(key, "  (provider=opencode-zen, free)"))
+            note = getattr(self, "_zen_note", "")
+            if note:
+                # Stated once, below the list: annotating a row would corrupt
+                # the number-to-model mapping used by `model <number>`.
+                print(f"            {note}")
         else:
             print("\n  [opencode-zen] free tier unreachable — check network\n")
 
@@ -557,9 +660,7 @@ class ModelCommand(Command):
         if llama_models:
             print(f"\n  [llama] {len(llama_models)} model(s) from llama.cpp:\n")
             for key in llama_models:
-                is_current = key == current
-                marker = "  *" if is_current else "   "
-                print(f"{marker} {key}  (provider=llama)")
+                print(_row(key, "  (provider=llama)"))
         else:
             try:
                 from agent_core.config import load_agent_settings
@@ -586,9 +687,7 @@ class ModelCommand(Command):
                 f"model(s){suffix} — needs API key:\n"
             )
             for key in openrouter_models:
-                is_current = key == current
-                marker = "  *" if is_current else "   "
-                print(f"{marker} {key}  (provider=openrouter)")
+                print(_row(key, "  (provider=openrouter)"))
             if openrouter_free_only:
                 print(
                     "            (show the full paid "
@@ -607,9 +706,7 @@ class ModelCommand(Command):
                 f"model(s) — AMD XDNA NPU via Lemonade:\n"
             )
             for key in lemonade_models:
-                is_current = key == current
-                marker = "  *" if is_current else "   "
-                print(f"{marker} {key}  (provider=lemonade, NPU)")
+                print(_row(key, "  (provider=lemonade, NPU)"))
         else:
             try:
                 from agent_core.config import load_agent_settings
@@ -634,7 +731,7 @@ class ModelCommand(Command):
             return
 
         print(f"\n  [lmstudio] {self._get_vram_display(models)}\n")
-        for i, m in enumerate(models, 1):
+        for m in models:
             key = m["key"]
             name = m["display_name"]
             params = m["params_string"] or "?"
@@ -650,8 +747,9 @@ class ModelCommand(Command):
 
             marker_str = f"  [{', '.join(markers)}]" if markers else ""
             prefix = " *" if is_current else "  "
+            n = _num.get(str(key), 0)
             print(
-                f" {prefix}{i:>3}. {name:<40} {params:<10} "
+                f" {prefix}{n:>3}. {name:<40} {params:<10} "
                 f"{size:<8}  [lmstudio]{marker_str}"
             )
 
@@ -806,6 +904,19 @@ class ModelCommand(Command):
 
         query = " ".join(args).strip()
         lowered = query.lower()
+
+        # A bare number ("3" / "3.") selects the Nth row of the FULL
+        # `model list` — any provider, not just LM Studio.  The catalog order
+        # is identical to the listing, so the printed number and this lookup
+        # agree.  An out-of-range number falls through to the name resolvers.
+        _bare = re.match(r"^(\d+)\.?$", query)
+        if _bare:
+            _idx = int(_bare.group(1))
+            _by_number = {e.number: e for e in self._catalog_entries(agent)}
+            _picked = _by_number.get(_idx)
+            if _picked is not None:
+                query = _picked.value
+                lowered = query.lower()
 
         if lowered.startswith("opencode-go/") or lowered.startswith("opencode/"):
             old = agent.llm.model_name

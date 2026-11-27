@@ -115,9 +115,9 @@ def clear_history(agent: "Agent") -> None:
         agent._full_run_gate.reset()
     except Exception:
         logger.debug("full-run gate reset failed", exc_info=True)
-    # Same ghost-state rule for the repeat guard: a cleared session may
-    # re-verify anything it likes, so a record from the previous session must
-    # not silence the first run of a command.
+    # Same ghost-state rule for the repeat guard: a cleared conversation may
+    # re-verify anything it likes, so a record from the previous conversation
+    # must not silence the first run of a command.
     try:
         agent._pytest_repeat_guard.reset()
     except Exception:

@@ -536,6 +536,54 @@ class TestModelListShowsZenFreeTier:
         assert "opencode-zen/hy3-free" in out
         assert "no API key" in out
 
+    def test_exhausted_quota_note_reaches_the_listing(self, monkeypatch, capsys):
+        """Regression: the provider recorded the exhausted state in
+        ``zen_catalog_note`` but nothing read it, so a dead free tier was
+        advertised as usable.  The note must reach the user AND must not be
+        spliced into a row (that would corrupt the model<number> mapping)."""
+        from agent_core.commands.model_cmd import ModelCommand
+
+        cmd = ModelCommand()
+        agent = self._opencode_agent()
+        monkeypatch.setattr(
+            "agent_core.commands.model_cmd._lms.get_models_status", lambda: []
+        )
+        monkeypatch.setattr(
+            "agent_core.config.load_agent_settings",
+            lambda: type(
+                "S",
+                (),
+                {
+                    "llm_provider": "opencode",
+                    "opencode_server_url": "http://127.0.0.1:4096",
+                    "opencode_password": "",
+                    "opencode_api_url": "https://opencode.ai/zen/go/v1",
+                    "opencode_api_key": "sk-test",
+                },
+            )(),
+        )
+        monkeypatch.setattr(
+            "agent_core.constants.load_model_json",
+            lambda: {"model": _default_llm(), "provider": "opencode"},
+        )
+        monkeypatch.setattr(
+            "agent_core.commands.model_cmd.ModelCommand._opencode_catalog",
+            lambda self, agent: ([], ["opencode-zen/hy3-free"], False),
+        )
+        monkeypatch.setattr(
+            "agent_core.commands.model_cmd.ModelCommand._zen_free_catalog",
+            lambda self: ["opencode-zen/hy3-free"],
+        )
+        # Simulate what _zen_free_catalog stores after a real probe.
+        cmd._zen_note = "free-tier quota currently exhausted"
+
+        cmd._list_models(agent)
+        out = capsys.readouterr().out
+        assert "quota currently exhausted" in out
+        # The note sits on its own line, never inside a selectable row.
+        row = next(line for line in out.splitlines() if "hy3-free" in line)
+        assert "exhausted" not in row
+
 
 class TestModelListGoVsZenNoDuplicate:
     """Regression: when the active model is a keyless opencode-zen free model,
@@ -893,6 +941,20 @@ class TestLmstudioSelectionPrecedence:
             "agent_core.commands.model_cmd._lms.get_models_status",
             lambda: self._lmstudio_models(),
         )
+        # Pin the non-LM-Studio catalogs so global row numbers are
+        # deterministic (a live OpenRouter fetch would shift them).
+        monkeypatch.setattr(
+            "agent_core.commands.model_cmd.ModelCommand._llama_catalog",
+            lambda self, agent: [],
+        )
+        monkeypatch.setattr(
+            "agent_core.commands.model_cmd.ModelCommand._openrouter_catalog",
+            lambda self, agent, free_only=True: [],
+        )
+        monkeypatch.setattr(
+            "agent_core.commands.model_cmd.ModelCommand._lemonade_catalog",
+            lambda self, agent: [],
+        )
         monkeypatch.setattr(
             "agent_core.config.load_agent_settings",
             lambda: type(
@@ -926,7 +988,11 @@ class TestLmstudioSelectionPrecedence:
             lambda name, provider=None: None,
         )
 
-    def test_number_index_selects_lmstudio(self, monkeypatch):
+    def test_number_index_selects_row_of_full_listing(self, monkeypatch):
+        """A bare number selects row N of the FULL listing (all providers),
+        not LM Studio item N — the task: numbers for every model, not only
+        LM Studio.  Fixture order is opencode(go) -> opencode-zen(free) ->
+        lmstudio, so row 3 is the second zen model."""
         import asyncio
         from agent_core.commands.model_cmd import ModelCommand
 
@@ -934,7 +1000,21 @@ class TestLmstudioSelectionPrecedence:
         agent = self._agent()
         self._patch_common(monkeypatch, cmd)
 
-        asyncio.run(cmd._switch_model(["3"], agent))  # 1-based index of laguna
+        asyncio.run(cmd._switch_model(["3"], agent))  # row 3 of full listing
+        assert agent.llm.model_name == "opencode-zen/hy3-free"
+
+    def test_number_index_selects_lmstudio_by_global_number(self, monkeypatch):
+        """LM Studio models are selectable by their GLOBAL listing number.
+        Fixture: 1 opencode(go) + 2 zen(free) => LM Studio starts at row 4,
+        so laguna (3rd LM Studio model) is row 6."""
+        import asyncio
+        from agent_core.commands.model_cmd import ModelCommand
+
+        cmd = ModelCommand()
+        agent = self._agent()
+        self._patch_common(monkeypatch, cmd)
+
+        asyncio.run(cmd._switch_model(["6"], agent))  # global number of laguna
         assert agent.llm.model_name == "laguna-s-2.1"
 
     def test_number_index_with_dot_selects_lmstudio(self, monkeypatch):

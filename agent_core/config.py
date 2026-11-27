@@ -223,6 +223,15 @@ class AgentSettings:
     #: machine/account may not have it); when unset we construct the keyless
     #: catalog probe with a generic zen-prefixed placeholder.  Override with
     #: AGENT_ZEN_FREE_DEFAULT.
+    #:
+    #: CAVEAT — the free tier is a dead end for third-party harnesses.  Its
+    #: quota is ACCOUNT-wide (every ``-free`` model returns the same 429
+    #: ``FreeUsageLimitError`` at the same moment), and the tier is gated to the
+    #: OpenCode app, so it does not recover for us on retry.  Prefer a keyed
+    #: provider (``opencode-go/...``) or a local model (LM Studio / llama);
+    #: treat zen as an opt-in for OpenCode Go subscribers only.  The provider
+    #: remembers an observed exhaustion in ``llm/quota_guard.py`` so a dead tier
+    #: costs 0 s per turn instead of a retry cascade.
     zen_free_default: str = field(
         default_factory=lambda: os.environ.get("AGENT_ZEN_FREE_DEFAULT", "")
     )

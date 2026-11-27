@@ -194,7 +194,7 @@ SEED: dict[str, dict[str, Any]] = {
         "agent_core/agent.py": (
             "AgentCore (~459): state stores (~502: _knowledge_graph, "
             "_working_memory), tool-call execution, chat_nlp (~1322); "
-            "Agent = AgentCore (~1808)."
+            "Agent = AgentCore (~1828)."
         ),
         "agent_core/decision_collector.py": (
             "DecisionCollector.collect_turn_decisions re-reads a turn's "

@@ -610,6 +610,12 @@ _CONNECTION_FAILURE_RE = re.compile(
     r"out of memory|bad allocation|failed to allocate|insufficient memory|"
     r"free model \S+ is currently unavailable|"
     r"openrouter free-tier model is rate-limited|"
+    # Exhausted free-tier quota is ACCOUNT-wide and permanent for the tier, so
+    # the next provider must answer instead of the turn dying on this one.  The
+    # gateway reports it as a 429 whose body carries ``FreeUsageLimitError`` /
+    # "Free usage limit reached" (opencode-zen, observed live 2026-11-27).
+    r"free\s+usage\s+limit\s+reached|freeusagelimiterror|"
+    r"quota\s+exhausted|insufficient\s+quota|"
     r"openrouter.*only available on agentic harnesses|"
     r"openrouter.*no endpoints found that support tool|"
     r"model\s+[^\"\]]*\bnot supported|"

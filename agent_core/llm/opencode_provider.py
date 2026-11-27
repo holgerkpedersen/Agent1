@@ -41,6 +41,7 @@ from agent_core.timeout import DEFAULT_CHAT_TIMEOUT
 
 from .provider import ResponseMetrics
 from .pricing import estimate_cost
+from .quota_guard import QuotaGuard, quota_guard
 
 #: HTTP statuses that are safe to retry — the hosted gateway sits behind
 #: Cloudflare and intermittently returns 5xx on healthy requests (observed
@@ -53,6 +54,51 @@ _TRANSIENT_HTTP_STATUSES = frozenset({429, 500, 502, 503, 504})
 #: 2026-09-21: HTTP 403 "Upstream response was not valid JSON".  A genuine bad
 #: request carries ``invalid_request_error`` and must still fail fast.
 _SERVER_ERROR_BODY_MARKERS = ('"type":"server_error"', '"code":"server_error"')
+
+#: Body markers that mean "this ACCOUNT is out of free quota".  Unlike a burst
+#: rate limit, this is permanent for the tier until the reset window and it is
+#: ACCOUNT-wide, not per model — every ``-free`` model returns it at the same
+#: moment (observed live 2026-11-27 across beam-free, deepseek-v4.1-flash-free,
+#: flint-40b-free and hy4-flash-free).  Retrying or rotating models cannot fix
+#: it, so it must fail fast and hand over to the next provider instead.
+#:
+#: These markers are compared against a WHITESPACE-STRIPPED, lowercased body,
+#: so they must themselves be written without spaces — otherwise a multi-word
+#: marker can never match (the JSON may arrive as ``"type": "error"`` or
+#: ``"type":"error"``).
+_QUOTA_BODY_MARKERS = ("freeusagelimiterror", "freeusagelimitreached")
+
+
+def _is_quota_exhausted(text: str) -> bool:
+    """True when *text* reports an exhausted free-tier quota.
+
+    Matched case-insensitively against a whitespace-stripped body so JSON
+    layout differences (``"type": "error"`` vs ``"type":"error"``) do not
+    matter.
+    """
+    if not text:
+        return False
+    body = re.sub(r"\s+", "", text).lower()
+    return any(marker in body for marker in _QUOTA_BODY_MARKERS)
+
+
+#: The quota guard tier for the keyless free catalog.  Quota is ACCOUNT-wide,
+#: so one key covers every ``-free`` model — never a per-model key.
+ZEN_QUOTA_TIER = "opencode-zen"
+
+#: Suffix every genuinely free id carries on the keyless catalog.  Ids without
+#: it need an OpenCode Go subscription, so the keyless tier must not offer them.
+_ZEN_FREE_SUFFIX = "-free"
+
+
+def _quota_exhausted_message(model_name: str, retry_hint: str = "") -> str:
+    """Actionable, non-retryable message for an exhausted free tier."""
+    return (
+        f"[Error: {ZEN_QUOTA_TIER} free tier quota exhausted (shared across all "
+        f"free models — {model_name} cannot answer until it resets). "
+        f"Subscribe to OpenCode Go (https://opencode.ai/go) or switch to another "
+        f"provider with `model list`.{retry_hint}]"
+    )
 
 
 def _http_error_body(exc: urllib.error.HTTPError) -> str:
@@ -76,6 +122,27 @@ def _http_error_body(exc: urllib.error.HTTPError) -> str:
     return cached
 
 
+def _retry_after_seconds(headers: Any) -> float | None:
+    """Seconds from a ``Retry-After`` header, or ``None`` when absent/invalid.
+
+    The gateway usually omits the header for free-tier quota, so callers fall
+    back to the guard's default cooldown.  Only the delta-seconds form is
+    honoured; an HTTP-date would need clock arithmetic for no benefit here.
+    """
+    if headers is None:
+        return None
+    try:
+        raw = headers.get("Retry-After")
+    except Exception:
+        return None
+    if raw is None:
+        return None
+    try:
+        return max(0.0, float(str(raw).strip()))
+    except (TypeError, ValueError):
+        return None
+
+
 def _is_transient_http_error(exc: urllib.error.HTTPError) -> bool:
     """True when *exc* is worth retrying.
 
@@ -83,7 +150,14 @@ def _is_transient_http_error(exc: urllib.error.HTTPError) -> bool:
     also surfaces upstream outages as a 4xx whose body carries ``server_error``;
     those are retried too, while a genuine client error (``invalid_request_error``,
     auth failures, ...) fails fast.
+
+    Exhausted free-tier quota is a 429 that is NOT transient: it is permanent
+    for the tier until the reset window and shared by every free model, so a
+    retry only wastes the backoff budget (~14 s) before failing identically.
+    The body is therefore inspected BEFORE the status check.
     """
+    if _is_quota_exhausted(_http_error_body(exc)):
+        return False
     if exc.code in _TRANSIENT_HTTP_STATUSES:
         return True
     body = re.sub(r"\s+", "", _http_error_body(exc)).lower()
@@ -472,6 +546,7 @@ class OpencodeProvider:
         read_store: bool = True,
         max_retries: int | None = None,
         retry_base_delay: float = 2.0,
+        quota: QuotaGuard | None = None,
     ) -> None:
         self.model_name = model_name
         self.server_url = server_url.rstrip("/")
@@ -514,6 +589,12 @@ class OpencodeProvider:
             else max(0, int(max_retries))
         )
         self._retry_base_delay = max(0.0, float(retry_base_delay))
+        #: Remembers an observed free-tier quota exhaustion so later turns cost
+        #: 0 s and zero HTTP calls instead of a 14 s retry cascade.
+        self._quota: QuotaGuard = quota or quota_guard()
+        #: Set by ``_zen_free_catalog_ids`` when the keyless list was cut short
+        #: by an exhausted quota, so a caller can show one note next to it.
+        self.zen_catalog_note: str = ""
 
     def apply_profile(
         self,
@@ -666,6 +747,14 @@ class OpencodeProvider:
             # 'tool_calls'") — the bare "400: Bad Request" is useless.
             body = _http_error_body(exc)
             detail = body or str(exc.reason)
+            # Free-tier quota exhausted: remember it for the whole tier (the
+            # quota is account-wide) so later turns skip the HTTP call, and
+            # answer with one actionable line instead of the raw gateway dump.
+            if self.zen_mode and _is_quota_exhausted(detail):
+                self._quota.mark_exhausted(
+                    ZEN_QUOTA_TIER, _retry_after_seconds(exc.headers)
+                )
+                return _quota_exhausted_message(self.model_name)
             # Anthropic models on the go gateway are ONLY served over the
             # Anthropic Messages protocol (/messages + x-api-key); the
             # OpenAI-shaped /chat/completions endpoint answers HTTP 400
@@ -1004,12 +1093,24 @@ class OpencodeProvider:
         """
         self._label()
         if self.api_mode:
+            # Free-tier quota is ACCOUNT-wide and permanent for the tier until
+            # its reset window: once observed, answer immediately with an
+            # actionable message instead of spending a request (and burning a
+            # 14 s retry cascade) on a tier that cannot answer.
+            if self.zen_mode and self._quota.is_exhausted(ZEN_QUOTA_TIER):
+                return _quota_exhausted_message(self.model_name)
             result = await self._chat_api(messages, tools, max_tokens, disable_thinking)
-            # Free-tier self-healing: opencode's backend occasionally marks a
-            # specific free model "unavailable" (HTTP 400 "Model is
-            # unavailable", 5xx, or a read timeout).  Rather than hard-fail the
-            # turn, transparently retry against a known-good free model.
-            if self.zen_mode and self._is_backend_down(result):
+            # A quota error is NOT backend-down: every free model shares the
+            # same account quota, so rotating models cannot succeed (Task 6).
+            # ``_chat_api`` already marked the guard when it saw the body, so the
+            # guard is the authoritative signal here — the returned message is a
+            # friendly rewrite and no longer carries the raw gateway body.
+            if (
+                self.zen_mode
+                and not self._quota.is_exhausted(ZEN_QUOTA_TIER)
+                and not _is_quota_exhausted(result)
+                and self._is_backend_down(result)
+            ):
                 return await self._zen_free_fallback(
                     messages, tools, max_tokens, disable_thinking
                 )
@@ -1112,11 +1213,15 @@ class OpencodeProvider:
         """
         try:
             if self.api_mode:
-                prefix = "opencode-zen" if self.zen_mode else "opencode-go"
+                if self.zen_mode:
+                    # Keyless tier: list only what the keyless tier can call.
+                    # Paid ids on the same catalog need a Go subscription, so
+                    # offering them here only sends the user into a 401/429.
+                    return self._zen_free_catalog_ids()
                 data = self._request("GET", f"{self.api_url}/models", timeout=15)
                 items = data.get("data") if isinstance(data, dict) else []
                 return sorted(
-                    f"{prefix}/{m.get('id')}"
+                    f"opencode-go/{m.get('id')}"
                     for m in (items or [])
                     if isinstance(m, dict)
                 )
@@ -1142,8 +1247,10 @@ class OpencodeProvider:
     def _zen_free_models(self) -> list[str]:
         """Keyless opencode-zen FREE catalog (GET {ZEN_API_BASE}/models).
 
-        Always available without an API key.  Returns ids namespaced
-        ``opencode-zen/...``; free models are suffixed ``-free``.
+        Always available without an API key.  Returns EVERY id the endpoint
+        advertises, namespaced ``opencode-zen/...`` — including paid ids that
+        need a Go subscription.  Use :meth:`_zen_free_catalog_ids` when the
+        answer must be restricted to what the keyless tier can actually call.
         """
         try:
             data = self._request("GET", f"{ZEN_API_BASE}/models", timeout=15)
@@ -1155,6 +1262,27 @@ class OpencodeProvider:
             )
         except Exception:
             return []
+
+    def _zen_free_catalog_ids(self) -> list[str]:
+        """Keyless tier catalog restricted to genuinely free ids.
+
+        The ``/models`` endpoint lists both free and paid models.  Only ids
+        ending ``-free`` are callable WITHOUT a subscription, so the paid ones
+        are dropped here: offering them sends the user straight into a 401/429
+        that looks like an outage.  Keyed (go) callers keep the full list.
+
+        The list stays clean — a quota note would become a selectable entry —
+        so the exhausted state is exposed separately via
+        :attr:`zen_catalog_note`.
+        """
+        self.zen_catalog_note = ""
+        ids = [m for m in self._zen_free_models() if m.endswith(_ZEN_FREE_SUFFIX)]
+        if self._quota.is_exhausted(ZEN_QUOTA_TIER):
+            self.zen_catalog_note = (
+                f"({len(ids)} free models — free-tier quota currently exhausted; "
+                f"subscribe to OpenCode Go or pick another provider)"
+            )
+        return ids
 
 
 __all__: list[str] = [

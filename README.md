@@ -120,6 +120,15 @@ OPENCODE_API_KEY=sk-...
 
 Default model: `opencode-go/deepseek-v4-flash`. Set `AGENT_LLM_PROVIDER=opencode` and the agent uses the keyed opencode-go gateway.
 
+### Zen free tier (not recommended)
+
+`opencode-zen/<model>-free` is the keyless tier. It does **not** work for a third-party harness like this one:
+
+- the quota is **account-wide**, so every `-free` model returns the same HTTP 429 `FreeUsageLimitError` at the same moment — rotating between free models cannot help;
+- the tier is gated to the OpenCode app, so the 429 will not clear on retry.
+
+The provider therefore remembers an observed exhaustion (`agent_core/llm/quota_guard.py`) and answers from that memory instead of spending a request, and the keyless `model list` shows only ids that are actually callable. Prefer `opencode-go/...` (keyed) or a local model. Zen stays available as an opt-in for OpenCode Go subscribers.
+
 ### OpenRouter
 
 ```
