@@ -370,3 +370,323 @@ def test_bare_transient_status_still_retries(status):
     from agent_core.llm.opencode_provider import _is_transient_http_error
 
     assert _is_transient_http_error(_http_error(status, "{}")) is True
+
+
+# ----------------------------------------------------------------------
+# Task 8 — the verdict survives a restart
+# ----------------------------------------------------------------------
+
+
+class WallClock:
+    """Manually advanced wall clock (persisted deadlines use epoch seconds)."""
+
+    def __init__(self, start: float = 1_700_000_000.0) -> None:
+        self.now = start
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+class TestPersistedQuotaState:
+    """A restart must not spend another request re-probing a dead tier."""
+
+    def test_memory_only_guard_writes_no_file(self, tmp_path, monkeypatch):
+        """The default stays pure in-memory: no path, no filesystem side effect."""
+        # Observe the resolver instead of the directory: an autouse conftest
+        # fixture already populates ``tmp_path`` (runtime_state/), so "the dir
+        # is empty" would be measuring the harness, not the guard.
+        monkeypatch.setenv("AGENT_QUOTA_COOLDOWN_SECONDS", "1")
+        guard = QuotaGuard(clock=FakeClock(), cooldown=60.0)
+        guard.mark_exhausted(ZEN_QUOTA_TIER)
+        guard.reset()
+
+        assert guard.is_exhausted(ZEN_QUOTA_TIER) is False
+        assert not list(tmp_path.glob("**/quota_state.json"))
+
+    def test_mark_survives_a_fresh_process(self, tmp_path):
+        """A new guard (new process) restores the block instead of re-probing."""
+        state = tmp_path / "quota_state.json"
+        mono, wall = FakeClock(), WallClock()
+
+        first = QuotaGuard(
+            clock=mono, wall_clock=wall, cooldown=900.0, state_path=lambda: str(state)
+        )
+        first.mark_exhausted(ZEN_QUOTA_TIER)
+        assert state.exists()
+
+        # Simulate a restart: fresh monotonic clock, same wall clock instant.
+        restarted = QuotaGuard(
+            clock=FakeClock(),
+            wall_clock=wall,
+            cooldown=900.0,
+            state_path=lambda: str(state),
+        )
+
+        assert restarted.is_exhausted(ZEN_QUOTA_TIER) is True
+        assert 890.0 < restarted.remaining(ZEN_QUOTA_TIER) <= 900.0
+
+    def test_persisted_verdict_expires_in_the_new_process(self, tmp_path):
+        """The deadline is honoured across processes, not restarted at load."""
+        state = tmp_path / "quota_state.json"
+        wall = WallClock()
+        QuotaGuard(
+            clock=FakeClock(), wall_clock=wall, cooldown=60.0,
+            state_path=lambda: str(state),
+        ).mark_exhausted(ZEN_QUOTA_TIER)
+
+        wall.advance(61.0)  # the cooldown elapses while the process is down
+        restarted = QuotaGuard(
+            clock=FakeClock(), wall_clock=wall, cooldown=60.0,
+            state_path=lambda: str(state),
+        )
+
+        assert restarted.is_exhausted(ZEN_QUOTA_TIER) is False
+
+    def test_reset_clears_the_persisted_verdict(self, tmp_path):
+        """Re-selecting a model must clear the on-disk block too."""
+        state = tmp_path / "quota_state.json"
+        wall = WallClock()
+
+        def _guard() -> QuotaGuard:
+            return QuotaGuard(
+                clock=FakeClock(), wall_clock=wall, cooldown=600.0,
+                state_path=lambda: str(state),
+            )
+
+        guard = _guard()
+        guard.mark_exhausted(ZEN_QUOTA_TIER)
+        guard.reset()
+
+        assert _guard().is_exhausted(ZEN_QUOTA_TIER) is False
+
+    def test_corrupt_state_file_is_ignored_not_fatal(self, tmp_path):
+        """Garbage on disk must degrade to 'unknown', never crash a turn."""
+        state = tmp_path / "quota_state.json"
+        state.write_text("{not json", encoding="utf-8")
+
+        guard = QuotaGuard(
+            clock=FakeClock(), wall_clock=WallClock(), cooldown=60.0,
+            state_path=lambda: str(state),
+        )
+
+        assert guard.is_exhausted(ZEN_QUOTA_TIER) is False
+        guard.mark_exhausted(ZEN_QUOTA_TIER)  # still writable afterwards
+        assert guard.is_exhausted(ZEN_QUOTA_TIER) is True
+
+    def test_unresolvable_path_never_raises(self):
+        """A broken path resolver must not break the fast path."""
+
+        def _boom() -> str:
+            raise RuntimeError("no session")
+
+        guard = QuotaGuard(
+            clock=FakeClock(), cooldown=60.0, state_path=_boom
+        )
+
+        assert guard.is_exhausted(ZEN_QUOTA_TIER) is False
+        guard.mark_exhausted(ZEN_QUOTA_TIER)
+        assert guard.is_exhausted(ZEN_QUOTA_TIER) is True
+
+    def test_restart_makes_zero_http_calls(self, tmp_path, monkeypatch):
+        """End-to-end: a restored block answers without touching the network."""
+        state = tmp_path / "quota_state.json"
+        wall = WallClock()
+        QuotaGuard(
+            clock=FakeClock(), wall_clock=wall, cooldown=900.0,
+            state_path=lambda: str(state),
+        ).mark_exhausted(ZEN_QUOTA_TIER)
+
+        restored = QuotaGuard(
+            clock=FakeClock(), wall_clock=wall, cooldown=900.0,
+            state_path=lambda: str(state),
+        )
+        provider = _zen_provider(restored)
+        calls = []
+
+        def _explode(*args, **kwargs):
+            calls.append(args)
+            raise AssertionError("a restored quota block must not hit the network")
+
+        monkeypatch.setattr(provider, "_request", _explode)
+        text = asyncio.run(provider.chat([{"role": "user", "content": "hi"}]))
+
+        assert calls == []
+        assert "FreeUsageLimitError" not in text
+        assert "opencode.ai/go" in text
+
+    def test_session_state_path_is_next_to_the_chat_history(self):
+        """The real resolver targets the session dir, not the repo root."""
+        from agent_core.session.models import SessionPaths
+
+        paths = SessionPaths(
+            session_id="default",
+            state_dir=__import__("pathlib").Path("/tmp/state"),
+            chat_history_path="/tmp/state/chat_history.json",
+            agent_memory_path="/tmp/state/agent_memory.json",
+            turn_log_path="/tmp/state/turn_log.jsonl",
+        )
+
+        assert str(paths.quota_state_path) == str(
+            __import__("pathlib").Path("/tmp/state/quota_state.json")
+        )
+
+
+class TestUserReselectClearsQuotaBlock:
+    """Regression: a persisted block must have a way OUT.
+
+    Persisting the verdict (Tasks 10) means a user who subscribes mid-day stays
+    quarantined across restarts unless re-selecting a model clears it.  These
+    tests drive the REAL ``ModelCommand`` entry points, not a simulation, and
+    pin the deliberate asymmetry: a user switch clears the block, while the
+    automatic failover path (``llm/provider.py``) must never do so.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clean_process_guard(self):
+        """Leave the process-wide singleton un-blocked after every test.
+
+        These tests mark the REAL ``quota_guard()`` exhausted, which both lives
+        in memory for the whole session and persists ``quota_state.json``.  Left
+        behind, that leaks into unrelated suites (``tests/test_opencode_provider.py``
+        ``TestZenFree*`` starting failing only when run in the same process) and
+        into the developer's own session state.
+        """
+        from agent_core.llm.quota_guard import reset_quota_guard
+
+        reset_quota_guard()
+        yield
+        reset_quota_guard()
+
+    @staticmethod
+    def _agent():
+        from agent_core.llm.lmstudio import LMStudioProvider
+
+        provider = LMStudioProvider(model_name="local-model")
+        llm = type(
+            "L",
+            (),
+            {
+                "model_name": "local-model",
+                "_provider": provider,
+                "_profile_name": None,
+            },
+        )()
+        return type("A", (), {"llm": llm})()
+
+    @staticmethod
+    def _settings():
+        return type(
+            "S",
+            (),
+            {
+                "llm_provider": "lmstudio",
+                "opencode_model": "opencode-go/kimi-k2",
+                "opencode_server_url": "http://127.0.0.1:4096",
+                "opencode_password": "",
+                "opencode_api_url": "https://opencode.ai/zen/go/v1",
+                "opencode_api_key": "sk-test",
+                "openrouter_model": "openrouter/free-model",
+                "lemonade_model": "",
+            },
+        )()
+
+    def _switch_stubs(self, monkeypatch):
+        """Stub everything the switch needs EXCEPT the quota reset."""
+        import agent_core.llm.provider as prov_mod
+
+        monkeypatch.setattr(
+            "agent_core.commands.model_cmd._lms.get_models_status", lambda: []
+        )
+        monkeypatch.setattr(
+            "agent_core.config.load_agent_settings", lambda: self._settings()
+        )
+        monkeypatch.setattr(
+            "agent_core.constants.load_model_json",
+            lambda: {"model": "local-model", "provider": "lmstudio"},
+        )
+        monkeypatch.setattr(
+            "agent_core.commands.model_cmd.persist_model_choice",
+            lambda name, provider=None: None,
+        )
+        monkeypatch.setattr(
+            prov_mod, "build_provider", lambda s, m, provider_override=None: object()
+        )
+
+    def test_reselecting_a_model_clears_a_persisted_block(self, monkeypatch):
+        from agent_core.commands.model_cmd import ModelCommand
+
+        guard = quota_guard()
+        guard.mark_exhausted(ZEN_QUOTA_TIER)
+        assert guard.is_exhausted(ZEN_QUOTA_TIER) is True
+
+        self._switch_stubs(monkeypatch)
+        agent = self._agent()
+        asyncio.run(ModelCommand()._switch_model(["opencode-zen/hy3-free"], agent))
+
+        assert agent.llm.model_name == "opencode-zen/hy3-free"
+        assert guard.is_exhausted(ZEN_QUOTA_TIER) is False
+
+    def test_model_switch_reset_also_clears_the_state_file(self, monkeypatch):
+        """The file itself is rewritten empty, so a restart does not reload it."""
+        import json
+
+        from agent_core.commands.model_cmd import ModelCommand
+        from agent_core.llm.quota_guard import _session_state_path
+
+        guard = quota_guard()
+        guard.mark_exhausted(ZEN_QUOTA_TIER)
+        state = _session_state_path()
+        if not state or not __import__("os").path.exists(state):
+            pytest.skip("no session state path in this environment")
+
+        self._switch_stubs(monkeypatch)
+        cmd = ModelCommand()
+        asyncio.run(cmd._switch_model(["opencode-zen/hy3-free"], self._agent()))
+
+        with open(state, "r", encoding="utf-8") as fh:
+            persisted = json.load(fh)
+        assert ZEN_QUOTA_TIER not in (persisted.get("tiers") or {})
+
+    def test_model_provider_switch_clears_the_block_too(self, monkeypatch):
+        """`model provider opencode` is a user decision — same escape hatch."""
+        from agent_core.commands.model_cmd import ModelCommand
+
+        guard = quota_guard()
+        guard.mark_exhausted(ZEN_QUOTA_TIER)
+        assert guard.is_exhausted(ZEN_QUOTA_TIER) is True
+
+        self._switch_stubs(monkeypatch)
+        asyncio.run(ModelCommand()._handle_provider(["opencode"], self._agent()))
+
+        assert guard.is_exhausted(ZEN_QUOTA_TIER) is False
+
+    def test_failover_does_not_clear_the_block(self, monkeypatch, tmp_path):
+        """The asymmetry that makes persistence safe: only a USER clears it.
+
+        ``llm/provider.py`` calls the REAL ``persist_model_choice`` after a
+        failover, so this drives that real function (not a stub of it).  If the
+        persistence path reset the guard, every successful failover would
+        silently un-quarantine the dead tier and re-introduce the wasted probe.
+        """
+        import json
+
+        import agent_core.constants as constants
+        from agent_core.constants import persist_model_choice
+
+        guard = quota_guard()
+        guard.mark_exhausted(ZEN_QUOTA_TIER)
+
+        # Point the REAL persistence at a temp dir — never the repo's .env.
+        monkeypatch.setattr(
+            constants, "MODEL_JSON_PATH", str(tmp_path / "model.json")
+        )
+        monkeypatch.chdir(tmp_path)
+
+        persist_model_choice("some-working-model", provider="lmstudio")
+
+        written = json.loads((tmp_path / "model.json").read_text(encoding="utf-8"))
+        assert written["model"] == "some-working-model"
+        assert guard.is_exhausted(ZEN_QUOTA_TIER) is True

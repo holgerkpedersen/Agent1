@@ -198,6 +198,9 @@ reports/plan_evaluations.jsonl
 reports/plan_token_aggregate.json
 turn_log.jsonl
 meta_policy.json
+# Persisted provider quota verdicts (llm/quota_guard.py): machine-local
+# runtime state about an exhausted free tier, never source.
+quota_state.json
 perf_history.json
 .sessions/
 # Per-session git worktrees (AGENT_SESSION_WORKTREES): each named session's

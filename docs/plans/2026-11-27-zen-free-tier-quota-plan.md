@@ -239,6 +239,48 @@ New `tests/unit/test_zen_quota_guard.py` (the shell is pure, so no network):
 
 Use a frozen/offset timestamp rather than `sleep` for the expiry test.
 
+### Task 10 — make the verdict survive a restart
+
+Shipped after Tasks 1-9 (the guard was process-local, so every new session spent
+exactly one more request re-probing a tier already known to be dead).
+
+- `SessionPaths.quota_state_path` (`agent_core/session/models.py`) —
+  `quota_state.json` next to the session's `chat_history.json`, matching the
+  existing `meta_policy_path` convention.
+- `QuotaGuard` gained `state_path` (a resolver, lazy per call) and `wall_clock`.
+  Persisted deadlines are **wall-clock epoch seconds**, never
+  `time.monotonic()` values, which are process-relative and meaningless in a
+  fresh process. The in-memory map stays monotonic (immune to clock jumps) and
+  is translated on load and on write.
+- Only the process-wide `quota_guard()` is persisting — it is constructed with
+  `state_path=_session_state_path`. A bare `QuotaGuard()` remains pure
+  in-memory, so existing tests and embedded uses keep zero filesystem effects.
+- Loading drops already-expired entries instead of restoring them, and any
+  error (missing file, corrupt JSON, unresolvable path) degrades to "unknown":
+  the guard is an optimisation and must never break a turn.
+- `quota_state.json` is added to `.gitignore` beside `meta_policy.json`.
+
+### Task 11 — give the persisted block an escape hatch
+
+Persistence (Task 10) created a trap: the documented mitigation for the "stale
+exhaustion flag" risk was "`reset()` clears it", but nothing a *user* can type
+called `reset()`. A block written to disk therefore outlived every restart with
+no way out — the user who upgrades to a paid account would stay quarantined.
+
+- `ModelCommand._switch_model` (`agent_core/commands/model_cmd.py`) clears the
+  guard on entry: picking a model is an explicit user decision to re-probe that
+  tier.
+- `ModelCommand._handle_provider` (same file) does the same for
+  `model provider <name>`.
+- Both call the public `reset_quota_guard()`, not `QuotaGuard.reset(tier)`, so
+  the whole verdict is dropped rather than one tier guessed at, and both are
+  wrapped in `except Exception` — a guard problem must never block a legitimate
+  model switch.
+- **Deliberately NOT added to the automatic failover path**
+  (`llm/provider.py`, which persists the model that answered). That would
+  un-quarantine a dead tier on every successful failover and re-introduce the
+  wasted probe the whole plan removes. Only a *user* clears the block.
+
 ### Task 9 — document the constraint where a user will hit it
 
 - `.env` comment block next to `AGENT_ZEN_FREE_DEFAULT` / `AGENT_ZEN_FREE_FALLBACKS`
@@ -270,7 +312,13 @@ free tier can never sit in front of a working provider.
 
 ## Verification
 
-- `python -m pytest tests/unit/test_zen_quota_guard.py` — the new suite.
+- `python -m pytest tests/unit/test_zen_quota_guard.py` — the new suite (Task 8 plus
+  the Task 10 persistence cases: restore after restart, expiry honoured across
+  processes, `reset()` clearing the file, corrupt state ignored, an unresolvable
+  path never raising, and a restored block making zero HTTP calls). Task 11 adds
+  `TestUserReselectClearsQuotaBlock`, which drives the real `_switch_model` /
+  `_handle_provider` entry points and pins the asymmetry (user switch clears, the
+  failover path's real `persist_model_choice` does not).
 - `python -m pytest tests/test_opencode_provider.py` — existing provider contract,
   including the User-Agent/1010 test at `tests/test_opencode_provider.py:752`.
 - Targeted re-run of the live probe used for this diagnosis: with the guard primed,
@@ -284,7 +332,16 @@ free tier can never sit in front of a working provider.
   full-body substrings and covered by Task 8.2 (bare 429 stays transient).
 - **Stale exhaustion flag** — a user who subscribes mid-session stays blocked until
   the cooldown expires. Mitigation: `reset()` (and `model` re-selection) clears it;
-  default cooldown is short (900 s).
+  default cooldown is short (900 s). Because the verdict now persists, the same
+  applies across restarts — a restart is no longer an implicit reset, which is the
+  intended trade (it is what removes the extra probe), and `reset()` clears the
+  file too. Task 11 closes the resulting trap: any `model ...` / `model provider ...`
+  the user types clears the block, so persistence can never strand a user who has
+  since become a subscriber.
+- **Persisted state going stale or corrupt** — a wall-clock deadline is written, so
+  a clock jumped far forward makes the entry look expired; that fails toward
+  "probe the tier again", which is safe. Corrupt JSON is ignored and the guard
+  keeps working in memory.
 - **Failover churn** — treating quota as a connection failure could skip zen quickly
   in a chain where the user *wants* zen first. Accepted: it cannot answer anyway, and
   the ordering recommendation above addresses intent.

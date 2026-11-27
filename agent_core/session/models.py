@@ -65,6 +65,11 @@ class SessionPaths:
         return Path(self.chat_history_path).parent / "meta_policy.json"
 
     @property
+    def quota_state_path(self) -> Path:
+        """Persisted provider-quota verdicts (see ``llm/quota_guard.py``)."""
+        return Path(self.chat_history_path).parent / "quota_state.json"
+
+    @property
     def line_history_path(self) -> Path:
         return self.state_dir / ".agent_history"
 

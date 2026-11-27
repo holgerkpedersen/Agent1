@@ -897,6 +897,19 @@ class ModelCommand(Command):
         --provider lmstudio`` does the reverse.  Without the flag, routing is
         unchanged (prefix-based + fuzzy match).
         """
+        # A user picking a model is the documented escape hatch from a persisted
+        # quota block (e.g. after subscribing): re-selecting a tier must be able
+        # to probe it again, otherwise `quota_state.json` blocks it across
+        # restarts with no way out.  Deliberately NOT in the automatic failover
+        # path (`llm/provider.py` persists the model that answered) — that would
+        # silently un-quarantine a dead tier on every successful failover.
+        try:
+            from agent_core.llm.quota_guard import reset_quota_guard
+
+            reset_quota_guard()
+        except Exception:  # noqa: BLE001 - never block a model switch
+            pass
+
         args, provider_override = self._parse_provider_flag(args)
         if provider_override is not None:
             await self._switch_model_with_provider(args, agent, provider_override)
@@ -1480,6 +1493,15 @@ class ModelCommand(Command):
         from agent_core.constants import load_model_json, persist_model_choice
         from agent_core.config import load_agent_settings
         from agent_core.llm.provider import build_provider, provider_for
+
+        # Same escape hatch as `model <name>`: an explicit provider switch is a
+        # user decision to re-try a quarantined tier (see _switch_model).
+        try:
+            from agent_core.llm.quota_guard import reset_quota_guard
+
+            reset_quota_guard()
+        except Exception:  # noqa: BLE001 - never block a provider switch
+            pass
 
         settings = load_agent_settings()
         from agent_core.constants import load_model_json
