@@ -912,5 +912,24 @@
     "created_at": "2026-11-18T19:31:50+00:00",
     "resolved_at": null,
     "parent_card_id": "caf17c348b0c4d9dbdaf58989f6504cd"
+  },
+  {
+    "id": "iss-general-kanban_e50f65c601304c86afaf279e06e0ec2e",
+    "title": "Check for improvement opportunities for Agent1",
+    "category": "general",
+    "severity": "low",
+    "locations": [
+      "kanban:e50f65c601304c86afaf279e06e0ec2e"
+    ],
+    "status": "resolved",
+    "autonomy_level": 1,
+    "evidence": "Researched harness/loop-engineering material via web_search and verified\nevery theme against this repo's code. Write-up: docs/IMPROVEMENT_OPPORTUNITIES_HARNESS.md\n\nAlready implemented (do not re-propose): in-run context compaction\n(llm/tool_loop.py:838-874), forced final answer + deadline window\n(:2115, :1232), stuck/no-progress circuit breakers (:875-880), claim-vs-evidence\nverification (turn_loop.py:385-410), fail-fast tool-path handling\n(llm/lmstudio.py:950-977).\n\nVerified gaps:\n1. HIGH: _tools_unsupported (lmstudio.py:630) is in-memory only, so a bad\n   tool-path model is re-discovered expensively in every new session. Persist it\n   per session honouring the permanent-vs-TTL split; reuse learning.py:93\n   _state_path() + atomic save.\n2. MEDIUM: memo keyed by model name only (:967), though the crash is a property\n   of the model's tool grammar in this engine build.\n3. MEDIUM: deadline_window counts iterations, not seconds (:875, :1233); the only\n   timer is the 3600s per-call timeout (lmstudio.py:341). No cap on turn total.\n4. LOW: token usage accumulated (:1342) but never enforced.\n[note] Improvement review complete; 4 verified gaps documented, top action is persisting the tool-path memo.",
+    "suggested_approach": "Recommended order: (1) persist the tool-path memo, (2) decide the wall-clock budget deliberately with its own termination reason, (3) refine the memo key, (4) defer token budgets. Each fix needs a regression test.",
+    "decision_ref": null,
+    "repair_ref": null,
+    "created_at": "2026-11-27T11:30:05+00:00",
+    "resolved_at": "2026-11-27T11:34:09+00:00",
+    "parent_card_id": "e50f65c601304c86afaf279e06e0ec2e",
+    "updated_at": "2026-11-27T11:34:38+00:00"
   }
 ]

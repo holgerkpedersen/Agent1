@@ -1,3 +1,20 @@
+## 2026-11-27 - docs(harness): improvement review for kanban card `e50f65c601304c86afaf279e06e0ec2e`
+
+**Change**: new `docs/IMPROVEMENT_OPPORTUNITIES_HARNESS.md` records the improvement review requested by card `e50f65c601304c86afaf279e06e0ec2e` ("Check for improvement opportunities for Agent1", issue `iss-general-kanban_e50f65c601304c86afaf279e06e0ec2e`, now resolved). It splits the research into "already implemented — do not re-propose" (context compaction `llm/tool_loop.py:838-874`, forced final answer `:2115`, circuit breakers `:875-880`, claim-vs-evidence guard `turn_loop.py:385-410`, fail-fast tool-path handling `lmstudio.py:950-977`) and four gaps, each with a file:line evidence trail and a fix sketch.
+
+**Reason**: harness/loop-engineering articles were only the frame — the deliverable is what is actionable HERE, so every article theme was first checked against real code and the ones already implemented were listed first. That ordering is the point: a gap list that re-proposes compaction or a forced final answer would send the next agent to rebuild working machinery. Four gaps survived:
+
+1. HIGH — `_tools_unsupported` (`lmstudio.py:630`) is in-memory only, so a bad tool-path model is re-discovered expensively in every new session. The permanent-vs-TTL split is already right; only the lifetime is wrong.
+2. MEDIUM — the memo is keyed by model name only (`:967`), though the crash is a property of the model's tool grammar in this engine build.
+3. MEDIUM — `deadline_window` counts iterations, not seconds (`:875`, compared `:1233`); the only timer is the 3600s per-call timeout (`:341`), so nothing bounds the sum for a turn.
+4. LOW — token usage accumulates (`tool_loop.py:1342`) but nothing enforces it; recorded, deliberately not built.
+
+**Files**: `docs/IMPROVEMENT_OPPORTUNITIES_HARNESS.md`, `.issues.json`, `.decisions.json`, `CHANGES.md`.
+
+**Verification**: research only — no source change, so no behaviour to test. The diff is the new doc plus two ledger records (`python -m pytest tests/test_llm_retry_policy.py tests/test_issues_ledger.py tests/test_model_catalog_required.py -q` -> `75 passed in 15.17s`). Load-bearing citations were re-read after writing: `lmstudio.py:630` `self._tools_unsupported: dict[str, float | None] = {}`, `:913` `_tools_blocked`, `:936` `_remember_tools_unsupported`, `:950` `_classify_tool_path_failure`, `:967` the model-only write, `:341` `_MAX_SCALED_TIMEOUT_S = 3600`, and `learning.py:131-151` (`save_weights`, the atomic `tmp` + `os.replace` idiom gap 1 should copy) all match the text. One doc line-number was corrected during verification (`:129-146` -> `:131-151`) because the cited range started in a blank line above `save_weights`.
+
+**Next**: implement gap 1 first — persist the memo via `learning.py:93` `_state_path()` with a WALL-CLOCK deadline (not `time.monotonic`, which is process-relative), dropping expired entries on load. Its regression test must assert a fresh provider refuses a tool-using call WITHOUT issuing a request, and that an expired TTL entry is retried.
+
 ## 2026-11-26 - fix(llm): a tool-path engine crash is not re-sampled
 
 **Change**: a new predicate `_is_tool_path_retry_worthless(detail, use_tools)` (`agent_core/llm/lmstudio.py:250`) matches the tool-path crash markers, now factored out as `_TOOL_PATH_CRASH_MARKERS` (`:145`: `channel error`, `terminated`, predict `fetch failed`). `_open_chat` gained a `use_tools` parameter (`:741`) and, when a 400 body is a transient engine error on a tool-carrying request, raises a plain `RuntimeError` naming the tool path (`:785`) instead of `TransientHTTPError`, so `RetryPolicy` stops after one attempt. `_make_request` (`:793`) derives the flag from the payload it actually sends — `use_tools=bool(payload.get("tools"))` (`:819`) — so its public signature is unchanged.
